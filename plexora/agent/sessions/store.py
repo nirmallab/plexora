@@ -42,3 +42,27 @@ class SessionStore(_sessions.SessionStore):
 
             root = paths.agent_root() / "sessions" / kind
         super().__init__(kind, root)
+
+    # -- control.json, across processes ------------------------------------
+
+    def _control_lock(self, session_id):
+        """Held for each read-modify-write of control.json. The viewer's
+        control route and the engine driving the session (often another
+        process, `plexora mcp serve`) both rewrite it; unlocked, a pause, stop
+        or limit answer written between the other side's read and write was
+        lost (audit ai-agent-core-6)."""
+        from plexora import _process_lock
+
+        path = self.folder(session_id) / "control.json.lock"
+        return _process_lock.lock_for(("session-control", str(path)), lambda: path)
+
+    def set_control(self, session_id, **changes) -> dict:
+        with self._control_lock(session_id):
+            return super().set_control(session_id, **changes)
+
+    def update_control(self, session_id, change) -> dict:
+        """`set_control` with the changes worked out from control.json as it
+        is under the lock: `change(control) -> dict of changes`. For a change
+        that depends on what is stored (merging a limit answer)."""
+        with self._control_lock(session_id):
+            return super().set_control(session_id, **(change(self.control(session_id)) or {}))

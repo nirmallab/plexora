@@ -85,9 +85,11 @@ class FigureThumbnail {
                     ...FigureThumbnail._rect(object.placement, scale),
                 });
             } else {
+                // `type`, and the box is in `geometry` (schema.py), not on the
+                // annotation itself as a panel's placement is.
                 out.items.push({
-                    kind: object.kind === "text" ? "text" : "shape",
-                    ...FigureThumbnail._rect(object, scale),
+                    kind: object.type === "text" ? "text" : "shape",
+                    ...FigureThumbnail._rect(object.geometry || {}, scale),
                 });
             }
         }

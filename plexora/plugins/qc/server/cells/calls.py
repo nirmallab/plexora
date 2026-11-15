@@ -1141,6 +1141,10 @@ def write_for_active(call, project, *, refresh_regions=True):
 
             roi_link.sync(ds, document)
             refresh_regions = True
+        # The ROI revision the calls are derived for, read before the regions
+        # are: one read after deriving would call a region drawn meanwhile
+        # seen, and gating would never re-derive for it (server/exclusions.py).
+        derived_for = roi_revision(project)
         pairs = None
         per_roi = None
         geometries = None
@@ -1196,7 +1200,7 @@ def write_for_active(call, project, *, refresh_regions=True):
         result["cells"]["table_name"] = ds.table.source_kind
         # What the calls were derived from: a region drawn since makes them
         # stale for anything that leaves QC failures out (server/exclusions.py).
-        result["cells"]["roi_revision"] = roi_revision(project)
+        result["cells"]["roi_revision"] = derived_for
         result["cells"]["inputs"] = now
         result["cells"]["exclusion_filter"] = {"disabled_categories": disabled}
         results.put_result(document, result)

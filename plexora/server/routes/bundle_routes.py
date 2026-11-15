@@ -15,7 +15,7 @@ views/projectImport.js) work through these:
                                     [{choices, place_from}: + the page's placements]
     POST   /projects/import {path|upload, choices, location, placed?}  -> {job, ...}
     GET    /projects/import/<job>, DELETE (POST .../cancel)
-    POST   /projects/<name>/copy {location?}                        "Make a copy" -> {job}
+    POST   /projects/<name>/copy {location?, name?}                 "Make a copy" -> {job}
     POST   /projects/<name>/find_missing {folder}                   one folder searched
 
 Long work is a background task (`layer_jobs`), polled; the website's page
@@ -75,6 +75,9 @@ def _save_upload():
     upload = request.files.get('file')
     if upload is None and not (request.mimetype or '').startswith(('application/zip', 'application/octet-stream')):
         return None, None
+    # An upload whose preview was never imported is left behind; a day old,
+    # it goes now, not only when the next download-export runs.
+    bundles._sweep()
     token = uuid.uuid4().hex[:16]
     folder = bundles.staging_root() / f"upload-{token}"
     folder.mkdir(parents=True, exist_ok=True)
@@ -345,13 +348,17 @@ def projects_import_cancel_post(job):
 @app.route('/projects/<string:name>/copy', methods=['POST'])
 def project_make_copy(name):
     """"Make a copy": the project as a new one of the user's own, in
-    `location` or where new projects go -- a shared project too. A job,
-    polled at /projects/import/<job>."""
+    `location` or where new projects go -- a shared project too; `name`, the
+    name wanted for it (else `<name>_<n>`). A job, polled at
+    /projects/import/<job>."""
     from plexora.server.models import bundles
 
     body = request.get_json(silent=True) or {}
+    wanted = body.get('name')
+    if wanted is not None and (not isinstance(wanted, str) or not wanted.strip()):
+        return _refused("A copy's name must be text.")
     try:
-        status = bundles.start_copy(name, body.get('location') or None)
+        status = bundles.start_copy(name, body.get('location') or None, as_name=wanted or None)
     except KeyError:
         return _refused(f"There is no project called {name}.", 404)
     except ValueError as error:

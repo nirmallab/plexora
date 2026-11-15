@@ -46,6 +46,8 @@ CHECKS = (
     "a converting mask is a chip naming the node, with a percentage",
     "...and the mask is redrawn at its new version when it lands",
     "a conversion that fails again says the node's reason",
+    "a mask gone from the report ends its poll",
+    "a mask poll does not overlap the one still waiting",
     "a failure and a read-only note are one dismissible notice",
 )
 

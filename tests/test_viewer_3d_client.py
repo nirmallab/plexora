@@ -121,7 +121,7 @@ def test_quick_surface_previews_debounced_and_posts_raw_units():
     """Surface Studio's dock: refused on Free with the Pro modal, a debounced
     preview, a superseded one aborted, the raw isovalue posted
     (tests/js/surface_studio_probe.mjs)."""
-    _passed(_run("surface_studio_probe.mjs"), 15)
+    _passed(_run("surface_studio_probe.mjs"), 16)
 
 
 def test_a_3d_mask_is_drawn_as_cell_surfaces_in_3d():

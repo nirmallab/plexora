@@ -56,6 +56,7 @@ CHECKS = (
     "a little confetti when ready, and none under reduced motion",
     "motion: the head icon draws on, the step pill slides, an error shakes its tile",
     "names from the user's disk are text, never markup",
+    "after a quiet first open the viewer offers a folder, at a site's root and under a base path",
     "a pick's gate runs before anything is mounted or recorded, and a no leaves nothing",
 )
 

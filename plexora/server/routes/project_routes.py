@@ -157,6 +157,36 @@ def recent_projects(limit=3):
     return cards
 
 
+def _thumbnail_key(name):
+    """What a project's card was drawn from: the image (where, which reading
+    of it) and, for a local file or folder, its size and modification time --
+    so a replaced or re-pointed image gets a new card. A web or node image is
+    keyed by what the project records of it (asking it would cost the round
+    trip the cache is for)."""
+    import hashlib
+    import json
+    import os
+
+    from plexora.server.providers.base import is_remote_locator
+
+    project = Project.find(name)
+    if project is None:
+        return ''
+    image = project.image
+    parts = [str(image.src or ''), image.pyramid, image.kind, image.index]
+    binding = project.resource('image')
+    if binding is not None and binding.is_node:
+        parts += [binding.node, binding.resource_id, dict(binding.fingerprint or {})]
+    elif image.src and not is_remote_locator(str(image.src)):
+        try:
+            stat = os.stat(image.src)
+            parts += [stat.st_size, stat.st_mtime_ns]
+        except OSError:
+            pass
+    text = json.dumps(parts, default=str, sort_keys=True)
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
 @app.route('/project_thumbnail/<string:name>')
 def project_thumbnail(name):
     config = get_config()
@@ -167,8 +197,15 @@ def project_thumbnail(name):
     # artifact: beside the project when that root takes writes, in this user's
     # own root when it does not.
     cache_path = paths.derived_root(name) / _THUMBNAIL_CACHE_NAME
+    key_path = cache_path.with_name(cache_path.name + '.key')
+    key = _thumbnail_key(name)
     if cache_path.exists():
-        return send_file(cache_path, mimetype='image/webp')
+        try:
+            current = key_path.read_text(encoding='utf-8') == key
+        except OSError:
+            current = False
+        if current:
+            return send_file(cache_path, mimetype='image/webp')
 
     result = data_model.generate_thumbnail(name)
     if result is None:
@@ -176,6 +213,7 @@ def project_thumbnail(name):
     encoded, mimetype = result
     try:
         cache_path.write_bytes(encoded)
+        key_path.write_text(key, encoding='utf-8')
         for stale in _STALE_THUMBNAIL_NAMES:
             (cache_path.parent / stale).unlink(missing_ok=True)
     except OSError:
@@ -653,17 +691,25 @@ def project_update_layer(name, layer_id):
                 changes['status'] = 'pending'
     if 'visible' in payload:
         changes['visible'] = payload['visible'] is not False
+    render_patch = None
     if 'render' in payload:
-        patch = payload['render']
-        if not isinstance(patch, dict):
+        render_patch = payload['render']
+        if not isinstance(render_patch, dict):
             return jsonify(error="`render` must be an object."), 400
-        merged = dict(existing.render)
-        for key, value in patch.items():
+        # Merged inside `Project.mutate`, from the record as it stands under
+        # the lock: merging from `existing` (read before it) would let two
+        # cards saving at once drop each other's keys.
+        changes['render'] = render_patch
+
+    def _merged(render):
+        merged = dict(render or {})
+        for key, value in render_patch.items():
             if value is None:
                 merged.pop(key, None)
             else:
                 merged[key] = value
-        changes['render'] = merged
+        return merged
+
     if not changes:
         if 'label' in payload or 'modality' in payload:
             return jsonify(success=True, layer=existing.to_entry())
@@ -676,12 +722,20 @@ def project_update_layer(name, layer_id):
         # Without `imageKind`, which `reference_layer` puts back on every read
         # off the file itself. Storing it would freeze today's answer into the
         # config and outlive a re-import that corrected it.
-        merged = {key: value for key, value in changes['render'].items()
-                  if key != 'imageKind'}
-        Project.mutate(name, lambda current: current.patch(image_render=merged))
+        Project.mutate(name, lambda current: current.patch(image_render={
+            key: value for key, value in _merged(current.image_render).items()
+            if key != 'imageKind'}))
     else:
-        Project.mutate(name, lambda current: current.with_layer(
-            replace(current.layer(layer_id), **changes)))
+        def _apply(current):
+            layer = current.layer(layer_id)
+            if layer is None:  # removed since it was read
+                return current
+            update = dict(changes)
+            if render_patch is not None:
+                update['render'] = _merged(layer.render)
+            return current.with_layer(replace(layer, **update))
+
+        Project.mutate(name, _apply)
         if changes.get('status') == 'pending':
             from plexora.server.models import layer_jobs
 

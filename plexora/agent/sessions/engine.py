@@ -392,8 +392,11 @@ class BaseEngine:
             answers = self.store.control(self.id).get("limit_answers") or {}
             decision = answers.get(key)
             if decision is not None:
-                self.store.set_control(self.id, limit_answers={
-                    k: v for k, v in answers.items() if k != key})
+                # Under the control lock, from what is stored then: another
+                # unit's answer posted meanwhile must survive.
+                self.store.update_control(self.id, lambda control: {"limit_answers": {
+                    k: v for k, v in (control.get("limit_answers") or {}).items()
+                    if k != key}})
         if decision == "continue":
             unit["extensions"] = granted + 1
             unit.pop("limit_request", None)

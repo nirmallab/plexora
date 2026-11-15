@@ -88,3 +88,24 @@ def test_identity_and_the_same_file(tmp_path):
     other.write_bytes(b"y" * (3 << 20))               # same name and size, other bytes
     assert not sources.same_file(facts, other)
     assert not sources.same_file(facts, tmp_path / "missing.tif")
+
+
+def test_a_shared_registry_write_does_not_stat_files_it_already_knows(tmp_path, monkeypatch):
+    """Every write to a registry the website shares rewrites every project; a
+    file each entry already identified must not be looked at again, since this
+    runs under the config lock (audit sc-persist-4)."""
+    image = tmp_path / "slide.tif"
+    image.write_bytes(b"x" * 32)
+    table = tmp_path / "cells.csv"
+    table.write_bytes(b"a,b\n")
+    config = {"demo": {"channelFile": str(image), "dataset": {"src": str(table)}}}
+    recorded = sources.record_config(config, "host:LAB", shared=True)
+    assert set(recorded["demo"]["sources"]) == {str(image), str(table)}
+
+    looked = []
+    real = sources._local_file
+    monkeypatch.setattr(sources, "_local_file", lambda value: looked.append(value) or real(value))
+    again = sources.record_config(recorded, "host:LAB", shared=True)
+
+    assert looked == []
+    assert again["demo"]["sources"] == recorded["demo"]["sources"]

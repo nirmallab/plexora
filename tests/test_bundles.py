@@ -696,6 +696,27 @@ def test_make_a_copy(project):
     assert not list(paths.new_projects_root().glob(".importing-*"))
 
 
+def test_a_copy_under_a_name_of_its_own(project):
+    """The website's Reconnect keeps both copies of a project edited on both
+    sides under a name like "slide (browser copy, 2026-11-14)": nothing in
+    the copy may still point at the original's folder or rows."""
+    wanted = "slide (browser copy, 2026-11-14)"
+    target = bundles.copy_project("slide", as_name=wanted)["projects"][0]["target"]
+    assert target == wanted
+    assert _saved_state(target)["gating"] == _saved_state("slide")["gating"]
+    assert _saved_state(target)["channels"] == _saved_state("slide")["channels"]
+    entry = read_config(paths.config_path(Project.root_for(target)))[target]
+    original = read_config(paths.config_path(Project.root_for("slide")))["slide"]
+    assert entry["id"] != original["id"]
+    folder = str(paths.project_dir("slide", Project.root_for("slide")))
+    assert folder + "/" not in json.dumps(entry)
+    assert "/generated/data/slide/" not in json.dumps(entry)
+    assert (paths.project_dir(target, Project.root_for(target)) / f"{target}.db").is_file()
+    # Taken: the next free one, never the original's.
+    again = bundles.copy_project("slide", as_name=wanted)["projects"][0]["target"]
+    assert again == f"{wanted}_2"
+
+
 def test_the_command_line(project, tmp_path, capsys):
     from plexora import cli
 

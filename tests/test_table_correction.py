@@ -178,6 +178,32 @@ def test_a_label_volume_is_read_a_few_planes_at_a_time(monkeypatch):
     assert workers == 1
 
 
+def test_a_mask_drawn_finer_than_its_image_is_read_on_the_image_grid(monkeypatch):
+    """flow-coords-5: a polygon mask drawn `scale` times finer than its image
+    has its level `log2(scale)` on the image's grid; the window around image
+    pixel (col, row) is read there, not at the mask's own level 0."""
+    import dataclasses
+
+    from plexora.server.volume import labels as volume_labels
+
+    monkeypatch.setattr(volume_labels, "project_label_volume", lambda project: None)
+    calls = []
+
+    class Mask:
+        def read_region(self, level, box):
+            calls.append((level, box))
+            return np.zeros((box[3] - box[1], box[2] - box[0]), np.uint32)
+
+    class Providers:
+        segmentation = Mask()
+
+    base = project("p", segmentation="/tmp/mask.ome.tif")
+    finer = dataclasses.replace(base, segmentation=dataclasses.replace(base.segmentation, scale=4))
+    read, _workers = tc.mask_window_reader(finer, Providers())
+    read(10, 20)
+    assert calls == [(2, (10 - tc.WINDOW, 20 - tc.WINDOW, 10 + tc.WINDOW + 1, 20 + tc.WINDOW + 1))]
+
+
 def test_without_a_mask_only_the_coordinates_are_estimated():
     _labels, centres = _grid_mask()
     proposal = tc.propose(_table(centres, 0.5), ROLES, width=400, height=300,

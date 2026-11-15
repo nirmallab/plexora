@@ -554,8 +554,14 @@ class LocalImageProvider:
         """
         from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
-        if not self._pyramid or Path(self._pyramid).exists():
+        if not self._pyramid:
             return self._pyramid
+        if Path(self._pyramid).exists():
+            # A store an interrupted build left without its stamp (before
+            # builds were renamed into place) reads as zeros where it was not
+            # written: derived again, like a missing one.
+            if ome_zarr.is_complete_extension(self._pyramid):
+                return self._pyramid
         try:
             if dicom_wsi.is_dicom_path(self._path):
                 opened = dicom_wsi.open_image(self._path, rgb=self._rgb)

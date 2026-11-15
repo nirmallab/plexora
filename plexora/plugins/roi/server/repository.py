@@ -23,9 +23,8 @@ nothing to notice. The check costs an integer comparison.
 from __future__ import annotations
 
 import json
-import threading
 
-from plexora import api
+from plexora import _process_lock, api
 from plexora.plugins.roi.server import operations, schema
 
 PLUGIN_NAME = "roi"
@@ -59,16 +58,15 @@ class ImageMismatch(Exception):
 #: both read revision 41, both write revision 42, and one of them vanishes
 #: without ever being told it conflicted. The revision check is only as good as
 #: the atomicity of the section it guards.
-_LOCKS: dict[str, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
-
-
+#:
+#: Held across processes too (`plexora._process_lock`): `plexora mcp serve` runs
+#: the ROI capabilities in its own process against the same data root, so an
+#: agent's edit and the viewer's autosave are two processes, and a thread lock
+#: alone let both write revision N+1.
 def _lock_for(datasource):
-    with _LOCKS_GUARD:
-        lock = _LOCKS.get(datasource)
-        if lock is None:
-            lock = _LOCKS[datasource] = threading.Lock()
-        return lock
+    return _process_lock.lock_for(
+        ("roi", datasource),
+        lambda: api.store(datasource, PLUGIN_NAME).directory() / "roi.lock")
 
 
 class ROIRepository:

@@ -374,6 +374,41 @@ def test_build_extension_replaces_a_non_halving_pyramid(tmp_path):
     assert stitched.level_shapes == [[4096, 4096], [2048, 2048], [1024, 1024]]
 
 
+def test_an_interrupted_build_extension_leaves_nothing_to_adopt(tmp_path):
+    """io-image-8: a build stopped after its first level (a crash, a full disk,
+    the app quit) must not leave a store at `dest` that the next open appends:
+    its unwritten chunks read as zeros -- black channels zoomed out."""
+    source = write_ngff(tmp_path / "big.ome.zarr", shape=(2, 3000, 2500), levels=1)
+    dest = tmp_path / "ext.zarr"
+
+    def stop(done, total):
+        raise RuntimeError("interrupted")
+
+    with pytest.raises(RuntimeError):
+        ome_zarr.build_extension(ome_zarr.open_image(source), dest, progress_callback=stop)
+    assert not dest.exists()
+    assert len(ome_zarr.open_image(source, extension=str(dest))) == 1
+
+
+def test_a_provider_rebuilds_an_extension_left_unfinished(tmp_path):
+    """io-image-8: a store an older build left half-written (no completion
+    stamp) is derived again rather than adopted."""
+    from plexora.server.providers.local import LocalImageProvider
+
+    source = write_ngff(tmp_path / "big.ome.zarr", shape=(2, 3000, 2500), levels=1)
+    dest = tmp_path / "ext.zarr"
+    partial = zarr.open_group(str(dest), mode="w")
+    partial.create_array("1", shape=(2, 1500, 1250), dtype="uint16", chunks=(1, 1024, 1024))
+
+    provider = LocalImageProvider(str(source), pyramid=str(dest))
+    built = provider._missing_pyramid()
+
+    assert built == str(dest)
+    derived = zarr.open_group(str(dest), mode="r")
+    assert derived.attrs.get("plexora_extension") is True
+    assert sorted(derived.array_keys()) == ["1", "2"]
+
+
 def test_build_extension_returns_none_when_nothing_is_missing(tmp_path):
     source = write_ngff(tmp_path / "ok.ome.zarr", shape=(1, 512, 512), levels=2)
     assert ome_zarr.build_extension(

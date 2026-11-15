@@ -146,3 +146,21 @@ def test_expiry_and_leave(monkeypatch):
 def test_unknown_session_is_none():
     assert vs.wait_for_work("nope") is None
     assert vs.enqueue("nope", "x") is None
+
+
+def test_a_command_whose_poll_answer_was_lost_is_sent_again():
+    """A poll's answer can be lost (the page navigated while it was held, a
+    network blip), and a tab that runs the first command of a batch and then
+    navigates never runs the rest. The tab's cursor only moves when it starts
+    a command (services/agentBridge.js runCommand), so a command past the
+    cursor it polls with is one it never took: it comes again."""
+    sid = vs.register(project="a")["view_id"]
+    first = vs.enqueue(sid, "open_project", {"name": "b"})
+    second = vs.enqueue(sid, "pan_to", {"x": 1})
+    work = vs.wait_for_work(sid, after=0)
+    assert [c["command_id"] for c in work["commands"]] == [first.command_id, second.command_id]
+    # The tab ran the first (its cursor moved to its seq) and navigated away.
+    again = vs.wait_for_work(sid, after=work["commands"][0]["seq"])
+    assert [c["command_id"] for c in again["commands"]] == [second.command_id]
+    # And once it has taken that one too, nothing comes again.
+    assert vs.wait_for_work(sid, after=again["commands"][0]["seq"])["commands"] == []

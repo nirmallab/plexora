@@ -120,6 +120,20 @@ await check("a folder on a data node names the node, and so does an added folder
     assert.deepEqual(plain(s.asked[2].body), { paths: ["sftp://me@transfer.example/n/files/run"] });
 });
 
+await check("an added folder whose request never reaches the server answers false, with a reason", async () => {
+    const timers = clock();
+    let calls = 0;
+    const request = () => (++calls === 1 ? Promise.resolve(ok(plan()))
+                                         : Promise.reject(new TypeError("Failed to fetch")));
+    const c = builder.createController({ request, timers });
+    await c.start(["/n/files/run"]);
+    // A throw here would leave the dialog's Add folder… disabled for good.
+    const added = await c.addFolder("/n/files/run2");
+    assert.equal(added, false);
+    assert.ok(c.state.error, "the error is there to show");
+    assert.equal(c.state.phase, "plan", "the plan already on screen stays");
+});
+
 await check("a start that is stopped lets go of the scan it started", async () => {
     const timers = clock();
     const s = server((path, method) => {

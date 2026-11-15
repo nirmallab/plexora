@@ -82,6 +82,8 @@ class QcBlurQc {
     destroy() {
         window.clearTimeout(this._pollTimer);
         this._pollTimer = null;
+        // A poll mid-request when the tool closes stops at its job check.
+        this.job = null;
         for (const entry of this.rows.values()) this.dropEntry(entry);
         this.rows.clear();
         this.dropDraft();
@@ -205,9 +207,14 @@ class QcBlurQc {
                     entry.map = null;
                     entry.heat = null;
                 }
-                if (this.view.heat && !entry.map) this.loadMap(entry);
-                if (!entry.evaluation || entry.evaluation.fingerprint !== s.fingerprint
-                        || Math.abs(Number(entry.evaluation.threshold) - entry.value) > 1e-9) {
+                // Neither asked for again while the same one is on its way (a
+                // reload while it loads).
+                if (this.view.heat && !entry.map && entry.mapLoading !== s.fingerprint) {
+                    this.loadMap(entry);
+                }
+                if ((!entry.evaluation || entry.evaluation.fingerprint !== s.fingerprint
+                        || Math.abs(Number(entry.evaluation.threshold) - entry.value) > 1e-9)
+                        && entry.maskLoading !== QcBlurQc.maskKey(entry, entry.value)) {
                     this.loadMask(entry, entry.value);
                 }
             } else {
@@ -258,8 +265,16 @@ class QcBlurQc {
         this.refresh();
     }
 
+    /** Which mask a request asks for: the result's and the threshold. */
+    static maskKey(entry, threshold) {
+        return `${entry.result?.summary?.fingerprint ?? ""}|${threshold}`;
+    }
+
     async loadMap(entry) {
+        const fingerprint = entry.result?.summary?.fingerprint ?? null;
+        entry.mapLoading = fingerprint;
         const answer = await this.api.blurMap({ channel: entry.channel }).catch(() => null);
+        if (entry.mapLoading === fingerprint) entry.mapLoading = null;
         if (!answer || !answer.ok || !answer.data.available) return;
         entry.map = answer.data;
         entry.heat = null;
@@ -268,11 +283,13 @@ class QcBlurQc {
 
     async loadMask(entry, threshold) {
         const seq = ++entry.maskSeq;
+        entry.maskLoading = QcBlurQc.maskKey(entry, threshold);
         const params = { channel: entry.channel };
         if (threshold != null) params.threshold = threshold;
         const answer = await this.api.blurMask(params).catch(() => null);
         // Dragged on: only the latest answer counts.
         if (seq !== entry.maskSeq) return;
+        entry.maskLoading = null;
         if (!answer || !answer.ok || !answer.data.available) return;
         entry.evaluation = answer.data;
         entry.paths = null;

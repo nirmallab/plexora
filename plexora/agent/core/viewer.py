@@ -59,7 +59,10 @@ def _receipted(call, view, ack, *, persisted=False, before=None):
                "result": ack.get("result")},
         revision_before=ack.get("expected_revision"),
         revision_after=ack.get("resulting_revision"),
-        persistent_state="config" if persisted else "none", reversible=True)
+        persistent_state="config" if persisted else "none", reversible=True,
+        # One tab's view, unless persisted: nothing a cached read describes
+        # (audit ai-agent-core-8).
+        bump_revision=persisted)
     return {"view_id": view["view_id"], "ack": {k: ack.get(k) for k in
                                                 ("command_id", "status", "result", "warning",
                                                  "resulting_revision")},

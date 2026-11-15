@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
 
 import polars as pl
+
+from plexora import _process_lock
 
 STATUSES = ("proposed", "accepted", "approved", "locked", "excluded")
 #: `failed_marker` and `no_positive_population` are empty gates (low == high at
@@ -54,13 +55,11 @@ COLUMNS = {
     "detail": pl.Utf8,
 }
 
-_LOCKS: dict = {}
-_GUARD = threading.Lock()
-
-
 def _lock(name):
-    with _GUARD:
-        return _LOCKS.setdefault(name, threading.RLock())
+    """The read-modify-write lock of one project's provenance table:
+    re-entrant, and held across processes (the MCP server is a second one)."""
+    return _process_lock.lock_for(("gating.provenance", name),
+                                  lambda: _store(name).directory() / "provenance.lock")
 
 
 def _store(name):

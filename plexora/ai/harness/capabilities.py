@@ -399,7 +399,15 @@ def run_control(call, inp):
         # cancelling its job; the run ends `stopped` at its next check.
         from plexora.agent import jobs
 
-        jobs.store().cancel(job_id_for(run_id))
+        before, after = jobs.store().cancel(job_id_for(run_id))
+        if after != "cancelling":
+            # The cancel reached nothing: the job finished, is gone, or runs
+            # in the other Plexora process (MCP vs the viewer server).
+            if before in jobs.TERMINAL:
+                raise AgentError("conflict", f"the run already ended ({before}); nothing to stop")
+            raise AgentError("conflict", "this run's job is not running in this Plexora process, so "
+                                         "it could not be stopped from here; stop it where it was "
+                                         "started (the viewer's agent panel or the MCP client)")
         receipt = make_receipt(call, changed=True, before=None,
                                after={"session_id": None, "action": "stop"},
                                persistent_state=STATE, reversible=False, extra={"run_id": run_id})

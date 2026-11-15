@@ -465,6 +465,54 @@ const TABLE = "C:\\data\\cells.csv";
           dialog.cls.has("is-drop-over") && !(world.hint() && world.hint().cls.has("is-shown")));
 }
 
+// -- the website: a drop that comes to nothing says so ---------------------------
+//
+// attachWebDrop's `onFiles` runs in the drop's own turn, before anything is
+// asked -- the home page starts its full-screen first view there. If the drop
+// then yields no path (the reconnect question closed, onboarding cancelled,
+// a mount refused), `onNone` is how the page takes that view down again.
+
+{
+    const world = makeWorld({ desktop: false });
+    world.context.window.PlexoraBackend = { kind: "browser" };
+    const outcomes = [];
+    world.context.window.PlexoraPicks = { take: () => outcomes.shift()() };
+    const file = { name: "slide.ome.tif" };
+    const dropOn = (zone) => {
+        const event = {
+            type: "drop", defaultPrevented: false, relatedTarget: null,
+            preventDefault() { this.defaultPrevented = true; },
+            dataTransfer: { types: ["Files"], files: [file],
+                            items: [{ kind: "file", getAsFile: () => file }] },
+        };
+        for (const fn of zone.listeners.drop || []) fn(event);
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const seen = [];
+    const zone = world.el("div");
+    world.context.attachWebDrop(zone, {
+        count: "many", quiet: true,
+        onFiles: () => seen.push("files"),
+        onDrop: () => seen.push("drop"),
+        onNone: () => seen.push("none"),
+    });
+    for (const [label, take, want] of [
+        ["a website drop whose question was closed (no path) says it came to nothing",
+         () => Promise.resolve([]), "files,none"],
+        ["a website drop whose mount failed says it came to nothing",
+         () => Promise.reject(new Error("refused")), "files,none"],
+        ["a website drop that yields a path is handed on, and is not called nothing",
+         () => Promise.resolve(["/picked/slide.ome.tif"]), "files,drop"],
+    ]) {
+        seen.length = 0;
+        outcomes.push(take);
+        dropOn(zone);
+        await settle();
+        await settle();
+        check(label, seen.join() === want);
+    }
+}
+
 if (failures) {
     console.log(`${failures} failed`);
     process.exit(1);

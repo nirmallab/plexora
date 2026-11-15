@@ -148,13 +148,16 @@ def _user_host(target):
 
 
 def _host_port(host, ssh_opts=()):
-    """`host` and its SSH port: `host:2222` names one, then a `Port=` among the
-    profile's ssh options (what the desktop's ssh is given), then 22."""
+    """`host` and its SSH port: `host:2222` names one, then a `Port` among the
+    profile's ssh options (what the desktop's ssh is given), then 22. ssh reads
+    an option as `Port=2222` or `Port 2222`, so both spellings count here."""
+    import re
+
     if host.count(":") == 1 and host.rsplit(":", 1)[1].isdigit():
         name, port = host.rsplit(":", 1)
         return name, int(port)
     for option in ssh_opts or ():
-        key, _, value = str(option).partition("=")
+        key, _, value = re.sub(r"\s*=\s*|\s+", "=", str(option).strip(), count=1).partition("=")
         if key.strip().lower() == "port" and value.strip().isdigit():
             return host.strip("[]"), int(value.strip())
     return host.strip("[]"), 22

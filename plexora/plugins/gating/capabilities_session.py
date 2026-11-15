@@ -1113,6 +1113,9 @@ def contrast_start(call, inp):
     and gating_answer like any session's."""
     from plexora.agent.evidence import calibration
 
+    # {project: (record before, record after)} of the choices `redo` took
+    # off: a start refused below puts them back.
+    forgotten = {}
     if inp.redo:
         images = [inp.project] if inp.scope == "project" and inp.project else []
         if inp.scope == "dataset" and inp.dataset:
@@ -1123,6 +1126,9 @@ def contrast_start(call, inp):
             except KeyError as exc:
                 raise AgentError("invalid_input", str(exc.args[0]),
                                  detail={"hint": "list_datasets"}) from None
+        # Every image's channels first: one that cannot be read refuses the
+        # start before any image's choices are taken off.
+        wanted = {}
         for project in images:
             channels = None
             if inp.markers:
@@ -1130,16 +1136,33 @@ def contrast_start(call, inp):
 
                 ds = call.session.data(project)
                 channels = [c for c in (views.image_channel(ds, m) for m in inp.markers) if c]
-            calibration.forget_choices(project, channels)
-    options = SessionOptions(
-        scope=inp.scope, project=inp.project, dataset=inp.dataset, markers=inp.markers,
-        purpose="contrast", display_check=inp.check, mode="propose", force=True,
-        audit_sheet=False, replan=False, delegate=False, mirror=inp.mirror,
-        view_id=inp.view_id, mirror_delay_ms=inp.mirror_delay_ms, setup=inp.setup,
-        expression=inp.expression, image_format=inp.image_format, reading=inp.reading,
-        known_guide=inp.known_guide, agent=inp.agent, reuse_answers=inp.reuse_answers)
-    out = start(call, options)
+            wanted[project] = channels
+        for project, channels in wanted.items():
+            before = calibration.load(project)
+            after, names = calibration.forget_choices(project, channels)
+            if names:
+                forgotten[project] = (before, after, names)
+    try:
+        options = SessionOptions(
+            scope=inp.scope, project=inp.project, dataset=inp.dataset, markers=inp.markers,
+            purpose="contrast", display_check=inp.check, mode="propose", force=True,
+            audit_sheet=False, replan=False, delegate=False, mirror=inp.mirror,
+            view_id=inp.view_id, mirror_delay_ms=inp.mirror_delay_ms, setup=inp.setup,
+            expression=inp.expression, image_format=inp.image_format, reading=inp.reading,
+            known_guide=inp.known_guide, agent=inp.agent, reuse_answers=inp.reuse_answers)
+        out = start(call, options)
+    except Exception:
+        # Refused: the choices go back -- unless something wrote the record
+        # since they were taken off, which is then the newer word.
+        for project, (before, after, _names) in forgotten.items():
+            with calibration._lock(project):
+                if calibration.load(project) == after:
+                    calibration.save(project, before)
+        raise
     out["purpose"] = "contrast"
+    if forgotten:
+        # What `redo` took off, so the caller can say so.
+        out["choices_cleared"] = {p: list(names) for p, (_b, _a, names) in forgotten.items()}
     if "packet" not in out and not out.get("setup"):
         out["next"] = (f"{tool_name_of('gating.next')}(session_id) -- the set-up packets "
                        "(the panel's compartments, the pixel size) and then one contrast grid "
@@ -1826,7 +1849,8 @@ def next_packet(call, inp):
             # Briefings (`packets.briefed`) are kept for one reader, so a lane
             # of a parallel session is sent its packets whole.
             several = reader != DEFAULT_READER or inp.parallel > 1
-            sent = (packets.as_sent(packet, record, options, full=not fresh or several)
+            sent = (packets.as_sent(packet, record, options, full=not fresh or several,
+                                    register_sheets=not several)
                     if status in ("packet", "again") else None)
             snapshot = {"images": record["images"], "state": state,
                         "outstanding_kind": record.get("outstanding_kind"),
@@ -2248,8 +2272,8 @@ def record_limit_answers(st, session_id, record, answers) -> dict:
                                                         record["units"].values()})})
         for key in found:
             keys[key] = decision
-    control = st.control(session_id)
-    st.set_control(session_id, limit_answers={**(control.get("limit_answers") or {}), **keys})
+    st.update_control(session_id, lambda control: {
+        "limit_answers": {**(control.get("limit_answers") or {}), **keys}})
     return keys
 
 

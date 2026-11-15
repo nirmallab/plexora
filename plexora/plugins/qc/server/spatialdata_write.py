@@ -12,9 +12,10 @@ AnnData group); this adds what only SpatialData has:
   region (id, category, class, action, level, channels, cycles, score,
   threshold, confidence, source, cells, the result and image it belongs to),
   outlines in the reference image's full-resolution pixels mapped into every
-  coordinate system the labels element is in -- a scale onto the labels'
-  pixel grid (the mask's `scale`) composed with the labels' own
-  transformation. Without a labels element, the image element's; without
+  coordinate system the labels element is in, by the labels' own
+  transformation (a raster mask is on the image's pixel grid). A mask drawn
+  from polygons (`segmentation.scale` > 1) is no labels element, so the
+  image element's places them; so it does without a labels element; without
   either, the identity into "global", and the write says so.
 
 The element is QC's own (`producer` "plexora_qc"): writing it again replaces
@@ -123,9 +124,12 @@ def _transformations(dataset, store, seg_scale):
     """({coordinate system: transformation} for shapes in reference-image
     pixels, note or None)."""
     import spatialdata
-    from spatialdata.transformations import Identity, Scale, Sequence, get_transformation
+    from spatialdata.transformations import Identity, get_transformation
 
-    labels = labels_element(dataset)
+    # A mask drawn finer than the image (`scale` > 1) was drawn from polygons:
+    # no labels element is that mask, so the image's transformation places
+    # the regions (they are in its pixels).
+    labels = labels_element(dataset) if int(seg_scale or 1) == 1 else None
     if labels:
         try:
             sdata = spatialdata.read_zarr(store, selection=("labels",))
@@ -135,11 +139,7 @@ def _transformations(dataset, store, seg_scale):
             element = None
         if element is not None:
             found = get_transformation(element, get_all=True) or {}
-            factor = float(seg_scale or 1)
-            onto = Scale([1.0 / factor, 1.0 / factor], axes=("x", "y")) if factor != 1 \
-                else None
-            return ({system: (Sequence([onto, t]) if onto is not None else t)
-                     for system, t in found.items()} or {"global": Identity()}), None
+            return (dict(found) or {"global": Identity()}), None
     image_name = _element_name(getattr(dataset.project.image, "src", "") or "", "images")
     if image_name:
         try:

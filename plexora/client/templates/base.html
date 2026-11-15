@@ -70,7 +70,7 @@
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20261020_sftp_files" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20261114_audit_leads2" type="text/javascript"></script>
     <!-- Viewer timings as histograms, for the same telemetry. After
          resourceRouting.js, whose direct-node origins it classifies by. -->
     <script src="{{ data.base_url }}/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry" type="text/javascript"></script>
@@ -84,7 +84,7 @@
 
     <!-- Scripts -->
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260929_ai_qc"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20261114_audit_leads2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20261114_audit"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20261114_audit"></script>
@@ -94,7 +94,7 @@
     {# One display curve (linear or asinh) for every surface that draws a channel:
        the tiles, the mini-map, the 3-D view and the channel sidebar. #}
     <script src="{{ data.base_url }}/client/src/js/services/displayCurve.js?v=20261016_log_brightness"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261114_audit"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261114_audit_leads2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20261114_audit"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261110_tile_rows"></script>
@@ -109,7 +109,7 @@
        bookmark's thumbnail (services/bookmarks.js). #}
     <script src="{{ data.base_url }}/client/src/js/services/viewRaster.js?v=20261022_bookmarks"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261022_bookmarks"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261114_audit"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261114_audit_leads2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261022_views3d"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -124,12 +124,12 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20261027_machine_chip"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261029_bucket_datasets"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261114_audit"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261114_audit_leads2"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20261107_contrast_lands"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261114_audit"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261114_audit_leads2"></script>
     {# Before the plugin assets at the bottom of this block: a layer section's
        own script may ask PlexoraLayerSections whether it is one. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerSections.js?v=20260919_layer_cards"></script>
@@ -151,10 +151,10 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261110_file_or_folder" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261110_file_or_folder" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_instant_first_view" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261114_audit_leads2" defer></script>
     {# What a file dropped on the window does where it lands (desktop app):
        right after browsePicker, whose drop registry it extends. #}
-    <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261027_drop_router" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261114_audit_leads2" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -175,7 +175,7 @@
        views/settingsPage.js too, which settings.html loads at the end of its
        own body, well after everything here. #}
     <script src="{{ data.base_url }}/client/src/js/services/failureMessage.js?v=20260923_failure_layout" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261114_audit" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261114_audit_leads2" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20261020_sftp_files" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
@@ -240,7 +240,7 @@
        never on load. After confirmDialog.js and toast.js, on the same terms
        (a <dialog> of its own, its CSS in main.css); the website only, and
        inert there without the host page's PlexoraStore. #}
-    <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261110_instant_first_view" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261114_audit_leads2" defer></script>
     {% else %}
     {# The desktop's slow-read notices (PlexoraEnvelope in desktop mode):
        "Waiting on the network" and "Reading a slow drive", judged from how
@@ -293,21 +293,21 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261112_compressed_pyramids" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261114_audit_leads2" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
-    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261114_audit_leads2" defer></script>
     {# A project as one `.plexora` file: Export, then Import (which draws with
        what the first sets up, PlexoraBundleKit and PlexoraBundleTransport).
        After dropRouter.js, whose executor registry the import joins. #}
     <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261112_approximate_bundles" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261112_approximate_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261114_audit_leads2" defer></script>
     {% if data.backend == 'browser' %}
     {# The website's transport for those two (PlexoraBundleWeb): its Python
        decides, and the bytes move in a worker of the page's own
        (workers/bundleWorker.js). After both, whose server transport it
        replaces; its jobs run in the host page (services/shell.js). #}
-    <script src="{{ data.base_url }}/client/src/js/services/bundleWeb.js?v=20261114_audit" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/bundleWeb.js?v=20261114_audit_leads2" defer></script>
     {% endif %}
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261114_audit" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at

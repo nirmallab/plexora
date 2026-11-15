@@ -44,6 +44,7 @@ from typing import Any, Mapping
 
 from plexora.server.models import nodes as node_registry
 from plexora.server.providers.base import (
+    NodeRefused,
     NodeVersionMismatch,
     ResourceError,
     ResourceUnavailable,
@@ -214,7 +215,10 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
         retries = False
 
     url = node.url(path)
-    sent = {TOKEN_HEADER: node.token or ""}
+    # Accept-Encoding here, not only as the pool's default: urllib3 sends a
+    # pool's headers only to a request that passes none, and this one always
+    # passes the token -- so the default never reached a node.
+    sent = {"Accept-Encoding": "gzip", TOKEN_HEADER: node.token or ""}
     if headers:
         sent.update(headers)
 
@@ -403,8 +407,8 @@ def _check(node, response, expected_api, stream=False, allow_status=(), path="")
         # Blaming the token for both sent users to re-register a node that was
         # answering them perfectly well.
         if detail and "token" not in detail.lower():
-            raise ResourceError(f"data node {node.name!r} refused: {detail}")
-        raise ResourceError(
+            raise NodeRefused(f"data node {node.name!r} refused: {detail}")
+        raise NodeRefused(
             f"data node {node.name!r} refused this server's token. Re-register "
             f"the node with the token it was started with.")
     if status == 404:

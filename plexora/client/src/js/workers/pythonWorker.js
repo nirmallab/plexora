@@ -1438,7 +1438,11 @@ async function mountDerived() {
     return count;
 }
 
+//: A picked folder (or slide, DICOM, NDPIS set) at `dir`. A tab's Python kept
+//: across a reload still holds the page before's mount there: it is replaced
+//: by the new page's files, or mounting over it would fail (EBUSY).
 function mountTree({ dir, blobs }) {
+    if (py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node)) py.FS.unmount(dir);
     py.FS.mkdirTree(dir);
     py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), { blobs }, dir);
     return blobs.length;
@@ -1456,7 +1460,8 @@ function sourceWrite(source, staged) {
     const bytes = py.FS.readFile(staged);
     const file = new File([bytes], source.split("/").pop(), { lastModified: Date.now() });
     swapPicked(source, file);
-    self.postMessage({ event: { kind: "sourceWrite", source, file } });
+    // The request it was written in: only that one's answer waits for the save.
+    self.postMessage({ event: { kind: "sourceWrite", source, file, request: current ? current.id : null } });
     return true;
 }
 
@@ -1701,7 +1706,7 @@ async function drain() {
         }
         const began = performance.now();
         const outer = current;
-        current = { op, path: op === "request" ? args.path : null, since: began };
+        current = { id, op, path: op === "request" ? args.path : null, since: began };
         const nested = busy;
         const outerStep = inStep;
         busy = true;

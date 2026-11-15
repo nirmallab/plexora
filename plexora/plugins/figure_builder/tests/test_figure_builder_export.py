@@ -465,6 +465,48 @@ def test_the_provenance_names_what_the_export_could_not_reproduce():
     assert "cell_explorer" in text
 
 
+def test_a_z_stack_view_is_not_reported_as_an_unrendered_overlay(figure):
+    """`scene.plugins.volume` is core's record of which plane or projection
+    the panel shows -- the plane is re-rendered, nothing about it is lost."""
+    from plexora.plugins.figure_builder.server import provenance
+
+    document = repository.load(figure)
+    panel = document["panels"]["pnl_1"]
+    panel["scene"]["plugins"] = {
+        "volume": {"version": 1, "state": {"mode": "plane", "z": 3, "cut": "plane z 3"}},
+        "cell_explorer": {"version": "2", "state": {}}}
+    with render.SourceImage("demo") as source:
+        report = render.panel_report(source, panel["scene"], 40, 300)
+    assert report["missing_overlays"] == ["cell_explorer"]
+    text = "\n".join(provenance.lines(document, [(panel, report)],
+                                      {"format": "pdf", "dpi": 300}))
+    assert "overlay volume" not in text
+    assert "plane z 3" in text
+
+
+def test_the_provenance_page_states_every_panel_it_could_not_draw_faithfully(figure):
+    """Missing sources, stale planes and 3-D panels taken from the viewer's
+    picture are export warnings; the page appended to the PDF said none of it.
+    And a hidden channel is not drawn, so it is not listed as drawn."""
+    from plexora.plugins.figure_builder.server import provenance
+
+    document = repository.load(figure)
+    panel = document["panels"]["pnl_1"]
+    panel["scene"]["channels"][1]["visible"] = False
+    text = "\n".join(provenance.lines(document, [
+        (panel, {"missing_source": True, "label": "A"}),
+        (panel, {"stale_view": True, "label": "B"}),
+        (panel, {"client_rendered": True, "label": "C"}),
+    ], {"format": "pdf", "dpi": 300}))
+    limits = text.split("NOT REPRODUCED IN THIS EXPORT", 1)
+    assert len(limits) == 2, text
+    assert "source image is no longer available" in limits[1] and "A" in limits[1]
+    assert "plane they were captured on" in limits[1]
+    assert "3-D view drew" in limits[1]
+    assert "channel DNA" in text
+    assert "channel CD8" not in text
+
+
 # -- layout arithmetic ---------------------------------------------------
 
 def test_a_scale_bar_is_never_invented():

@@ -471,11 +471,23 @@ def surface_sections(datasource, surface_id):
     project, missing = _project(datasource)
     if missing:
         return missing
-    found, error = _current(project, surface_id)
-    if error:
-        return error
-    layer, surface, manifest = found
-    tag = (manifest.get("lods") or [{}])[-1].get("sha256", "")
+    layer = _surface_layer(project, surface_id)
+    if layer is None:
+        return jsonify(error=f"{project.name} has no surface {surface_id!r}"), 404
+    # The manifest first: a plane already cut answers from the cache without
+    # reading the mesh, which is loaded once for the planes that are not.
+    manifest = surface_store.read_manifest(layer) or {}
+    lods = manifest.get("lods") or []
+    if not lods:
+        return jsonify(error="this surface has not been built yet", status=layer.status), 409
+    tag = lods[-1].get("sha256", "")
+    loaded = []
+
+    def mesh():
+        if not loaded:
+            loaded.append(surface_store.current_mesh(layer)[0])
+        return loaded[0]
+
     out = {}
     for name, axis, key in (("xy", "z", "z"), ("xz", "y", "y"), ("yz", "x", "x")):
         raw = request.args.get(key)
@@ -485,7 +497,7 @@ def surface_sections(datasource, surface_id):
             value = float(raw)
         except ValueError:
             return jsonify(error=f"{key} is a number"), 400
-        cut = sections.cached((tag, axis, value), lambda a=axis, v=value: sections.section(surface, a, v))
+        cut = sections.cached((tag, axis, value), lambda a=axis, v=value: sections.section(mesh(), a, v))
         out[name] = {key: value, "objects": cut}
     return jsonify(out)
 

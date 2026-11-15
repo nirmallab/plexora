@@ -199,6 +199,9 @@ def apply_to_dataset(call, inp):
             persistent_state=STATE,
             undo_hint=gate_undo_hint(name, inp.marker, before, revision_after),
             extra={"parent_operation_id": call.operation_id, "dataset": cohort.name})
+        # As `set_gate` does: without the row an agent's cohort gate would read
+        # as the user's hand-set one (`model._gated_by`).
+        _record_agent_write(child, ds, inp.marker, after, receipt.operation_id)
         counted = model.gated_summary(ds, inp.marker)
         done.append({"project": name, "operation_id": receipt.operation_id,
                      "n_positive": counted["n_positive"], "n_cells": counted["n_cells"],
@@ -388,8 +391,6 @@ class RestoreInput(ProjectInput):
 def restore_gates(call, inp):
     import json
 
-    from plexora.plugins.gating.server import provenance
-
     ds = call.data
     target = _snapshot_path(ds.name, inp.snapshot)
     if not target.is_file():
@@ -398,17 +399,18 @@ def restore_gates(call, inp):
     saved = json.loads(target.read_text(encoding="utf-8"))
     revision_before = model.revision(ds)
     try:
-        revision_after = model.put_rows(ds, saved["rows"],
-                                        expected_revision=inp.expected_revision)
+        # A gate locked or approved since the reset is left as it is, its
+        # provenance row too (`model.put_rows`).
+        revision_after, kept = model.put_rows(ds, saved["rows"],
+                                              expected_revision=inp.expected_revision,
+                                              provenance_rows=saved.get("provenance"))
     except model.GateConflict as exc:
         raise _conflict(exc) from exc
-    if saved.get("provenance"):
-        rows = provenance.read(ds.name)
-        rows.update(saved["provenance"])
-        provenance._write(ds.name, rows)
+    restored = [m for m in (saved.get("provenance") or {}) if m not in kept]
     receipt = make_receipt(
-        call, changed=revision_after != revision_before or bool(saved.get("provenance")),
+        call, changed=revision_after != revision_before or bool(restored),
         before=None, after={"snapshot": inp.snapshot,
+                            "kept": dict(kept),
                             "thresholded": [g["marker"] for g in model.all_gates(ds)
                                             if g["thresholded"]]},
         revision_before=revision_before, revision_after=revision_after,

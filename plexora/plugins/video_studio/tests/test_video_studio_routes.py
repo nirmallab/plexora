@@ -225,6 +225,29 @@ def test_a_preset_previews_without_saving(client):
     assert client.get(f"{API}/videos").get_json()["videos"] == []
 
 
+def test_a_preview_with_the_bars_facts_does_not_reread_the_image(client, monkeypatch):
+    """The bar posts the facts /api/state gave it (fingerprint included) on
+    every parameter change; reading the volume description again for each
+    one is a file read, or a node round trip, per slider step."""
+    from plexora.plugins.video_studio.server import facts as facts_mod
+    state = client.get(f"{API}/state?datasource=demo").get_json()["facts"]
+    reads = []
+    real = facts_mod.dataset_facts
+    monkeypatch.setattr(facts_mod, "dataset_facts",
+                        lambda ds: reads.append(ds) or real(ds))
+    response = client.post(f"{API}/presets/build", json={
+        "preset": "z_sweep", "datasource": "demo", "facts": {**state, **STACK_FACTS}})
+    assert response.status_code == 200
+    document = response.get_json()["document"]
+    assert document["source"]["depth"] == 4
+    assert document["source"]["fingerprint"] == state["fingerprint"]
+    assert reads == []
+    # Facts without a fingerprint (an agent, an old page) still read the image.
+    client.post(f"{API}/presets/build", json={
+        "preset": "z_sweep", "datasource": "demo", "facts": STACK_FACTS})
+    assert reads == ["demo"]
+
+
 @pytest.mark.parametrize("body", [
     {"preset": "nope", "datasource": "demo"},
     # The demo image is flat: a z-sweep is refused, not built of nothing.
@@ -339,6 +362,19 @@ def test_an_interpolated_plane_is_422_with_code_integrity(client):
         assert response.status_code == 422, keyframe
         assert response.get_json()["code"] == "integrity"
     assert client.get(f"{API}/videos/{video_id}").get_json()["document"]["revision"] == 0
+
+
+def test_a_video_with_a_running_export_is_not_deleted(client):
+    video_id = _create(client)
+    started = client.post(f"{API}/videos/{video_id}/exports", json={
+        "width": W, "height": H, "fps": FPS, "format": "png"})
+    assert started.status_code == 200, started.get_json()
+    export_id = started.get_json()["export_id"]
+    response = client.delete(f"{API}/videos/{video_id}")
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "export_running"
+    assert client.get(f"{API}/videos/{video_id}").status_code == 200
+    client.delete(f"{API}/videos/{video_id}/exports/{export_id}")
 
 
 def test_duplicate_and_delete(client):

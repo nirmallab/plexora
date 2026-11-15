@@ -970,12 +970,15 @@ class ImageViewer {
 
         // Add event mouse handler (cell selection)
         this.viewer.addHandler("canvas-nonprimary-press", (e) => {
-            // Right click (cell selection)
-            if (event.button === 2) {
+            // Right click (cell selection). The event's own button, not the
+            // global `event`, which only some browsers still set.
+            if (e.button === 2) {
                 const { numericData } = this;
-                const { source } = e.eventSource;
                 const tiledImage = this.referenceItem();
                 if (!tiledImage) return undefined;
+                // The reference item's own source: `viewer.source` is world
+                // item 0's, which can be a layer's ground (no getImagePixel).
+                const source = tiledImage.source?.getImagePixel ? tiledImage.source : e.eventSource.source;
                 const imageCoords = source.getImagePixel(tiledImage, e.position);
                 return numericData.getNearestCell(...imageCoords).then((item) => {
                     if (item !== null && item !== undefined) {
@@ -997,7 +1000,9 @@ class ImageViewer {
         let primaryTracker = new OpenSeadragon.MouseTracker({
             element: that.viewer.canvas,
             nonPrimaryReleaseHandler(event) {
-                if (that.selectButton.classList.contains('selected') && !that.lassoing) {
+                // Nothing assigns `selectButton` today; without the `?.` every
+                // right or middle release threw.
+                if (that.selectButton?.classList.contains('selected') && !that.lassoing) {
                     const webPoint = event.position;
                     // Convert that to viewport coordinates, the lingua franca
                     // of OpenSeadragon coordinates. Through the view transform:
@@ -2386,10 +2391,20 @@ class ImageViewer {
             return;
         }
         this.ready = false;
-        if (this.idCount) {
-            await this.loadBuffers();
+        try {
+            if (this.idCount) {
+                await this.loadBuffers();
+            }
+        } catch (error) {
+            // A failed cell-value fetch: draw what is there, and let the
+            // next repaint ask again. `ready` left false would drop every
+            // later repaint for the life of the page, and the marker key
+            // left set would tell the next one the values were on the GPU.
+            this.markerCacheKey = null;
+            console.error("imageViewer: could not load the cell values for a repaint", error);
+        } finally {
+            this.ready = true;
         }
-        this.ready = true;
         // Trigger change of full cache
         this.viewerManagers.forEach(({ viewer }) => {
             viewer.forceRedraw();
@@ -2874,12 +2889,17 @@ class ImageViewer {
         const groups = new Map();
         const tileSpan = this.centroidManifest.tile_size * (2 ** level);
         const coordinateScale = 2 ** (this.config.extraZoomLevels || 0);
+        // The server files a cell past the image's edge under the edge tile
+        // (centroid_tiles._write_level clips the key): key it the same, or
+        // it lands under a tile nobody asks for and is never drawn.
+        const maxTx = Math.max(0, Math.ceil(this.centroidManifest.width / tileSpan) - 1);
+        const maxTy = Math.max(0, Math.ceil(this.centroidManifest.height / tileSpan) - 1);
         for (let offset = 0; offset + 12 <= view.byteLength; offset += 12) {
             const id = view.getUint32(offset, true);
             const x = view.getFloat32(offset + 4, true);
             const y = view.getFloat32(offset + 8, true);
-            const tx = Math.max(0, Math.floor(x / tileSpan));
-            const ty = Math.max(0, Math.floor(y / tileSpan));
+            const tx = Math.min(maxTx, Math.max(0, Math.floor(x / tileSpan)));
+            const ty = Math.min(maxTy, Math.max(0, Math.floor(y / tileSpan)));
             const key = this.centroidTileKey(level, tx, ty);
             if (!groups.has(key)) {
                 groups.set(key, { ids: [], centers: [] });
@@ -3068,11 +3088,24 @@ class ImageViewer {
     }
 
     /** The centroid filter narrowed to the planes on screen: z within half a
-     *  plane of them (low < z <= high, the rule `withFrame` uses for t). */
+     *  plane of them. The server keeps low < z <= high (the rule `withFrame`
+     *  uses for t), but a cell's plane is floor(z + 0.5) everywhere else (ROI
+     *  mapping, the click index): z0 - 0.5 <= z < z1 + 0.5. Both bounds are
+     *  moved to the float32 just below (the server holds the filter columns
+     *  as float32 and compares in it), so a half-way z (a cell spanning two
+     *  planes) is drawn on the plane its ROI counts it on. */
     centroidRequestFilter() {
         const planes = this.centroidPlanes;
         if (!planes) return this.centroidFilter;
-        return { ...this.centroidFilter, [planes.column]: [planes.z0 - 0.5, planes.z1 + 0.5] };
+        const below = (value) => {
+            const bits = new Float32Array([value]);
+            const word = new Int32Array(bits.buffer);
+            if (bits[0] === 0) return -1.401298464324817e-45;
+            word[0] += bits[0] > 0 ? -1 : 1;
+            return bits[0];
+        };
+        return { ...this.centroidFilter,
+            [planes.column]: [below(planes.z0 - 0.5), below(planes.z1 + 0.5)] };
     }
 
     /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,

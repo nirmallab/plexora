@@ -883,6 +883,7 @@ def _absorb(engine, decided, *, because=None):
     because = because or f"which the {decided.get('detector')} check decided"
     mask = engine.mask_of(decided)
     klass = decided.get("class")
+    took = False
     for other in engine.units_of("candidate", decided["project"]):
         if other is decided or other.get("origin") == "check" or \
                 other["state"] not in ("awaiting_audit", "awaiting_confirm") or \
@@ -895,6 +896,9 @@ def _absorb(engine, decided, *, because=None):
             decided["channels"] = list(dict.fromkeys([*decided.get("channels", []),
                                                       *other.get("channels", [])]))
             engine.close(other, "merged", f"inside {decided['id']}, {because}")
+            took = True
+    if took:
+        engine.store_channels(decided)
 
 
 APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,

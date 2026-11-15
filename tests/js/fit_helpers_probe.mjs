@@ -105,6 +105,24 @@ function load({ cores = 10, memory = 8 } = {}) {
     check(ask({ op: "ready" }).ready === false && workers.length === 1, "and is not replaced");
 }
 
+// The last helper dies with fits queued behind its own: they fail too (Python
+// fits them itself), never "pending" for good.
+{
+    const { workers, ask, resolveReady } = load({ cores: 4 });
+    resolveReady({});
+    await flush(); await flush();
+    workers[0].reply({ op: "ready" });
+    const fit = () => ask({ op: "start", values: { dtype: "float64", data: new Uint8Array(8) }, code: { data: new Uint8Array(4) }, code_kind: "pyc", code_id: "c1" });
+    const running = fit();
+    const queued = fit();
+    check(ask({ op: "result", id: queued.id }).pending === true, "a second fit queues behind the first");
+    workers[0].onerror(new Error("out of memory"));
+    check(typeof ask({ op: "result", id: running.id }).failed === "string", "the running fit fails with its helper");
+    check(typeof ask({ op: "peek", id: queued.id }).done === "boolean" && ask({ op: "peek", id: queued.id }).done === true
+          && typeof ask({ op: "result", id: queued.id }).failed === "string",
+          "a fit queued when the last helper died fails too, not pending for good");
+}
+
 // A helper that cannot load: the next one is tried, and none is ready.
 {
     const { workers, ask, resolveReady } = load();

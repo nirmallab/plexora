@@ -114,6 +114,8 @@ function emptyMesh(header) {
     out.set(bytes, 8);
     return out.buffer;
 }
+//: When an array, /suggest answers wait here until the probe resolves them.
+let heldSuggest = null;
 function fetchImpl(url, options = {}) {
     const request = { url, options, aborted: false };
     requests.push(request);
@@ -121,6 +123,11 @@ function fetchImpl(url, options = {}) {
     if (!licensed && /surfaces(\/(suggest|preview|estimate))?(\?|$)/.test(url)
             && !(url.endsWith("/surfaces") && !options.method)) {
         return Promise.resolve(respond(403, { success: false, license: LICENSE }));
+    }
+    if (url.includes("/suggest") && heldSuggest) {
+        return new Promise((resolve) => heldSuggest.push({ url, answer: (otsu) => resolve(respond(200, {
+            default: otsu, thresholds: { otsu },
+            histogram: { lo: 0, hi: otsu * 2, counts: new Array(256).fill(1), log: true } })) }));
     }
     if (url.includes("/suggest")) {
         return Promise.resolve(respond(200, {
@@ -251,6 +258,26 @@ await sleep(30);
 const posted = requests.find((r) => r.url.endsWith("/surfaces") && r.options.method === "POST");
 check("create posts the request", posted && JSON.parse(posted.options.body).iso === 1600);
 check("and takes the new layer on, closing the dock", adopted === 1 && !Studio.isOpen());
+
+// -- a late suggestion ------------------------------------------------------------------
+
+await Studio.open({ channel: "CD31" });
+const late = Studio._state();
+heldSuggest = [];
+late.ui.source.value = "DNA";
+late.ui.source.fire("change");
+late.ui.source.value = "Area";
+late.ui.source.fire("change");
+const [forDna, forArea] = heldSuggest;
+forArea.answer(222);
+await sleep(10);
+forDna.answer(999);
+await sleep(10);
+check("a late suggestion for the previous channel does not replace the current one's",
+      late.channel === "Area" && late.suggestion?.thresholds?.otsu === 222 && late.iso === 222,
+      `channel=${late.channel} otsu=${late.suggestion?.thresholds?.otsu} iso=${late.iso}`);
+heldSuggest = null;
+Studio.close();
 
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);

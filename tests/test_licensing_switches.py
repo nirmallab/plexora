@@ -152,3 +152,38 @@ def test_the_trial_command_says_when_none_is_offered(platform, capsys):
     lines = []
     assert cli._trial(type("Args", (), {"email": None})(), lines.append) == 1
     assert lines[0].startswith("Plexora is not offering trials at the moment.")
+
+
+def test_a_stale_answer_is_shown_at_once_and_asked_again_in_the_background(platform, client, license_service,
+                                                                         monkeypatch):
+    """`GET /license/status` is a page load: once anything is known it must not
+    wait on the platform (audit lead ai-telemetry-5). The first answer ever
+    is still asked for, so a fresh install's Settings is right first time."""
+    import threading
+
+    client.get("/license/status")
+    assert platform["asked"] == 1
+    switches._memo["at"] -= switches.MAX_AGE + 1          # an hour on: stale
+    saved = json.loads(switches._path().read_text())
+    saved["at"] -= switches.MAX_AGE + 1
+    switches._path().write_text(json.dumps(saved))
+    asked_on, release = [], threading.Event()
+
+    def slow(url):
+        asked_on.append(threading.current_thread())
+        release.wait(5)
+        return {"plexora": {"off": [], "trial": True}}
+
+    monkeypatch.setattr(switches, "_fetch", slow)
+    started = time.monotonic()
+    info = client.get("/license/status").get_json()["license"]
+    assert time.monotonic() - started < 2
+    # The last answer, shown now.
+    assert {row["entitlement"] for row in info["unlocks"]} == {"ai", "transcriptomics", "mcp"}
+    release.set()
+    for _ in range(100):
+        if asked_on and not asked_on[0].is_alive():
+            break
+        time.sleep(0.02)
+    assert asked_on and asked_on[0] is not threading.current_thread()
+    assert switches.held(network=False) == ()

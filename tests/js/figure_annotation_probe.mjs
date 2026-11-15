@@ -1026,6 +1026,21 @@ close("Shift holds a node drag flat on the PAGE, whatever the rotation",
 close("and moves it as far along that axis as the pointer went",
     constrained.dx, 30, 1e-9);
 
+// A click on a node only selects it: no write, no undo step, no save.
+commits.length = 0;
+const nodeClicked = run(`
+    ${__editing}
+    const made = place(0);
+    canvas.pointEditor.enter(made.annotation_id);
+    canvas.pointEditor.selected = new Set([1]);
+    canvas.pointEditor.beginDrag(press(5, 5), 1, null);
+    canvas.pointerUp(press(5, 5));
+    return canvas.pointEditor.selected.has(1);
+`);
+check("clicking a node without moving it selects it and commits nothing",
+    [nodeClicked, commits.map((batch) => batch.map((op) => op.op))],
+    [true, [["add_annotation"], ["update_annotation"]]]);
+
 // -- mirroring -------------------------------------------------------------
 //
 // Flip is the one command in the spatial vocabulary that means something for a

@@ -194,21 +194,13 @@ def _process_alive(pid):
     Never `os.kill` on Windows. There, Python's os.kill ignores the signal for
     anything but the two console events and calls TerminateProcess, so the
     POSIX "send signal 0 to test liveness" idiom would kill the very process it
-    is asking about.
+    is asking about. `server_records._alive` asks the Windows kernel instead
+    (OpenProcess); it used to answer True for every pid here, so an adopter
+    was never pruned and a sidecar adopted once was never stopped.
     """
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if os.name == "nt":
-        return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-    return True
+    from plexora.server.models.server_records import _alive
+
+    return _alive(pid)
 
 
 def _sidecar_alive(port, token, timeout=2):

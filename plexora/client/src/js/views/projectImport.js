@@ -477,6 +477,10 @@
     async function moveTo(ui, location) {
         ui.location = location;
         ui.rereading = true;
+        // Two quick changes put two previews in flight, landing in either
+        // order: only the latest may clear re-reading (which holds Import
+        // off) or be drawn.
+        const ticket = ui.rereadSeq = (ui.rereadSeq || 0) + 1;
         paintPreviewFoot(ui);
         let preview;
         try {
@@ -484,14 +488,17 @@
             // space is that disk's.
             preview = await transport().preview(ui.source, location);
         } catch (error) {
+            if (ticket !== ui.rereadSeq) return;
             ui.rereading = false;
-            if (current !== ui) return;
+            if (current !== ui || ui.phase !== "preview") return;
             ui.shell.setStatus(error.message || String(error), true);
             paintPreviewFoot(ui);
             return;
         }
+        if (ticket !== ui.rereadSeq) return;
         ui.rereading = false;
-        if (current !== ui) return;
+        // An import started meanwhile is not drawn over.
+        if (current !== ui || ui.phase !== "preview") return;
         const kept = ui.choices;
         ui.preview = preview;
         ui.choices = {};

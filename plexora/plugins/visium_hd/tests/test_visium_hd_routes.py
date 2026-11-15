@@ -221,6 +221,16 @@ def test_the_square_under_the_cursor(client, project):
     assert outside == {"inside": False}
 
 
+
+def test_an_unknown_gene_does_not_shift_the_others(client, project):
+    """Each name keeps its own count; an unknown one reads as 0."""
+    _built(project)
+    fine = project["truth"]["fine"]
+    body = client.get("/plugins/visium_hd/bin?datasource=hd&layer=bins"
+                      "&x=33.5&y=22.1&genes=NOPE,INS,GCG").get_json()
+    assert body["counts"] == {"NOPE": 0, "INS": int(fine[0, 22, 33]),
+                              "GCG": int(fine[1, 22, 33])}
+
 def test_state_round_trips_per_project(client, project):
     saved = {"selected": ["INS"], "colors": {"INS": "#ff0000"}, "binUm": 8}
     assert client.post("/plugins/visium_hd/state",

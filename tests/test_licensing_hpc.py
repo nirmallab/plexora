@@ -48,6 +48,26 @@ def test_a_proof_for_another_node_or_out_of_time_is_refused():
     assert not tokens.verify_proof("node-token", future, "ai:gating")
 
 
+def test_a_proof_survives_a_few_minutes_of_clock_skew_both_ways(monkeypatch):
+    """ai-telemetry-4: the primary reuses a cached proof until a minute before
+    it runs out by ITS clock; a node a few minutes ahead must still take it,
+    as it takes a fresh proof from a primary a few minutes ahead."""
+    now = time.time()
+    proof = tokens.mint_proof("node-token", ["ai"], now=now)
+    expires = now + tokens.PROOF_TTL_SECONDS
+    # The node's clock 3 minutes ahead, near the end of the proof's hour.
+    assert tokens.verify_proof("node-token", proof, "ai:gating", now=expires + 120)
+    # The primary's clock 3 minutes ahead, a fresh proof.
+    assert tokens.verify_proof("node-token", proof, "ai:gating", now=now - 180)
+    # The primary never hands out a cached proof the node could already see as stale.
+    tokens._cache.clear()
+    monkeypatch.setattr(tokens, "_current_grants", lambda: ("ai",))
+    first = tokens.proof_for("node-token")
+    monkeypatch.setattr(tokens.time, "time", lambda: now + tokens.PROOF_TTL_SECONDS - 200)
+    assert tokens.proof_for("node-token") != first
+    tokens._cache.clear()
+
+
 def test_the_primary_attaches_a_proof_only_when_licensed_and_only_for_pro_work(pro_license):
     assert tokens.headers_for("t", "roi.map_to_cells") == {}
     headers = tokens.headers_for("t", "gating.autogate.profile")

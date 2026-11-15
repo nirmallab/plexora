@@ -1166,13 +1166,27 @@ PlexoraPage.register(function () {
     // Browse pick is (attachWebDrop) -- a run folder, an OME-Zarr, a slide of
     // any size. One opens; several go to the import dialog, as above.
     if (landing && typeof attachWebDrop === "function") {
+        //: Whether this drop's `onFiles` started the first view.
+        let previewing = false;
         attachWebDrop(landing, {
             count: "many",
             quiet: true,
             // The image on screen in the drop's own turn, read by the page
             // (services/firstView.js), while it is mounted and imported.
             onFiles: (files) => {
-                if (files.length === 1 && !busy()) window.PlexoraFirstView?.begin?.({file: files[0]});
+                previewing = false;
+                if (files.length === 1 && !busy() && window.PlexoraFirstView?.begin) {
+                    window.PlexoraFirstView.begin({file: files[0]});
+                    previewing = true;
+                }
+            },
+            // Nothing came of the drop (the reconnect question closed,
+            // onboarding cancelled, the mount refused): the first view it
+            // started covers the whole page, so it goes now rather than at
+            // its three-minute timeout.
+            onNone: () => {
+                if (previewing) window.PlexoraFirstView?.done?.("cancelled");
+                previewing = false;
             },
             enabled: () => !busy(),
             onOver: (lit) => {

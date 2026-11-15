@@ -163,6 +163,11 @@ window.PlexoraAgentBridge = (function () {
     const contrastQueue = [];
     let contrastRunning = false;
     let contrastShown = 0;
+    //: Bumped by `stopShow` (a restore): a channel already under way checks
+    //: it after every wait and touches nothing once it has moved on. The
+    //: slot it is dragging, so a drag in flight can be stopped at once.
+    let showEpoch = 0;
+    let showSlot = null;
     //: Commands that change the view, held while a contrast show plays and run
     //: in order once it is over, so a look the session sends meanwhile never
     //: cuts a marker off half-adjusted -- and is acknowledged at once, so the
@@ -175,6 +180,11 @@ window.PlexoraAgentBridge = (function () {
                                 "highlight_cells", "show_shapes", "set_active_marker",
                                 "set_color_by", "set_cell_render_mode", "show_evidence"]);
     const heldCommands = [];
+    //: The run of what was held, while it runs (`releaseHeld`): every command
+    //: polled meanwhile waits for it, so one command at a time holds across
+    //: the end of a show -- a newer look never runs beside a held one, and a
+    //: capture is of the look already acknowledged as done.
+    let draining = null;
 
     // -- small things -------------------------------------------------------
 
@@ -748,6 +758,7 @@ window.PlexoraAgentBridge = (function () {
                 await sendAck(command, { status, result, warning: warnings.join("; ") || undefined });
             },
         };
+        if (draining) await draining;
         const handler = HANDLERS[command.type];
         if (handler && contrastPlaying() && HELD_DURING_SHOW.has(command.type)) {
             holdForShow(command);
@@ -1657,6 +1668,10 @@ window.PlexoraAgentBridge = (function () {
         const reason = options && options.reason ? String(options.reason) : null;
         const held = lease;
         lease = null;
+        // Before anything yields: a show still playing would go on moving the
+        // slot it addresses by index -- the user's channel once it is rebuilt
+        // -- and what it held back would run after it and lease again.
+        stopShow({ dropHeld: !(options && options.keepHeld) });
         const restored = [];
         const errors = [];
         const step = async (name, fn) => {
@@ -1773,7 +1788,6 @@ window.PlexoraAgentBridge = (function () {
         // The user's arrangement is back; a calibration the session made
         // replaces the windows nobody set (viewerSidebar.syncGatingContrast),
         // now that saving is the user's again.
-        contrastQueue.length = 0;
         window.dispatchEvent(new CustomEvent("plexora:display-contrast-changed",
                                              { detail: { reason: "restore" } }));
         touch();
@@ -1785,6 +1799,26 @@ window.PlexoraAgentBridge = (function () {
     /** Whether a contrast show is playing, or has channels still to play. */
     function contrastPlaying() {
         return contrastRunning || contrastQueue.length > 0;
+    }
+
+    /**
+     * End a show for a restore: nothing queued is staged, a channel under way
+     * stops where it is (its drag's ease token taken, as a hand on the slider
+     * takes it; `performContrast` checks the epoch after each wait), and --
+     * unless `dropHeld` is false (a `restore_viewer` that was itself held, run
+     * in order, where what follows it in the list is newer) -- the looks held
+     * behind the show are dropped: they were the agent's, and the viewer is
+     * the user's now.
+     */
+    function stopShow({ dropHeld = true } = {}) {
+        contrastQueue.length = 0;
+        if (dropHeld) heldCommands.length = 0;
+        if (!contrastRunning) return;
+        showEpoch += 1;
+        if (showSlot) {
+            showSlot.rangeEase = null;
+            showSlot.rangeEaseTarget = null;
+        }
     }
 
     /**
@@ -1802,7 +1836,12 @@ window.PlexoraAgentBridge = (function () {
     }
 
     /** Run what was held, in order, once no show is playing. */
-    async function releaseHeld() {
+    function releaseHeld() {
+        if (!draining) draining = drainHeld().finally(() => { draining = null; });
+        return draining;
+    }
+
+    async function drainHeld() {
         while (heldCommands.length && !contrastPlaying()) {
             const command = heldCommands.shift();
             const handler = HANDLERS[command.type];
@@ -1820,7 +1859,12 @@ window.PlexoraAgentBridge = (function () {
                 if (CHANNEL_COMMANDS.has(command.type)) lease.channelsTouched = true;
             }
             try {
-                await handler(command.arguments || {}, call);
+                // A held restore keeps what was held after it: those are newer.
+                if (command.type === "restore_viewer") {
+                    await restore({ reason: (command.arguments || {}).reason, keepHeld: true });
+                } else {
+                    await handler(command.arguments || {}, call);
+                }
             } catch (error) {
                 console.warn("agentBridge: held", command.type, messageOf(error));
             }
@@ -1871,6 +1915,9 @@ window.PlexoraAgentBridge = (function () {
         const scale = brisk ? CONTRAST_BRISK : (smooth ? 1 : 0.5);
         const t = (key) => Math.round(CONTRAST_TIMING[key] * scale);
         const gesture = contrastGesture(n);
+        // A restore since this began (`stopShow`): touch nothing more.
+        const epoch = showEpoch;
+        const gone = () => epoch !== showEpoch;
         if (brisk || !smooth) {
             gesture.overshoot = false;
             gesture.zoom = false;
@@ -1892,12 +1939,14 @@ window.PlexoraAgentBridge = (function () {
             panel.resumePersistence();
         }
         if (!slot) return true;
+        showSlot = slot;
         const target = await panel.contrastDomain(slot, settled);
-        if (!target) return true;
+        if (!target || gone()) return !gone();
         const path = contrastPath(settled, gesture);
         const start = await panel.contrastDomain(slot, path.start);
         const over = path.over === null ? null
             : await panel.contrastDomain(slot, [settled[0], path.over]);
+        if (gone()) return false;
         // An ease already on its way (the slot's previous marker's) ends here.
         slot.rangeEase = null;
         slot.rangeEaseTarget = null;
@@ -1909,12 +1958,14 @@ window.PlexoraAgentBridge = (function () {
             panel.syncChannelSlider(slot);
         }
         await pause(t("enter"));
+        if (gone()) return false;
 
         let view = null;
         if (gesture.zoom) view = await zoomIn(item);
+        if (gone()) return false;
 
         const index = slot.index;
-        const drag = (range, key, handle, ease) => panel.dragSlotRange(index, range,
+        const drag = async (range, key, handle, ease) => !gone() && panel.dragSlotRange(index, range,
             { ms: t(key), handle, ease });
         const current = () => slot.range.map(Number);
         let ok = true;
@@ -1934,7 +1985,7 @@ window.PlexoraAgentBridge = (function () {
         };
         ok = gesture.dim ? (await moveHigh() && await moveLow())
             : (await moveLow() && await moveHigh());
-        if (ok) {
+        if (ok && !gone()) {
             // Whatever the drags passed through, the window the session settled on.
             panel.setSlotRange(index, target, false);
             panel.syncChannelSlider(slot);
@@ -1942,8 +1993,8 @@ window.PlexoraAgentBridge = (function () {
             panel.syncSlotAutoButton?.(slot);
             await pause(t("dwell"));
         }
-        if (view) await scene().glideTo(viewer(), view, { ms: t("zoom") });
-        return ok;
+        if (view && !gone()) await scene().glideTo(viewer(), view, { ms: t("zoom") });
+        return ok && !gone();
     }
 
     /**
@@ -2008,6 +2059,7 @@ window.PlexoraAgentBridge = (function () {
             }
         } finally {
             contrastRunning = false;
+            showSlot = null;
             window.PlexoraCanvasHint?.hide?.("agent-contrast");
             if (staged) {
                 const slot = staged.panel.channelSlots?.[staged.index];

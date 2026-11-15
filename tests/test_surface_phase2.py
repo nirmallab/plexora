@@ -182,6 +182,59 @@ def test_routes_export_refine_and_undo_a_built_surface(tmp_path, client, surface
     assert client.post(f"{base}/refine", json={"op": "undo"}).status_code == 400
 
 
+@pytest.mark.parametrize("fmt, data", [
+    ("glb", b"glTF\x02\x00\x00\x00"),                               # truncated header
+    ("glb", b"glTF" + b"\x00" * 8 + b"\x04\x00\x00\x00JSON" + b"{}}}"),  # broken JSON
+    ("ply", b"ply\nformat ascii 1.0\nelement vertex lots\nend_header\n"),
+    ("obj", b"v 1 2 x\nf 1 2 3\n"),
+])
+def test_a_mesh_the_readers_cannot_parse_is_refused_with_a_reason(fmt, data):
+    """Audit io-surface-12: a parse failure is an ImportRefused (a 400), not
+    whatever the reader happened to raise (a 500)."""
+    with pytest.raises(importers.ImportRefused):
+        importers.read(data, fmt)
+
+
+def test_import_refuses_a_mesh_over_the_resident_budget(tmp_path, client, surfaces_license,
+                                                        monkeypatch):
+    """Audit io-surface-10: an imported mesh is held to the triangle budget a
+    built surface is; a broken one answers 400, not 500."""
+    from plexora.server.surface import levels
+
+    _project(tmp_path)
+    data, _, _ = export.export(_two_boxes(), "ply", scale=(1, 1, 1), units="voxel", bundle=False)
+    monkeypatch.setattr(levels, "RESIDENT_TRIANGLES", 10)
+    answer = client.post("/volume/surf/surfaces/import",
+                         data={"file": (io.BytesIO(data), "boxes.ply"), "units": "voxel"},
+                         content_type="multipart/form-data")
+    assert answer.status_code == 400 and "triangles" in answer.get_json()["error"]
+    broken = client.post("/volume/surf/surfaces/import",
+                         data={"file": (io.BytesIO(b"glTF\x02\x00"), "x.glb"), "units": "voxel"},
+                         content_type="multipart/form-data")
+    assert broken.status_code == 400, broken.get_json()
+
+
+def test_a_cached_section_does_not_read_the_mesh_again(tmp_path, client, surfaces_license,
+                                                      monkeypatch):
+    """A plane already cut answers from the cache without loading the mesh
+    (audit io-surface-9); a new plane loads it once."""
+    from plexora.server.surface import store as surface_store
+
+    _project(tmp_path)
+    layer_id = client.post("/volume/surf/surfaces", json=ISO).get_json()["layer"]
+    assert _settle("surf", layer_id)["status"] == "ready"
+    sections._cache.clear()
+    reads = []
+    real = mesh_mod.read
+    monkeypatch.setattr(mesh_mod, "read", lambda *a, **k: reads.append(1) or real(*a, **k))
+    base = f"/volume/surf/surfaces/{layer_id}/sections"
+    first = client.get(f"{base}?z=8&x=32").get_json()
+    assert len(reads) == 1
+    assert client.get(f"{base}?z=8&x=32").get_json() == first
+    assert len(reads) == 1
+    assert surface_store.mesh_mod.read is not real
+
+
 def test_neighbours_and_import_are_pro_and_work(tmp_path, client, surfaces_license):
     _project(tmp_path)
     layer_id = client.post("/volume/surf/surfaces", json=ISO).get_json()["layer"]
@@ -210,3 +263,49 @@ def test_neighbours_and_import_are_pro_and_work(tmp_path, client, surfaces_licen
     # Export and sections are reads: still open.
     assert client.get(f"/volume/surf/surfaces/{layer_id}/export?format=stl").status_code == 200
     assert client.get(f"/volume/surf/surfaces/{layer_id}/sections?z=8").status_code == 200
+
+
+def test_a_broken_zip_is_refused_with_a_reason():
+    with pytest.raises(importers.ImportRefused):
+        importers.from_bundle(b"PK\x03\x04 not really", "x.ply.zip")
+
+
+def test_two_edits_at_once_are_two_versions(tmp_path, monkeypatch):
+    """Audit io-surface-8: concurrent edits of one surface are applied one
+    after the other -- neither lost, and the manifest names the files on disk."""
+    import hashlib
+    import threading
+    import time
+
+    import polars as pl
+
+    folder = tmp_path / "surf"
+    info = mesh_mod.write(_two_boxes(), folder / "mesh-L0.bin")
+    (folder / "manifest.json").write_text(json.dumps(
+        {"lods": [{"level": 0, "path": "mesh-L0.bin", **info}], "versions": []}))
+    real_apply = refine.apply
+
+    def slow_apply(*args, **kwargs):
+        time.sleep(0.2)
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(refine, "apply", slow_apply)
+    errors = []
+
+    def edit():
+        try:
+            refine.refine(folder, "smooth", {"smoothing": "light"}, scale=(1, 1, 1),
+                          physical=False, frame_for=lambda m: pl.DataFrame({"id": [1]}))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=edit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert not errors
+    manifest = json.loads((folder / "manifest.json").read_text())
+    assert [v["version"] for v in manifest["versions"]] == [1, 2]
+    for lod in manifest["lods"]:
+        assert hashlib.sha256((folder / lod["path"]).read_bytes()).hexdigest() == lod["sha256"]

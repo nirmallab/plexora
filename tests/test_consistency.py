@@ -199,6 +199,21 @@ def test_a_mask_that_matches_is_silent():
     assert report == []
 
 
+def test_a_mask_drawn_finer_than_its_image_is_silent_at_its_own_scale():
+    """flow-coords-5: a polygon mask drawn `scale` times finer than its image
+    is `scale` times its size by design (segmentationScale); only a size other
+    than that is a mismatch."""
+    import dataclasses
+
+    base = sample(width=1000, height=800, segmentation="/tmp/mask.tif")
+    finer = dataclasses.replace(base, segmentation=dataclasses.replace(base.segmentation, scale=2))
+    described_cells = described(CellID=(500, 1, 500), X_centroid=(500, 3.0, 900.0),
+                                Y_centroid=(500, 2.0, 700.0))
+
+    assert consistency.report(finer, described_cells, mask_size=(2000, 1600)) == []
+    assert codes(consistency.report(finer, described_cells, mask_size=(1000, 800))) == ["mask_size"]
+
+
 def test_a_mask_whose_size_could_not_be_read_is_not_reported_as_differing():
     """None means "cannot say" -- a mask on a data node, or a file that would
     not open. Reporting that as a mismatch would put a warning on every

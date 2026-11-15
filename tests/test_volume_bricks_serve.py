@@ -179,3 +179,25 @@ def test_bricks_come_compressed_only_when_asked(tmp_path, client):
     # A client that cannot take gzip gets the plain bytes even if it asks.
     refused = client.get(address + "&gz=1")
     assert "Content-Encoding" not in refused.headers and refused.data == plain.data
+
+
+def test_a_brick_evicted_between_the_two_lookups_is_still_served(monkeypatch):
+    """Audit io-volume-9: a brick found in the cache when the missing ones are
+    listed, then evicted by another request before it is used, must not be a
+    KeyError (a 500 for the whole batch)."""
+    shape = tuple(b + 2 * brick_serve.APRON for b in brick_serve.BRICK)
+    voxels = np.full(shape, 7, np.uint8)
+    hit = (voxels.tobytes(), 7.0)
+    seen = {}
+
+    def flaky_cached(key):
+        seen[key] = seen.get(key, 0) + 1
+        return hit if seen[key] == 1 else None        # evicted after the first look
+
+    monkeypatch.setattr(brick_serve, "_cached", flaky_cached)
+    monkeypatch.setattr(brick_serve, "read_bricks", lambda *a, **k: {})
+    body = brick_serve.payload(None, {"level": 0, "pool": 1}, 0, [(0, "DNA", (0, 10))],
+                               [(0, 0, 0)], "u8", "ident")
+    (length,) = struct.unpack("<I", body[:4])
+    header = json.loads(body[4:4 + length])
+    assert header["bricks"][0]["max"] == [7.0]

@@ -1026,28 +1026,44 @@ window.PlexoraLayerManager = (function () {
         // viewer with no world at all, and a project that remembered the image
         // switched off would open on nothing.
         if (id === PlexoraLayerStack.REFERENCE_LAYER_ID && !patch.render) return;
-        const queued = pending.get(id) || { render: {} };
+        const queued = pending.get(id) || { render: {}, sample };
         if (patch.visible !== undefined) queued.visible = patch.visible;
         if (patch.render) Object.assign(queued.render, patch.render);
         clearTimeout(queued.timer);
-        queued.timer = setTimeout(() => {
-            pending.delete(id);
-            const body = {};
-            if (queued.visible !== undefined) body.visible = queued.visible;
-            if (Object.keys(queued.render).length) body.render = queued.render;
-            fetch(
-                plexoraUrl(`project/${encodeURIComponent(sample)}/layers/`
-                           + encodeURIComponent(id)),
-                {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                },
-            ).catch((error) => {
-                console.error("layerManager: saving the layer failed", error);
-            });
-        }, PERSIST_DELAY);
+        queued.timer = setTimeout(() => send(id, queued), PERSIST_DELAY);
         pending.set(id, queued);
+    }
+
+    function send(id, queued, { keepalive = false } = {}) {
+        if (pending.get(id) === queued) pending.delete(id);
+        const body = {};
+        if (queued.visible !== undefined) body.visible = queued.visible;
+        if (Object.keys(queued.render).length) body.render = queued.render;
+        fetch(
+            plexoraUrl(`project/${encodeURIComponent(queued.sample)}/layers/`
+                       + encodeURIComponent(id)),
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                keepalive,
+            },
+        ).catch((error) => {
+            console.error("layerManager: saving the layer failed", error);
+        });
+    }
+
+    /**
+     * Send every layer change still waiting on its PERSIST_DELAY now, for a
+     * page that is leaving (views/datasetNav.js: a walk, or pagehide). The
+     * timers die with the page, and the last colour or window with them.
+     * With keepalive, so the request outlives the page.
+     */
+    function flush({ keepalive = false } = {}) {
+        for (const [id, queued] of [...pending]) {
+            clearTimeout(queued.timer);
+            send(id, queued, { keepalive });
+        }
     }
 
     /**
@@ -2049,7 +2065,7 @@ window.PlexoraLayerManager = (function () {
         return api;
     }
 
-    const api = { init, render, paint, syncOrder, setCollapsed, collapseAll };
+    const api = { init, render, paint, syncOrder, setCollapsed, collapseAll, flush };
     if (typeof window !== "undefined") window.PlexoraLayerManager = api;
     if (typeof globalThis !== "undefined") globalThis.PlexoraLayerManager = api;
     return api;

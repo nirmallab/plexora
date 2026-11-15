@@ -449,9 +449,30 @@ class RoiSidebarController {
         }
         this.cancelRemoteReload();
         const loaded = await this.store.load();
+        if (loaded === null) {
+            // Overtaken by an edit during the read (RoiStore.load): again once saved.
+            this.deferRemoteReload();
+            return false;
+        }
         this.renderer.invalidate();
         this.renderer.schedule();
         return loaded;
+    }
+
+    /**
+     * Before a write that reads the SERVER's regions (Map to cells, Save to
+     * file, From cells): this panel's queued edits saved first, and no write
+     * at all while the server holds something other than what is on screen.
+     * Says why when it refuses.
+     */
+    async inStepForWrite(what) {
+        if (await this.store.settle()) return true;
+        this.notify(this.store.refused.length || this.store.status === "failed"
+            ? `${what} uses the regions saved on the server, and some of your edits were `
+                + "refused there. Export your regions, or reload them, first."
+            : `${what} uses the regions saved on the server, and your latest edits are not `
+                + "saved yet. Try again once they are.");
+        return false;
     }
 
     deferRemoteReload() {
@@ -790,6 +811,7 @@ class RoiSidebarController {
             return;
         }
         window.PlexoraTelemetry?.feature("roi.save", "roi");
+        if (!(await this.inStepForWrite("Save to file"))) return;
 
         const name = this.destinationName();
         if (destination.kind === "anndata" && name !== destination.remembered
@@ -1083,6 +1105,9 @@ class RoiSidebarController {
                 + "then make them a region.");
             return;
         }
+        // The server adds the region to ITS regions: queued edits go first,
+        // or the reload below would wipe them.
+        if (!(await this.inStepForWrite("Making a region of cells"))) return;
         const result = await window.PlexoraStatus.track(
             "Outlining the cells", this.api.fromCells(ids, this.ctx.view?.frame?.() || 0));
         const data = result.data || {};
@@ -1090,8 +1115,9 @@ class RoiSidebarController {
             this.notify(data.error || "The cells could not be made a region.");
             return;
         }
-        await this.store.load();
-        if (data.roi?.id) this.store.select?.(data.roi.id);
+        // Never over edits made while it was outlined (reloadFromServer).
+        const loaded = await this.reloadFromServer();
+        if (loaded && data.roi?.id) this.store.select?.(data.roi.id);
     }
 
     /**
@@ -1111,6 +1137,7 @@ class RoiSidebarController {
     async mapToCells(retried = false) {
         const button = this.el("roi_map_to_cells");
         if (!button || button.hidden) return;
+        if (!retried && !(await this.inStepForWrite("Map to cells"))) return;
 
         button.disabled = true;
         try {

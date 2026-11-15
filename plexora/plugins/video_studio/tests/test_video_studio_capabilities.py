@@ -420,6 +420,19 @@ def test_a_running_export_is_not_deleted(licensed, monkeypatch):
     assert repository.list_exports(video_id)
 
 
+def test_a_video_with_a_running_export_is_not_deleted(licensed, monkeypatch):
+    """The writer holds files open under the video's folder: on Windows the
+    rmtree fails partway, after removing earlier exports' files."""
+    video_id = _create(licensed)["video"]["video_id"]
+    _record(video_id, "exp_aaaaaaaaaaaa", status="running")
+    monkeypatch.setattr(video_capabilities, "_job_status",
+                        lambda call, vid, eid: {"status": "running"})
+    answer = _call(licensed, "delete_video", {"video_id": video_id, "confirm": True},
+                   policy=Policy(allow_destructive=True))
+    assert not answer["ok"] and answer["error"]["code"] == "conflict"
+    assert repository.exists(video_id)
+
+
 # -- export and preview, with the page faked -------------------------------------------------
 
 

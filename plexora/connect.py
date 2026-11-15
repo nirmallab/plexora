@@ -885,6 +885,13 @@ def srun_command_line(srun_args, launch_line):
 #: the watcher sees and the page can report.
 KEEPALIVE_OPTIONS = ("ServerAliveInterval=30", "ServerAliveCountMax=3")
 
+#: A forward that cannot bind ends the ssh instead of being a warning. Without
+#: it a srun tunnel binding a local port probed hours earlier, or a `-R` on a
+#: shared login host, carried on with the forward missing -- and whoever held
+#: that port got the traffic (and the token in it). An exit is what the
+#: watcher sees and the page reports. Harmless on an ssh with no forward.
+DEFAULT_SSH_OPTIONS = KEEPALIVE_OPTIONS + ("ExitOnForwardFailure=yes",)
+
 
 #: ssh options that make ssh run a program on THIS machine. A profile saved
 #: with `plexora connect --save` may carry one (a ProxyCommand through a
@@ -945,7 +952,7 @@ def _ssh_options(ssh_opts):
     given = tuple(ssh_opts or ())
     named = {str(opt).split("=", 1)[0].strip().lower() for opt in given}
     out = []
-    for opt in KEEPALIVE_OPTIONS:
+    for opt in DEFAULT_SSH_OPTIONS:
         if opt.split("=", 1)[0].lower() not in named:
             out += ["-o", opt]
     for opt in given:
@@ -2594,7 +2601,10 @@ class Session:
                 deadline = min(deadline, _now() + TUNNEL_HEALTH_TIMEOUT)
 
             self._phase("waiting_for_app")
-            if not _wait_for_health(self.url, deadline, self.watchers,
+            # Not the local node: like `wait`, a viewer that lost it still
+            # works, and `_register_local_node` reports its death on its own.
+            if not _wait_for_health(self.url, deadline,
+                                    [w for w in self.watchers if w is not local_node],
                                     echo=self.echo, any_answer=True):
                 raise ConnectError(
                     f"Plexora did not answer on {self.url} within "
@@ -2613,11 +2623,13 @@ class Session:
                                           local_node_serve_port)
         except _Retriable as exc:
             self.stop()
-            if self.watchers:
-                self.watchers[0].drain()
-                if looks_like_missing_command(self.watchers[0].lines):
+            # The ssh that ran the remote command, not `watchers[0]`: the
+            # local node is spawned first and never says "command not found".
+            if self.primary is not None:
+                self.primary.drain()
+                if looks_like_missing_command(self.primary.lines):
                     raise _missing_command_hint(
-                        self.remote_command, self.watchers[0]) from exc
+                        self.remote_command, self.primary) from exc
             raise
         except BaseException:
             self.stop()
@@ -3610,12 +3622,14 @@ def connect_node(target, serve, *, name=None,
                            ssh_opts=ssh_opts)
     echo(f"$ {' '.join(argv)}")
     watched = _Watched(argv, "node", echo=echo, matchers=matchers)
-    if install_line:
-        _await_install(shim, watched, install_line)
     _ACTIVE.append(watched)
-    deadline = _now() + timeout
 
     try:
+        # Inside the try: an install that fails or times out must stop the
+        # ssh it is running in, not leave it running past the raise.
+        if install_line:
+            _await_install(shim, watched, install_line)
+        deadline = _now() + timeout
         announced = _wait_for_node(watched, deadline, echo=echo)
         if not announced:
             stale = unsupported_remote_flag(watched.lines)

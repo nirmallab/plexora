@@ -521,24 +521,21 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
 # the sidebar is the gate read here.
 
 import hashlib
-import threading
-
-_ROW_LOCKS: dict[str, threading.Lock] = {}
-_ROW_LOCKS_GUARD = threading.Lock()
-
 
 def _lock_for(datasource_name):
     """One lock per datasource around the read-modify-write in `set_gate`.
 
     The same arrangement as ROI's repository, for the same reason: two writers
-    in one process (an agent tool call and a route) must not both read the list,
-    both change one row, and have one of them vanish.
+    (an agent tool call and a route) must not both read the list, both change
+    one row, and have one of them vanish. Held across processes, because
+    `plexora mcp serve` is a second process running the same gating
+    capabilities against the same data root (`plexora._process_lock`).
     """
-    with _ROW_LOCKS_GUARD:
-        lock = _ROW_LOCKS.get(datasource_name)
-        if lock is None:
-            lock = _ROW_LOCKS[datasource_name] = threading.Lock()
-        return lock
+    from plexora import _process_lock
+
+    return _process_lock.lock_for(
+        ("gating.gates", datasource_name),
+        lambda: _store(datasource_name).directory() / "gates.lock")
 
 
 class GateConflict(Exception):
@@ -930,14 +927,33 @@ def clear_gates(ds, markers=None):
     return cleared, kept
 
 
-def put_rows(ds, rows, *, expected_revision=None):
-    """Store a whole gate list as it was (an undo of `reset_gates`)."""
-    with _lock_for(ds.name):
+def put_rows(ds, rows, *, expected_revision=None, provenance_rows=None):
+    """Store a whole gate list as it was (an undo of `reset_gates`), and put
+    `provenance_rows` ({marker: row}) back over the provenance table. A
+    marker locked or approved now keeps its gate and its provenance row: the
+    user protected it after the reset, and the lock is their word against
+    every write (`clear_gates`). Both under the gates' and the provenance's
+    locks, so a status set meanwhile is not lost. Returns (revision, kept):
+    {marker: status} of the markers left as they are."""
+    from plexora.plugins.gating.server import provenance
+
+    with _lock_for(ds.name), provenance._lock(ds.name):
         current = revision(ds)
         if expected_revision is not None and str(expected_revision) != current:
             raise GateConflict(current)
-        _store(ds.name).put_state(pickle.dumps([dict(r) for r in rows], protocol=4))
-        return revision(ds)
+        kept = provenance.protected(ds.name)
+        now = {row.get("channel"): row for row in gate_rows(ds)}
+        out = [dict(now[r.get("channel")]) if r.get("channel") in kept
+               and r.get("channel") in now else dict(r) for r in rows]
+        listed = {r.get("channel") for r in out}
+        out.extend(dict(now[m]) for m in kept if m in now and m not in listed)
+        _store(ds.name).put_state(pickle.dumps(out, protocol=4))
+        back = {m: r for m, r in (provenance_rows or {}).items() if m not in kept}
+        if back:
+            prov = provenance.read(ds.name)
+            prov.update(back)
+            provenance._write(ds.name, prov)
+        return revision(ds), kept
 
 
 def gated_summary(ds, marker, low=None, high=None) -> dict:

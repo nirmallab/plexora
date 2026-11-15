@@ -278,3 +278,39 @@ def test_what_the_viewer_reads_back_carries_the_order(client, sample):
     ids = [layer.id for layer in Project.find(sample).all_layers]
     assert ids[0] == "__image__"
     assert ids[-2:] == ["tx", "he"]
+
+
+@pytest.mark.parametrize("layer_id", ["he", "__image__"])
+def test_overlapping_render_saves_keep_each_others_keys(client, sample,
+                                                        monkeypatch, layer_id):
+    """Two cards saving at once (audit lead r2-project-keyed-stores-6). The
+    merge has to be made from the record as it stands under the config lock,
+    not from a copy read before it: a save that lands between the read and the
+    write must not be dropped by this one."""
+    from dataclasses import replace
+
+    from plexora.server.routes import project_routes
+
+    original = Project.mutate.__func__
+    raced = []
+
+    def racing_mutate(cls, name, change, data_root=None):
+        if not raced:
+            # Another request's save lands after this one read the layer.
+            raced.append(True)
+            if layer_id == "__image__":
+                original(cls, name, lambda current: current.patch(
+                    image_render={**current.image_render, "other": 1}))
+            else:
+                original(cls, name, lambda current: current.with_layer(replace(
+                    current.layer(layer_id),
+                    render={**current.layer(layer_id).render, "other": 1})))
+        return original(cls, name, change, data_root)
+
+    monkeypatch.setattr(project_routes.Project, "mutate",
+                        classmethod(racing_mutate))
+    response = client.patch(f"/project/{sample}/layers/{layer_id}",
+                            json={"render": {"mine": 2}})
+    assert response.status_code == 200
+    render = Project.find(sample).layer(layer_id).render
+    assert render.get("other") == 1 and render.get("mine") == 2

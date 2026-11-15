@@ -33,6 +33,8 @@ from plexora.server.providers import http, wire
 from plexora.server.providers.base import (
     NODE,
     Fingerprint,
+    NodeRefused,
+    NodeVersionMismatch,
     ResourceError,
     ResourceLocator,
     ResourceNotLocal,
@@ -80,6 +82,13 @@ def node_for(binding):
             f"data node {binding.node!r} is not connected to this Plexora. "
             f"Connect it and reopen this project.",
             node=binding.node) from exc
+
+
+def _names(columns) -> str:
+    """Column names for a query string, comma-separated as the node splits
+    them. Escaped, because a raw `+` reads as a space there, `&` starts a new
+    parameter and `#` ends the URL -- all ordinary in marker names."""
+    return quote(",".join(str(c) for c in columns), safe=",")
 
 
 class _NodeBacked:
@@ -280,7 +289,7 @@ class NodeTableProvider(_NodeBacked):
         data, _ = http.bytes_request(
             self.node, "GET",
             f"/node/v1/table/{self._binding.resource_id}/geometry"
-            f"?columns={','.join(columns)}",
+            f"?columns={_names(columns)}",
             expected_api=API_VERSION,
         )
         frame = pl.read_ipc(io.BytesIO(data))
@@ -323,7 +332,7 @@ class NodeTableProvider(_NodeBacked):
         data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
             self._named(f"/node/v1/table/{self._binding.resource_id}/all_cells"
-                        f"?columns={','.join(columns)}&dtype={dtype}"),
+                        f"?columns={_names(columns)}&dtype={dtype}"),
             expected_api=API_VERSION))
         # urllib3 has already undone the body's Content-Encoding, so this is
         # the same buffer a local read produces -- which is the point of the
@@ -334,7 +343,7 @@ class NodeTableProvider(_NodeBacked):
         data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
             self._named(f"/node/v1/table/{self._binding.resource_id}/columns"
-                        f"?names={','.join(columns)}"),
+                        f"?names={_names(columns)}"),
             expected_api=API_VERSION))
         return wire.unpack_columns(data)
 
@@ -344,7 +353,7 @@ class NodeTableProvider(_NodeBacked):
         data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
             self._named(f"/node/v1/table/{self._binding.resource_id}/metadata_column"
-                        f"?column={column}"),
+                        f"?column={quote(str(column), safe='')}"),
             expected_api=API_VERSION))
         values, meta = wire.unpack_array(data)
         categories = meta.get("categories")
@@ -405,17 +414,19 @@ class NodeSegmentationProvider(_NodeBacked):
         that had gone indistinguishable from a mask that was fine. The project
         opened reporting nothing wrong and every label tile 404'd.
 
-        Only unreachability is raised. A node that answers something else --
-        it does not know this resource, or it is still converting one -- is a
-        condition the tile path already reports in its own terms, and not this
-        function's to decide.
+        Unreachability is raised, and so is a node that turns this server
+        away (its token, its API version): every read would fail the same way,
+        and `load_datasource` lets a refusal out on purpose. A node that answers
+        something else -- it does not know this resource, or it is still
+        converting one -- is a condition the tile path already reports in its
+        own terms, and not this function's to decide.
         """
         try:
             self._remember(http.json_request(
                 self.node, "GET",
                 f"/node/v1/resources/{self._binding.resource_id}/status",
                 timeout=self.OPEN_TIMEOUT, expected_api=API_VERSION))
-        except ResourceUnavailable:
+        except (ResourceUnavailable, NodeRefused, NodeVersionMismatch):
             raise
         except ResourceError:
             pass
@@ -757,14 +768,16 @@ class NodeImageProvider(_NodeBacked):
                 self.node, "GET",
                 f"/node/v1/image/{self._binding.resource_id}/ome_metadata",
                 expected_api=API_VERSION)
-        except ResourceUnavailable:
+        except (ResourceUnavailable, NodeRefused, NodeVersionMismatch):
             # The MACHINE did not answer, which is a different thing from this
             # image having no OME header -- and it is the one thing
             # `load_datasource` has to hear about. Swallowed with the rest, it
             # recorded no failure at all: `/resource_status` reported the
             # project perfectly healthy while the viewer pointed every tile
             # request at a port nothing was listening on. That is what "the
-            # project opens and nothing happens" was.
+            # project opens and nothing happens" was. A node that refuses
+            # this server (token, API version) is the same story: no tile will
+            # ever be served, and `load_datasource` lets a refusal out.
             raise
         except ResourceError:
             # Anything else is the node answering something unhelpful about

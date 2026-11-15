@@ -28,8 +28,10 @@ beside it and the caller decides (attach_as_table=True replaces it).
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -45,6 +47,19 @@ MANIFEST_NAME = "objects_v1.json"
 
 class ObjectsUnavailable(ValueError):
     """The project cannot be measured as 3-D objects; the message says why."""
+
+
+_MEASURING: dict = {}
+_MEASURING_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _measuring(table_path):
+    """Held while `table_path` is measured and written (one lock per table)."""
+    with _MEASURING_LOCK:
+        lock = _MEASURING.setdefault(str(table_path), threading.Lock())
+    with lock:
+        yield
 
 
 def object_paths(project) -> tuple[Path, Path]:
@@ -114,48 +129,53 @@ def measure_project_objects(project, *, units="physical", channels=None, attach=
     indices = [all_names.index(name) for name in wanted]
 
     table_path, manifest_path = object_paths(project)
-    table_path.parent.mkdir(parents=True, exist_ok=True)
-    planes_folder = volume_planes.folder_for(table_path)
-    image_binding = project.resource("image") if hasattr(project, "resource") else None
-    if image_binding is not None:
-        frame, manifest = _measure_on_node(project, image_binding, wanted, indices,
-                                           units, progress, cancelled, planes_folder)
-    else:
-        from plexora.server.utils.source_image import open_project_volume
+    # One measurement of a table at a time: the Depth card and the agent can
+    # both start one, and they share the table's `.tmp` name and the plane
+    # index's temp folder -- the second would delete the first's, and the
+    # published index could mix the two passes.
+    with _measuring(table_path):
+        table_path.parent.mkdir(parents=True, exist_ok=True)
+        planes_folder = volume_planes.folder_for(table_path)
+        image_binding = project.resource("image") if hasattr(project, "resource") else None
+        if image_binding is not None:
+            frame, manifest = _measure_on_node(project, image_binding, wanted, indices,
+                                               units, progress, cancelled, planes_folder)
+        else:
+            from plexora.server.utils.source_image import open_project_volume
 
-        source = open_project_volume(project)
-        if source is None:
-            raise ObjectsUnavailable("this project's image is not a z-stack")
-        try:
-            frame, manifest = measure_columns(
-                labels, source, channel_names=wanted, indices=indices, units=units,
-                progress=progress, cancelled=cancelled, planes_folder=planes_folder)
-        finally:
-            source.close()
+            source = open_project_volume(project)
+            if source is None:
+                raise ObjectsUnavailable("this project's image is not a z-stack")
+            try:
+                frame, manifest = measure_columns(
+                    labels, source, channel_names=wanted, indices=indices, units=units,
+                    progress=progress, cancelled=cancelled, planes_folder=planes_folder)
+            finally:
+                source.close()
 
-    tmp = table_path.with_name(table_path.name + ".tmp")
-    frame.write_parquet(tmp)
-    tmp.replace(table_path)
-    manifest.update({
-        "project": project.name,
-        "labels": str(seg.derived),
-        "channels": wanted,
-        "created": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
-        "table": str(table_path),
-        "columns": list(frame.columns),
-    })
-    plane_index = volume_planes.PlaneIndex.open(planes_folder)
-    if plane_index is not None:
-        manifest["planes"] = {"folder": planes_folder.name, "rows": plane_index.rows}
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        tmp = table_path.with_name(table_path.name + ".tmp")
+        frame.write_parquet(tmp)
+        tmp.replace(table_path)
+        manifest.update({
+            "project": project.name,
+            "labels": str(seg.derived),
+            "channels": wanted,
+            "created": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
+            "table": str(table_path),
+            "columns": list(frame.columns),
+        })
+        plane_index = volume_planes.PlaneIndex.open(planes_folder)
+        if plane_index is not None:
+            manifest["planes"] = {"folder": planes_folder.name, "rows": plane_index.rows}
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    attached = False
-    if attach is True or (attach is None and not project.has_table):
-        attach_object_table(project, table_path, frame)
-        attached = True
-    return {"objects": int(frame.height), "table": str(table_path), "attached": attached,
-            "units": manifest["units"], "columns": list(frame.columns),
-            "spacing_um": manifest.get("spacing_um"), "manifest": str(manifest_path)}
+        attached = False
+        if attach is True or (attach is None and not project.has_table):
+            attach_object_table(project, table_path, frame)
+            attached = True
+        return {"objects": int(frame.height), "table": str(table_path), "attached": attached,
+                "units": manifest["units"], "columns": list(frame.columns),
+                "spacing_um": manifest.get("spacing_um"), "manifest": str(manifest_path)}
 
 
 def measure_columns(labels, source, *, channel_names, indices, units="physical",

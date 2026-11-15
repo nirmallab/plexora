@@ -1056,6 +1056,9 @@ class QcHoverProbe {
     /** The regions or the cells were reloaded under a still pointer: what is
      *  held is let go and found again. */
     revalidate() {
+        // A cell_at already on its way was asked of the old cells (or plane):
+        // its answer is dropped, not cached (ask() sees the token moved).
+        this.token += 1;
         this.cells = [];
         this.last = null;
         this.cellKey = null;

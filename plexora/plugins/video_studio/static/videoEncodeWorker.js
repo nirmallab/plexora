@@ -32,6 +32,26 @@ function fail(error) {
     self.postMessage({ type: "error", message: String(error?.message || error) });
 }
 
+/** Write `data` at byte `position` of the file held as consecutive `parts`:
+ *  bytes already there are overwritten in place, bytes past the end are
+ *  appended (a gap, which the muxer never leaves, is zero-filled). */
+function place(parts, data, position) {
+    let at = 0;
+    for (const part of parts) {
+        const from = Math.max(position, at);
+        const to = Math.min(position + data.byteLength, at + part.byteLength);
+        if (from < to) part.set(data.subarray(from - position, to - position), from - at);
+        at += part.byteLength;
+    }
+    if (position > at) {
+        parts.push(new Uint8Array(position - at));
+        at = position;
+    }
+    if (position + data.byteLength > at) {
+        parts.push(data.slice(Math.max(0, at - position)));
+    }
+}
+
 async function start(settings) {
     fps = settings.fps;
     const codec = settings.format === "webm" ? "vp9" : "avc";
@@ -42,12 +62,15 @@ async function start(settings) {
     }
     let target;
     if (settings.streaming) {
-        // Fragmented: written front to back, so the parts arrive in order and
-        // the file never has to be held whole while it is being built.
+        // Parts arrive mostly in order (fragmented MP4 is written front to
+        // back), but the WebM muxer seeks back when it finalizes to patch the
+        // Segment size, the Duration and the SeekHead: once more than two
+        // 16 MiB chunks have gone, those patches come as writes at earlier
+        // positions. Every write lands at its `position`.
         chunks = [];
         target = new StreamTarget(new WritableStream({
             write(chunk) {
-                chunks.push(chunk.data.slice());
+                place(chunks, chunk.data, chunk.position);
             },
         }), { chunked: true });
     } else {

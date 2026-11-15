@@ -128,3 +128,30 @@ def test_updating_a_region_can_be_undone_field_for_field(session):
 def test_an_unknown_or_read_only_operation_is_invalid(session):
     assert invoke(session, "undo_operation", {"operation_id": "op_nope"})["error"]["code"] \
         == "invalid_input"
+
+
+def test_finding_an_operation_parses_only_its_own_lines(tmp_path, monkeypatch):
+    """A session rollback looks each receipt up about three times; the log is
+    never pruned, so a lookup must not parse every line of it."""
+    from plexora.agent import audit as audit_module
+
+    log = audit_module.AuditLog(tmp_path / "audit.jsonl")
+    for i in range(500):
+        log.append({"operation_id": f"op_{i:04d}", "status": "ok"})
+    log.append({"operation_id": "op_undo", "status": "ok", "undo_of": "op_0007"})
+    parsed = {"n": 0}
+    loads = audit_module.json.loads
+
+    class CountingJson:
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(text):
+            parsed["n"] += 1
+            return loads(text)
+    monkeypatch.setattr(audit_module, "json", CountingJson())
+    assert log.find("op_0007")["operation_id"] == "op_0007"
+    assert log.undo_of("op_0007")["operation_id"] == "op_undo"
+    assert log.undo_of("op_0008") is None
+    assert parsed["n"] <= 6           # the lines naming op_0007 or op_0008, not 501

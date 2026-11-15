@@ -243,6 +243,7 @@ class FigurePointEditor {
                 ? FigureShapeGeometry.constrainDelta(
                     at.x - this.drag.origin.x, at.y - this.drag.origin.y)
                 : { x: at.x - this.drag.origin.x, y: at.y - this.drag.origin.y };
+            if (delta.x || delta.y) this.drag.moved = true;
             this.applyDrag(delta.x, delta.y);
             this.redraw();
             return true;
@@ -256,10 +257,17 @@ class FigurePointEditor {
 
     pointerUp() {
         if (!this.active || !this.drag) return false;
+        const moved = this.drag.moved;
         this.drag = null;
         // One commit for the whole gesture, and the box snaps back around the
-        // ink here rather than on every frame of it.
-        this.commitLocal();
+        // ink here rather than on every frame of it. A click that only
+        // selected a node changed nothing: no write, no undo step.
+        if (moved) {
+            this.commitLocal();
+        } else {
+            this.redraw();
+            this.canvas.onPointEditChange(this.annotationId);
+        }
         return true;
     }
 

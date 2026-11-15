@@ -97,6 +97,14 @@ class UnknownFigure(Exception):
     """No figure with that id, or its directory has gone."""
 
 
+class FigureInUse(Exception):
+    """A file inside the figure is open, so it cannot be deleted yet.
+
+    Windows only, in practice: there an open file cannot be deleted, nor can
+    the folder holding it be renamed.
+    """
+
+
 #: One lock per figure, held across the read-modify-write in `apply`. SQLite's
 #: own busy timeout serialises the WRITES, but not the read-check-write
 #: sequence: without this, two threads can both read revision 41, both pass the
@@ -365,7 +373,11 @@ def duplicate(figure_id, title=None) -> str:
     new_id = new_figure_id()
     target_dir = figures_root() / new_id
     with _lock_for(figure_id):
-        shutil.copytree(source_dir, target_dir)
+        # Not the exports: they are the original's files, swept with the
+        # original's jobs, and nothing in the copy could ever download them.
+        shutil.copytree(source_dir, target_dir,
+                        ignore=lambda folder, names: (
+                            {"exports"} if Path(folder) == source_dir else set()))
 
     document["figure_id"] = new_id
     document["title"] = schema.clean_text(title) or f"{document['title']} copy"
@@ -399,8 +411,26 @@ def delete(figure_id) -> None:
     directory = figure_dir(figure_id)
     if not directory.is_dir():
         raise UnknownFigure(figure_id)
+    # Renamed out of the library first, then removed. A bare rmtree on Windows
+    # stops at the first open file -- a preview being served, an asset an
+    # export is reading -- having already deleted whatever came before it, and
+    # the figure stayed listed without its imported images. The rename fails
+    # as a whole while anything inside is open, so a delete is all or nothing;
+    # and once it has succeeded the figure is gone from the library even if
+    # some file in the renamed folder outlives the rmtree.
+    doomed = figures_root() / f"{_DOOMED_PREFIX}{figure_id}-{uuid.uuid4().hex[:8]}"
     with _lock_for(figure_id):
-        shutil.rmtree(directory)
+        try:
+            os.replace(directory, doomed)
+        except OSError as exc:
+            raise FigureInUse(figure_id) from exc
+    for leftover in figures_root().glob(_DOOMED_PREFIX + "*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+
+
+#: A deleted figure's folder between its rename and its removal. Dot-prefixed,
+#: so it never passes `validate_figure_id` and is never listed.
+_DOOMED_PREFIX = ".deleted-"
 
 
 def exists(figure_id) -> bool:

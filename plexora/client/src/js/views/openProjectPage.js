@@ -694,14 +694,22 @@
         // Talking to the server
         // ------------------------------------------------------------------
 
+        //: The newest reload's number: two moves in a row reload twice, and
+        //: the older answer can land last.
+        let reloadSeq = 0;
+
         async function reload() {
+            const seq = ++reloadSeq;
             const [projects, datasets] = await Promise.all([
                 fetch(plexoraUrl("projects")).then((r) => r.json()).catch(() => []),
                 fetch(plexoraUrl("datasets")).then((r) => r.json()).catch(() => null),
             ]);
+            if (seq !== reloadSeq) return;
+            const placeNames = await websiteNames();
+            if (seq !== reloadSeq) return;
             state.projects = Array.isArray(projects) ? projects : [];
             state.datasets = (datasets && datasets.datasets) || [];
-            state.placeNames = await websiteNames();
+            state.placeNames = placeNames;
             state.places = placesOf(state.projects);
             paintPlaces();
             // A folder that has been deleted in another tab is not somewhere
@@ -1329,10 +1337,11 @@
         // page loads. Hung on the window rather than passed, because the two
         // are bound at different times -- this page is a routed fragment and
         // the dialog is loaded once in base.html.
-        window.PlexoraOpenProject = {
+        const handle = {
             refresh: () => { void reload(); },
             open: (id) => { void openDataset(id); },
         };
+        window.PlexoraOpenProject = handle;
 
         // Where we were, if this is a reload or a pasted link.
         state.folder = new URL(window.location.href).searchParams.get("dataset") || null;
@@ -1347,6 +1356,10 @@
         return () => {
             document.removeEventListener("keydown", onKeydown);
             document.removeEventListener("plexora:menu", onMenu);
+            // Nor is the handle: once this page is gone, a caller must route
+            // to /open_project (its fallback) rather than call into it. Only
+            // ours -- the next mount may already have put its own.
+            if (window.PlexoraOpenProject === handle) delete window.PlexoraOpenProject;
         };
     });
 })();

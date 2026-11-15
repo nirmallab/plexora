@@ -121,4 +121,20 @@ check("a split with nothing describable in it falls back rather than emptying", 
     assert.deepEqual(markersOf(dataset), ["CD3"]);
 });
 
+check("a dataset object held from before a refresh reads the new schema and table", () => {
+    // refreshDataset (main.js) mutates `config` in place and rebuilds
+    // __plexora.dataset, but each active plugin keeps the ctx.dataset it was
+    // handed: that object must read the record live, like segmentation does.
+    const config = { name: "proj", imageData: [] };
+    const held = PlexoraDataset.build(config, {}, description("CellID", "X", "Y", "CD3"));
+    assert.equal(held.table.available, false);
+    assert.equal(held.schema, null);
+    config.dataset = { type: "h5ad", roles: { cell_id: "CellID", x: "X", y: "Y" } };
+    assert.equal(held.table.available, true);
+    assert.equal(held.table.sourceKind, "h5ad");
+    assert.equal(held.schema.x, "X");
+    // Roles now known are kept out of the derived markers too.
+    assert.deepEqual(markersOf(held), ["CD3"]);
+});
+
 console.log(`\n${passed.length} checks passed`);

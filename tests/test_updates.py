@@ -496,3 +496,21 @@ def test_a_main_thread_deaf_to_sigint_is_made_interruptible():
         assert _lifetime.make_interruptible() is False
     finally:
         signal.signal(signal.SIGINT, before)
+
+
+def test_the_desktop_page_is_told_the_skipped_version(client, monkeypatch):
+    """The desktop page compares the shell's answer with `skipped_version`
+    itself (audit lead ep-desktop-4); the payload never carried it, so
+    'Skip This Version' was forgotten by the next check."""
+    monkeypatch.setitem(plexora.app.config, "PLEXORA_DESKTOP", True)
+    client.post("/update/prefs", json={"skipped_version": "0.0.25"})
+    assert client.get("/update/check?auto=1").get_json()["skipped_version"] == "0.0.25"
+    assert client.get("/update/check").get_json()["skipped_version"] == "0.0.25"
+
+
+def test_desktop_auto_check_off_means_off(client, monkeypatch):
+    monkeypatch.setitem(plexora.app.config, "PLEXORA_DESKTOP", True)
+    client.post("/update/prefs", json={"auto_check": False})
+    assert client.get("/update/check?auto=1").get_json().get("disabled")
+    # The menu's own check is not an automatic one.
+    assert not client.get("/update/check").get_json().get("disabled")

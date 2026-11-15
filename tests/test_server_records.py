@@ -73,3 +73,39 @@ def test_the_notebook_registry_is_owner_readable_only(tmp_path):
     assert json.loads(path.read_text())["k"]["token"] == "secret"
     if os.name != "nt":
         assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
+
+
+# -- across processes (audit S21) ---------------------------------------------
+
+def test_announce_waits_for_another_process_holding_the_registry(tmp_path):
+    """servers.json is the one registry several processes rewrite (a viewer,
+    `plexora mcp serve`, a notebook server). A thread lock cannot stop two
+    processes reading the same old file and each writing back without the
+    other's record, so the read-modify-write holds a lock across processes."""
+    import subprocess
+    import sys
+    import threading
+
+    import pytest
+
+    if os.name == "nt":
+        pytest.skip("POSIX flock probe")
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import fcntl, sys; h = open(sys.argv[1], 'a+b'); "
+         "fcntl.flock(h.fileno(), fcntl.LOCK_EX); print('held', flush=True); "
+         "sys.stdin.read()",
+         str(tmp_path / "servers.json.lock")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        worker = threading.Thread(
+            target=server_records.announce, args=(8125, "t"), kwargs={"root": tmp_path})
+        worker.start()
+        worker.join(0.5)
+        assert worker.is_alive(), "announce wrote while another process held the registry"
+    finally:
+        holder.stdin.close()
+        holder.wait(10)
+    worker.join(10)
+    assert server_records.records(root=tmp_path)[0]["url"] == "http://127.0.0.1:8125/"

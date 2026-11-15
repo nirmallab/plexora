@@ -48,7 +48,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261114_audit"
+VERSION = "20261114_audit_leads2"
 
 
 def _blueprint():

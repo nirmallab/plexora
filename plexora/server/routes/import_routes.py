@@ -945,9 +945,12 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         # is exactly the silent corruption this function exists to prevent.
         from plexora import nodes as node_api
 
-        Project.mutate(name, lambda p: p.forget_table_answers())
+        # The answers are forgotten on the project handed over, not saved
+        # first: `attach_table` saves only once the node has loaded the new
+        # file, so a node that refuses leaves the old table WITH its answers
+        # (audit sc-import-8).
         return node_api.attach_table(
-            name, node=located[0], resource_id=located[1], table=table,
+            project.forget_table_answers(), node=located[0], resource_id=located[1], table=table,
             subset_column=(payload.get("subset_column") or "").strip() or None,
             subset_value=(payload.get("subset_value") or "").strip() or None,
             reinspect=True)

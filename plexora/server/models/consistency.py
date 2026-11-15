@@ -150,7 +150,7 @@ def _cell_id_findings(ids) -> list[dict]:
     return findings
 
 
-def _mask_findings(mask_size, width, height) -> list[dict]:
+def _mask_findings(mask_size, width, height, scale: int = 1) -> list[dict]:
     """The mask against the image.
 
     The viewer serves mask tiles in the IMAGE's coordinate system -- the mask
@@ -159,9 +159,12 @@ def _mask_findings(mask_size, width, height) -> list[dict]:
     It is drawn, stretched across the wrong pixels, and every outline is in the
     wrong place by a little. That is the hardest of these to see and the one
     most worth saying out loud.
+
+    `scale`: a mask drawn from polygons finer than the image
+    (`SegmentationSpec.scale`) is that many times the image's size by design.
     """
     mask_width, mask_height = mask_size
-    if mask_width == width and mask_height == height:
+    if mask_width == width * scale and mask_height == height * scale:
         return []
     return [_finding(
         "mask_size",
@@ -216,7 +219,8 @@ def report(project, description: Mapping[str, Any],
     ids = _column(description, roles.cell_id)
 
     if mask_size and width and height:
-        findings.extend(_mask_findings(mask_size, width, height))
+        findings.extend(_mask_findings(mask_size, width, height,
+                                       int(getattr(project.segmentation, "scale", 1) or 1)))
 
     if x and y and width and height:
         findings.extend(_coordinate_findings(x, y, width, height))

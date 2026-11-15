@@ -247,7 +247,10 @@ def panel_report(source, scene, width_mm, dpi):
         if layer.get("id") == "__mask__" and overlays:
             continue
         overlays.append(layer.get("label") or layer.get("id"))
-    overlays.extend(name for name in (scene.get("plugins") or {}) if name not in overlays)
+    # Not `volume`: that is core's record of which plane or projection of a
+    # z-stack the panel shows, and the plane is what gets re-rendered.
+    overlays.extend(name for name in (scene.get("plugins") or {})
+                    if name not in overlays and name != "volume")
 
     return {
         # Across the panel: a turned capture's frame, not the box around it.

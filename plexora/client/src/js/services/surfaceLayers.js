@@ -63,6 +63,14 @@ window.PlexoraSurfaceLayers = (function () {
 
     // -- style --------------------------------------------------------------
 
+    /** Whether a surface is of the frame on screen: one built from frame t is
+     *  drawn (and cut) at frame t only; an imported mesh, of no frame, on all. */
+    function onFrame(layer) {
+        const t = layer?.spec?.surface?.t;
+        if (t === undefined || t === null) return true;
+        return Number(t) === (Number(window.__plexora?.viewState?.get?.()?.t) || 0);
+    }
+
     /** The renderer's style for a stack layer: its render bag, eye and opacity. */
     function styleOf(layer) {
         const render = layer.spec?.render || {};
@@ -72,7 +80,7 @@ window.PlexoraSurfaceLayers = (function () {
                 : (Number.isFinite(Number(render.opacity)) ? Number(render.opacity) : 1),
             style: render.style || "solid",
             material: render.material || "soft",
-            visible: layer.visible !== false,
+            visible: layer.visible !== false && onFrame(layer),
             colorBy: render.colorBy || "uniform",
             hidden: Array.isArray(render.hidden) ? render.hidden : null,
             isolate: Array.isArray(render.isolate) ? render.isolate : null,
@@ -187,10 +195,14 @@ window.PlexoraSurfaceLayers = (function () {
             surfaces.setStyle(id, styleOf(layer));
             return;
         }
-        if (layer.visible === false || record.loading) return;
+        if (layer.visible === false || !onFrame(layer) || record.loading) return;
+        // reload() moves this on: a download asked for before an edit brings
+        // the pre-edit mesh, which is dropped and the new version fetched.
+        const version = record.version || 0;
         record.loading = (async () => {
             try {
                 const buffer = await fetchMesh(id);
+                if ((record.version || 0) !== version) return true;
                 const live = stack?.get(id);
                 if (!live || !renderer()) return;
                 const summary = renderer().load(id, buffer, styleOf(live));
@@ -203,8 +215,12 @@ window.PlexoraSurfaceLayers = (function () {
             } finally {
                 record.loading = null;
             }
+            return false;
         })();
-        await record.loading;
+        if (await record.loading) {
+            const live = stack?.get(id);
+            if (live) await ensure(live);
+        }
     }
 
     /** Whether a surface's mesh is still being fetched (the 3-D view's
@@ -336,7 +352,10 @@ window.PlexoraSurfaceLayers = (function () {
     function reload(id) {
         renderer()?.unload(id, { keepStyle: true });
         const record = records.get(id);
-        if (record) record.loaded = null;
+        if (record) {
+            record.loaded = null;
+            record.version = (record.version || 0) + 1;
+        }
         cuts.delete(id);
         sync();
     }
@@ -469,7 +488,7 @@ window.PlexoraSurfaceLayers = (function () {
         const where = planeQuery();
         // Not the mask's own surfaces (services/maskSurfaces.js): on a plane
         // the mask is drawn from its labels, and their cut would draw it twice.
-        const layers = surfaceLayers().filter((layer) => layer.visible !== false
+        const layers = surfaceLayers().filter((layer) => layer.visible !== false && onFrame(layer)
             && (layer.spec?.status || "ready") === "ready"
             && layer.spec?.surface?.role !== "mask");
         const keep = new Set(layers.map((layer) => layer.id));
@@ -522,7 +541,8 @@ window.PlexoraSurfaceLayers = (function () {
                     for (const [id, held] of cuts) {
                         const layer = stack?.get(id);
                         const xy = held.cut?.xy;
-                        if (!layer || layer.visible === false || !xy || Number(xy.z) !== Number(state.z)) continue;
+                        if (!layer || layer.visible === false || !onFrame(layer) || !xy
+                                || Number(xy.z) !== Number(state.z)) continue;
                         const skip = hiddenSet(layer);
                         context.globalAlpha = Math.max(0.35, Math.min(1, Number(layer.opacity ?? 1)));
                         for (const [object, flat] of Object.entries(xy.objects || {})) {
@@ -551,7 +571,7 @@ window.PlexoraSurfaceLayers = (function () {
                 for (const [id, held] of cuts) {
                     const layer = stack?.get(id);
                     const part = held.cut?.[axis];
-                    if (!layer || layer.visible === false || !part) continue;
+                    if (!layer || layer.visible === false || !onFrame(layer) || !part) continue;
                     const skip = hiddenSet(layer);
                     for (const [object, flat] of Object.entries(part.objects || {})) {
                         if (skip(object)) continue;
@@ -686,6 +706,14 @@ window.PlexoraSurfaceLayers = (function () {
         window.addEventListener("plexora:surface-pick", onPick);
         // The 2-D views follow the plane on screen and the section cuts.
         window.addEventListener("plexora:view-changed", scheduleCuts);
+        // Another frame of a time series: each surface is of one frame.
+        let shownFrame = Number(window.__plexora?.viewState?.get?.()?.t) || 0;
+        window.addEventListener("plexora:view-changed", () => {
+            const t = Number(window.__plexora?.viewState?.get?.()?.t) || 0;
+            if (t === shownFrame) return;
+            shownFrame = t;
+            sync();
+        });
         window.addEventListener("plexora:sections-moved", scheduleCuts);
         window.addEventListener("plexora:surface-selected", () => paintCuts());
         // Figure Builder keeps a 3-D panel's camera, what it showed and its

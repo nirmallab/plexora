@@ -684,8 +684,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
     view_token = _view_token(spec, record)
     # Budgeted: a projection through 1937 planes at full resolution would read
     # them all; past the tile routes' budget it is computed coarser and drawn
-    # up, and the manifest says so (`coarsened_levels`).
-    reader = (source_image.SourceImage(image_data, view=view_token, budgeted=True)
+    # up, and the manifest says so (`coarsened_levels`). Kept on the shelf:
+    # gallery tiles and gate panels render one view after another.
+    reader = (source_image.SHELF.reader(image_data, view=view_token, budgeted=True)
               if view_token else source_image.SHELF.reader(image_data))
     with reader as source:
         view_provenance = None
@@ -769,6 +770,8 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         if getattr(source, "spec", None) is not None:
             view_provenance = source.provenance(
                 level, [c["name"] for c in resolved_channels])
+        # Read while the reader is still this render's (the shelf lends it on).
+        coarsened = int(getattr(source, "coarsened", 0) or 0)
 
     image = Image.fromarray(np.ascontiguousarray(pixels), "RGB")
     if image.size != (out_w, out_h):
@@ -941,8 +944,7 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "scale_bar": scale_bar,
         "egress": "rendered_pixels",
         **_view_manifest(spec, view_provenance),
-        **({"coarsened_levels": source.coarsened}
-           if getattr(source, "coarsened", 0) else {}),
+        **({"coarsened_levels": coarsened} if coarsened else {}),
         "provenance": {
             "image": api.ImageHandle(record).locator.to_dict(),
             "mask_path": (record.segmentation.derived

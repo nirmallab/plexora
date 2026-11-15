@@ -1175,5 +1175,58 @@ const GRID = {
 }
 
 
+// -- a lost WebGL context comes back with its molecules -------------------------
+//
+// A GPU reset or one WebGL context too many loses this canvas's context; every
+// buffer, the program and the gene table go with it. Without a handler the
+// molecules vanish for the life of the page.
+{
+    let ids = 0;
+    const uploads = [];
+    const makeGl = () => new Proxy({}, {
+        get(_target, prop) {
+            if (typeof prop !== "string") return undefined;
+            if (/^[A-Z0-9_]+$/.test(prop)) return prop;
+            if (prop === "drawingBufferWidth" || prop === "drawingBufferHeight") return 10;
+            if (prop === "getParameter") return () => [1, 64];
+            if (prop === "getShaderParameter" || prop === "getProgramParameter") return () => true;
+            if (prop === "bufferData") return (_t, data) => uploads.push(data);
+            return () => ({ id: ++ids });
+        },
+    });
+    const listeners = {};
+    const canvas = {
+        style: {}, classList: { add() {} }, remove() {},
+        getContext: () => makeGl(),
+        addEventListener: (name, fn) => { listeners[name] = fn; },
+    };
+    const saved = ctx.document.createElement;
+    ctx.document.createElement = () => canvas;
+    const viewer = { canvas: { querySelector: () => null, appendChild() {}, insertBefore() {} },
+                     container: { clientWidth: 10, clientHeight: 10 } };
+    const renderer = new TranscriptPointRenderer(viewer);
+    ctx.document.createElement = saved;
+    const packed = { data: new ArrayBuffer(32), count: 2 };
+    renderer.setTile("t#1", packed, "0");
+    renderer.setGeneTable([{ color: [1, 2, 3], visible: true }]);
+    check("the renderer listens for a lost and a restored context",
+        typeof listeners.webglcontextlost === "function"
+            && typeof listeners.webglcontextrestored === "function");
+    let prevented = false;
+    listeners.webglcontextlost?.({ preventDefault: () => { prevented = true; } });
+    check("a lost context is asked back (preventDefault)", prevented);
+    const before = uploads.length;
+    const oldBuffer = renderer.tiles.get("t#1")?.buffer;
+    listeners.webglcontextrestored?.({});
+    check("a restored context re-uploads every tile it held",
+        uploads.slice(before).includes(packed.data)
+            && renderer.tiles.get("t#1")?.buffer !== oldBuffer
+            && renderer.tiles.get("t#1")?.count === 2);
+    check("a restored context keeps the gene table",
+        renderer.geneCount === 1 && renderer._tableData?.[0] === 1
+            && uploads.length >= before);
+}
+
+
 console.log(failures.length ? `\n${failures.length} FAILED` : "\nall checks passed");
 process.exit(failures.length ? 1 : 0);

@@ -81,6 +81,8 @@
             const lapsed = store.needsReconnect && store.needsReconnect();
             const moved = await (lapsed
                 ? store.reconnect().then((done) => {
+                    // Both versions of what changed on both sides are kept: said so.
+                    if (done.ok) global.PlexoraOnboarding?.noticeCopies?.();
                     if (done.ok) return done;
                     why = done.reason === "denied" ? "The browser did not allow Plexora to open its folder."
                         : "Plexora's folder could not be opened. Choose it again in Settings › Data.";

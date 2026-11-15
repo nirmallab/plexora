@@ -281,3 +281,28 @@ def test_no_quality_column_reads_as_keep_everything(tmp_path):
     _, _, _, _, q = xenium.read_transcripts(path)
 
     assert set(q.tolist()) == {255}
+
+
+def test_a_binary_feature_name_column_reads_as_gene_names(tmp_path):
+    """pg-tx-hd-2: Xenium Onboard Analysis 1.x writes `feature_name` as
+    binary. Read as bytes, every name became "b'EPCAM'": the controls were
+    kept (their prefix never matched) and, against the run's panel, no
+    molecule matched a gene -- an empty layer."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    names = [b"EPCAM", b"CD3E", b"NegControlProbe_00042", b"EPCAM", b"BLANK_0001"]
+    path = tmp_path / "transcripts.parquet"
+    pq.write_table(pa.table({
+        "feature_name": pa.array(names, type=pa.binary()),
+        "x_location": pa.array(np.arange(5, dtype="float32")),
+        "y_location": pa.array(np.arange(5, dtype="float32")),
+        "qv": pa.array(np.full(5, 30.0, dtype="float32")),
+    }), str(path))
+
+    genes, index, _, _, _ = xenium.read_transcripts(path)
+    assert genes == ["CD3E", "EPCAM"]
+    assert [genes[i] for i in index] == ["EPCAM", "CD3E", "EPCAM"]
+
+    genes, index, _, _, _ = xenium.read_transcripts(path, vocabulary=["EPCAM", "CD3E"])
+    assert genes == ["EPCAM", "CD3E"] and index.tolist() == [0, 1, 0]

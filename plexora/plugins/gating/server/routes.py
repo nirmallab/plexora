@@ -95,7 +95,9 @@ def get_gating_gmm():
 @gating_bp.route('/upload_gates', methods=['POST'])
 def upload_gates():
     file = request.files['file']
-    if file.filename.endswith('.csv') == False:
+    # Any case, as the drop sniffer takes it (`/\.csv$/i`): a refused
+    # `.CSV` left the panel reading the previous upload back.
+    if not (file.filename or '').lower().endswith('.csv'):
         abort(422)
     datasource = request.form['datasource']
     file.save(_files(datasource) / 'uploaded_gates.csv')
@@ -191,13 +193,18 @@ def save_gating_list():
     # `base`: the revision this page last read or wrote. A page holding a list
     # older than the stored one (an agent wrote gates since) has only its own
     # changes taken (`model.save_gating_list`).
-    gating_model.save_gating_list(
-        datasource, filter, channels, base=post_data.get('base'),
-        defaults=lambda: gating_model.default_ranges(api.project_data(datasource)))
-    # A locked gate is the user's word even against their own slider: the
-    # list is saved whole, so a locked marker's row is put back after it.
-    reverted = _restore_locked(datasource)
-    revision = gating_model.saved_gating_list_at(datasource)[1]
+    # The save, the locked rows put back and the revision handed to the page
+    # are one step under the gates lock (re-entrant): an agent's write landing
+    # between them would be overwritten by the restore, or counted in a
+    # revision the page never saw.
+    with gating_model._lock_for(datasource):
+        gating_model.save_gating_list(
+            datasource, filter, channels, base=post_data.get('base'),
+            defaults=lambda: gating_model.default_ranges(api.project_data(datasource)))
+        # A locked gate is the user's word even against their own slider: the
+        # list is saved whole, so a locked marker's row is put back after it.
+        reverted = _restore_locked(datasource)
+        revision = gating_model.saved_gating_list_at(datasource)[1]
 
     resp = jsonify(success=True, reverted=reverted, revision=revision)
     return resp

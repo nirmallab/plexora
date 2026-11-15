@@ -94,17 +94,34 @@ class AuditLog:
                 out.append(record)
         return out
 
+    def _mentioning(self, text: str):
+        """The readable lines that contain `text` as a JSON string, oldest
+        first. The log is never pruned and a rollback looks each receipt up
+        several times: a line that cannot match is not parsed."""
+        path = self.path
+        if not path.exists():
+            return
+        needle = json.dumps(str(text), ensure_ascii=False)
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if needle not in line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except ValueError:
+                    continue
+
     def find(self, operation_id: str) -> dict | None:
         """The `ok` line of one operation (the last, should there be several)."""
         found = None
-        for record in self.entries():
+        for record in self._mentioning(operation_id):
             if record.get("operation_id") == operation_id and record.get("status") == "ok":
                 found = record
         return found
 
     def undo_of(self, operation_id: str) -> dict | None:
         """The first `ok` line that undid this operation, or None."""
-        for record in self.entries():
+        for record in self._mentioning(operation_id):
             if record.get("undo_of") == operation_id and record.get("status") == "ok":
                 return record
         return None

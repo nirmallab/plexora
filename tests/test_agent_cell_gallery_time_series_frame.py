@@ -95,3 +95,21 @@ def test_explain_cell_on_a_series_crops_the_frame_its_values_come_from(tmp_path,
     assert result["markers"]["DNA"]["value"] > 900, result["markers"]
     # ...so its crop is frame 1, where id 5 is in the mask; frame 0 has no 5.
     assert drawn == [1], f"the crop shows frame 1, not frame 0; frames drawn: {drawn}"
+
+
+def test_sections_of_a_series_outline_the_frame_they_draw(tmp_path):
+    """render_sections at t=1 cuts frame 1's mask: id 5 is only in frame 1,
+    so its highlighted outline appears; with frame 0's labels it never did."""
+    import io
+
+    from PIL import Image
+
+    _series(tmp_path, "secseries")
+    registry.discover([])
+    outcome = invoke(AgentSession(), "render_sections", {
+        "project": "secseries", "x": 45, "y": 45, "z": 2, "t": 1, "size_px": 32,
+        "output_px": 128, "segmentation": "outlines", "highlight": 5,
+        "channels": [{"name": "DNA", "color": "#ffffff", "window": [0, 2000]}]})
+    assert outcome["ok"], outcome
+    pixels = np.asarray(Image.open(io.BytesIO(outcome["result"]["_images"][0])).convert("RGB"))
+    assert ((pixels == (255, 214, 10)).all(axis=-1)).any(), "cell 5 of frame 1 is outlined"

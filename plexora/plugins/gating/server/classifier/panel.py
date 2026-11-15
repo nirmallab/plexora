@@ -151,7 +151,10 @@ def cell_at(ds, x, y, radius=PICK_RADIUS_PX) -> dict:
         if provider is not None:
             cx, cy = int(np.floor(x)), int(np.floor(y))
             box = (cx - r, cy - r, cx + r + 1, cy + r + 1)
-            labels = np.asarray(provider.read_region(0, box))
+            # A mask drawn finer than its image (polygons) has the image's
+            # grid at its level log2(scale).
+            level = int(ds.project.segmentation.extra_levels or 0)
+            labels = np.asarray(provider.read_region(level, box))
             hit = None
             if labels.shape == (2 * r + 1, 2 * r + 1):
                 centre = int(labels[r, r])

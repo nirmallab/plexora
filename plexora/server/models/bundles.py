@@ -3001,17 +3001,25 @@ def export_file(name: str, dest) -> Path:
 # -- copies ------------------------------------------------------------------
 
 
-def copy_project(name: str, into=None, *, progress=None, cancel=None, stage=None) -> dict:
+def copy_project(name: str, into=None, *, as_name: Optional[str] = None, progress=None, cancel=None,
+                 stage=None) -> dict:
     """"Make a copy": the project (and its state, its tables, its bookmarks
     and figures) written as a bundle folder beside where it lands and
     imported from there as a new project -- also for a shared project, which
-    becomes the user's own."""
+    becomes the user's own. `as_name`: the name wanted for the copy (the
+    next free `<as_name>_<n>` when taken), else `<name>_<n>`; the website's
+    Reconnect names a copy of what was edited while its folder was closed
+    so (services/browserStore.js `keepBoth`)."""
     root = _target_root(into)
     folder = Path(root) / f".importing-copy-{uuid.uuid4().hex[:12]}"
     try:
-        export([name], folder, include={"tables": True, "captures": True, "figures": False},
-               sink=FolderSink(folder, progress=None, cancel=cancel), stage=None, record=False)
-        result = apply(FolderSource(folder, owned=True), into=into, new_ids=True,
+        exported = export([name], folder, include={"tables": True, "captures": True, "figures": False},
+                          sink=FolderSink(folder, progress=None, cancel=cancel), stage=None, record=False)
+        rename = None
+        if as_name:
+            rename = {str(project.get("id") or ""): str(as_name)
+                      for project in (exported.get("manifest") or {}).get("projects") or ()}
+        result = apply(FolderSource(folder, owned=True), into=into, new_ids=True, rename=rename,
                        progress=progress, cancel=cancel, stage=stage)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
@@ -3099,6 +3107,10 @@ def start_export(ids: Iterable[str] = (), include=None, dest=None, *, dataset: O
         try:
             result = export(names, dest, include=include, progress=progress, cancel=cancel, stage=stage)
         except Cancelled:
+            if staged:
+                # Nothing will fetch it, and `cancel_job` leaves it to this
+                # thread when the thread outlasts its wait.
+                shutil.rmtree(dest.parent, ignore_errors=True)
             return
         except Exception as error:
             state["error"] = str(error)
@@ -3146,8 +3158,9 @@ def start_import(path, choices=None, into=None, *, cleanup: bool = False, placed
     return job_status(token)
 
 
-def start_copy(name: str, into=None) -> dict:
-    """"Make a copy" as a background task (polled like an import)."""
+def start_copy(name: str, into=None, as_name: Optional[str] = None) -> dict:
+    """"Make a copy" as a background task (polled like an import); `as_name`
+    as `copy_project` takes it."""
     _local(name, assign=False)
     token = uuid.uuid4().hex[:16]
     state = {"kind": "copy", "name": name, "done": 0, "total": 0, "result": None, "error": None}
@@ -3160,7 +3173,8 @@ def start_copy(name: str, into=None) -> dict:
             report(done, total)
 
         try:
-            state["result"] = copy_project(name, into, progress=progress, cancel=cancel, stage=stage)
+            state["result"] = copy_project(name, into, as_name=as_name, progress=progress, cancel=cancel,
+                                           stage=stage)
         except Cancelled:
             return
         except Exception as error:
@@ -3227,8 +3241,11 @@ def cancel_job(token: str) -> bool:
         state = _JOBS.get(token)
     if state is None:
         raise KeyError(token)
-    layer_jobs.stop_task(TASK_OWNER, token, timeout=5.0)
-    if state["kind"] == "export":
+    stopped = layer_jobs.stop_task(TASK_OWNER, token, timeout=5.0)
+    # Only once the thread has stopped: one still writing keeps the file open
+    # (Windows refuses the unlink) and cleans up itself when it sees the stop
+    # (the sink's abort; `start_export` for a staged folder).
+    if state["kind"] == "export" and stopped:
         dest = Path(state["dest"])
         Path(str(dest) + ".part").unlink(missing_ok=True)
         if state["staged"]:

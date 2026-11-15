@@ -157,7 +157,14 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
             // distinguish the HD 16-bit variant of a tile from the default
             // 8-bit one -- without it a cache hit could bind u8 pixels to a
             // draw that reads them as u16.
-            const cacheKey = `${source.getTileKey(...tileArgs)}|${format}`;
+            //
+            // And whether the bytes are provisional (tileFetch.js
+            // `_plexoraCoarse`: a section drawn up from a coarser level,
+            // X-Plexora-Served-Steps). The final tile comes at the SAME
+            // address once the area is prepared in 3-D, and must not find
+            // the provisional texture resident and skip its upload.
+            const coarse = e.tile._plexoraCoarse ? "|coarse" : "";
+            const cacheKey = `${source.getTileKey(...tileArgs)}|${format}${coarse}`;
             const { texture, resident } = this._tileTextureCache.acquire(
                 cacheKey, pixels ? pixels.byteLength : 0);
             if (resident) {
@@ -188,9 +195,33 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
     };
 
     renderer.vShader = plexoraUrl("client/src/shaders/vert.glsl");
-    // Not versioned: glRenderer's getter asks for it with `no-cache`, and it
+    // Not versioned: the getter below asks for it past the cache, and it
     // takes only a URL ending in "glsl" as a file (anything else is source).
     renderer.fShader = plexoraUrl("client/src/shaders/frag.glsl");
+
+    // glRenderer's own getter answers a failed fetch (a 404, a proxy's login
+    // page, the network) with the URL itself, which toProgram compiles as
+    // GLSL -- and the broken program is then kept by ready() for the page.
+    // A failure here rejects instead, so ready() forgets it and the next
+    // `open` tries again. Instance properties: glRenderer.js is webpacked.
+    renderer.getter = (where) => {
+        if (String(where).slice(-4) !== "glsl") return Promise.resolve(where);
+        return fetch(where, { cache: "no-store" }).then((response) => {
+            if (!response.ok) throw new Error(`shader ${where}: HTTP ${response.status}`);
+            return response.text();
+        });
+    };
+    // Nor is a program that did not link (a corrupt shader body): toProgram
+    // logs it and returns it all the same.
+    const toProgram = renderer.toProgram.bind(renderer);
+    renderer.toProgram = function (files) {
+        const program = toProgram(files);
+        const gl = this.gl;
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS) && !gl.isContextLost()) {
+            throw new Error("the tile shader program did not link");
+        }
+        return program;
+    };
 
     renderer["gl-drawing"] = function () {
         const args = this.gl_arguments;
@@ -308,6 +339,10 @@ function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingC
                 world.getItemAt(i)._needsDraw = true;
             }
             world.update();
+        }, (error) => {
+            // Not kept (GLRenderer.ready): the next `open` -- a channel
+            // added, a plane step -- builds it again.
+            console.error("glInit: the tile renderer could not be built", error);
         });
     };
     // A restored context (createGLRenderer claimed its loss and remade the

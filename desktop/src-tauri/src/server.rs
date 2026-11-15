@@ -31,8 +31,11 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// ... and a busy one, still writing to stderr (a first launch under an
 /// antivirus scanner can take minutes to import the scientific stack).
 const READY_TIMEOUT_BUSY: Duration = Duration::from_secs(240);
-/// How long the server gets to exit after its stdin closes.
-const STOP_GRACE: Duration = Duration::from_secs(5);
+/// How long the server gets to exit after its stdin closes: longer than its
+/// own teardown may take (plexora/_lifetime.py DEFAULT_GRACE, 10 s, after
+/// which it ends itself) -- ssh sessions, a gcloud VM stopped or deleted,
+/// nodes.json -- or Quit would cut that teardown off.
+const STOP_GRACE: Duration = Duration::from_secs(12);
 const RING_LINES: usize = 200;
 const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 

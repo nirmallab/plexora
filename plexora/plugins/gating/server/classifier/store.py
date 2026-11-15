@@ -25,7 +25,6 @@ import hashlib
 import json
 import os
 import re
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -38,17 +37,19 @@ EXAMPLES_TABLE = "classifier_examples"
 FOLDER = "classifier"
 STATE_FILE = "state.json"
 
-_LOCKS: dict = {}
-_LOCKS_GUARD = threading.Lock()
 
 
 def now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
 
 
-def lock(project) -> threading.RLock:
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(project, threading.RLock())
+def lock(project):
+    """The classifier state's read-modify-write lock: re-entrant, and held
+    across processes (the MCP server is a second one on the same data root)."""
+    from plexora import _process_lock
+
+    return _process_lock.lock_for(("gating.classifier", project),
+                                  lambda: Path(_store(project).directory()) / "classifier.lock")
 
 
 def _store(project):
@@ -74,16 +75,24 @@ def write_atomic(path: Path, data: bytes) -> None:
         handle.write(data)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(part, path)
+    # Windows refuses the replace while any handle (a route reading the state,
+    # a scanner) is open on `path`; it clears in milliseconds.
+    from plexora._transient_locks import past_transient_locks
+
+    past_transient_locks(lambda: os.replace(part, path))
 
 
 # -- state ----------------------------------------------------------------
 
 
 def read_state(project) -> dict:
+    from plexora._transient_locks import past_transient_locks
+
     path = folder(project) / STATE_FILE
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        # A read refused mid-replace (Windows) is waited out, not taken for
+        # an empty state that `editing` would then write back.
+        document = json.loads(past_transient_locks(lambda: path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         document = {}
     document.setdefault("mode", "threshold")
@@ -298,12 +307,17 @@ def read_arrays(project, marker, run_id) -> dict | None:
 
 def remove_runs(project, marker, keep=None) -> None:
     """Delete a marker's run files, all but `keep`'s (a run id or a set of
-    them)."""
+    them) and those the state names now. Under the lock: a run writes its
+    arrays and records itself in one hold of it (`runs`), so a file the
+    state does not name here is no run's -- and a `keep` computed before
+    another run was recorded never deletes that run's arrays."""
     directory = folder(project) / safe_name(marker)
     if not directory.is_dir():
         return
     keep = set() if keep is None else ({keep} if isinstance(keep, str) else set(keep))
-    names = {f"run_{k}.npz" for k in keep}
-    for path in directory.glob("run_*.npz"):
-        if path.name not in names:
-            path.unlink(missing_ok=True)
+    with lock(project):
+        keep |= kept_run_ids(read_state(project)["markers"].get(marker) or {})
+        names = {f"run_{k}.npz" for k in keep}
+        for path in directory.glob("run_*.npz"):
+            if path.name not in names:
+                path.unlink(missing_ok=True)

@@ -332,7 +332,9 @@ def write(ds, *, replace=False, what="both", thresholds=None):
     from plexora.plugins.qc.server import tableops
 
     payload = gather(ds, what=what, thresholds=thresholds)
+    before = _table_fp(ds)
     answer = tableops.run_write(ds, {**payload, "replace": bool(replace)})
+    _restamp_table(ds, before)
     if payload.get("cells"):
         with results.lock(ds.name):
             document = results.load(ds.name)
@@ -348,6 +350,35 @@ def write(ds, *, replace=False, what="both", thresholds=None):
                 "backup": answer.get("backup"), "on_node": answer.get("on_node", False)})
             results.save(ds.name, document)
     return answer
+
+
+def _table_fp(ds):
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
+    try:
+        return cell_inputs.table_fingerprint(ds.project)
+    except Exception:
+        return None
+
+
+def _restamp_table(ds, before):
+    """The calls' own write changed the table file's stamp, not its cells:
+    results derived from the table as it was take the new stamp, or the next
+    gating read would find them stale and map every region again
+    (`exclusions._stale`)."""
+    after = _table_fp(ds)
+    if before is None or after is None or after == before:
+        return
+    with results.lock(ds.name):
+        document = results.load(ds.name)
+        touched = False
+        for result in (document.get("results") or {}).values():
+            inputs = (result.get("cells") or {}).get("inputs")
+            if isinstance(inputs, dict) and inputs.get("table_fp") == before:
+                inputs["table_fp"] = after
+                touched = True
+        if touched:
+            results.save(ds.name, document)
 
 
 # -- flat files -----------------------------------------------------------------------------

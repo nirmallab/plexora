@@ -120,9 +120,11 @@ def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable
     added = False
     made_from = {out.get(made): out.get(source) for made, source in _MADE_FROM
                  if isinstance(out.get(made), str) and isinstance(out.get(source), str)}
-    for path in sorted(_paths(out, wanted or (lambda value: value.startswith(PAGE_ROOTS)))):
-        if path in known:
-            continue
+    wanted = wanted or (lambda value: value.startswith(PAGE_ROOTS))
+    # Known paths are skipped BEFORE `wanted`, which on a shared registry
+    # stats the file: every write rewrites every project, under the config
+    # lock (audit sc-persist-4).
+    for path in sorted(_paths(out, lambda value: value not in known and wanted(value))):
         facts = identify(path)
         if facts:
             facts = dict(facts)

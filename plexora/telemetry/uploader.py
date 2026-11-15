@@ -37,6 +37,7 @@ backoff and the server's config, is the same code on both.
 
 from __future__ import annotations
 
+import gzip as _gzip
 import json
 import os
 import random
@@ -121,7 +122,8 @@ def _run(telemetry):
         if _stopping.is_set():
             return
         try:
-            if telemetry.enabled:
+            # `recheck` turns a server pause that has run out back on.
+            if telemetry.enabled or telemetry.recheck():
                 upload_once(telemetry)
         except Exception:
             config.debug("upload attempt raised")
@@ -203,6 +205,12 @@ def upload_once(telemetry, *, include_open=False, force=False) -> str:
         if taken is None:
             break
         batch_id, payload = taken
+        if _wider_than(payload, mode):
+            # Frozen before the mode was lowered (by the user or the
+            # service's ceiling): what it holds is no longer consented to.
+            queue.ack(batch_id)
+            telemetry._health["dropped"] += 1
+            continue
         token = _token(telemetry, queue, client)
         if token is None:
             queue.unack(batch_id)
@@ -219,6 +227,16 @@ def upload_once(telemetry, *, include_open=False, force=False) -> str:
             break
     _record(queue, outcome)
     return outcome
+
+
+def _wider_than(payload, mode) -> bool:
+    """Whether a frozen batch was built under a mode that allows more than
+    `mode` (a batch that cannot be read is not judged here)."""
+    try:
+        frozen = json.loads(_gzip.decompress(payload))["client"]["mode"]
+        return config.MODES.index(frozen) > config.MODES.index(mode)
+    except Exception:
+        return False
 
 
 def _handle(queue, state, batch_id, status, answer, headers, telemetry) -> str:

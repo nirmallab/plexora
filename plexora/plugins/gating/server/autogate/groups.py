@@ -430,6 +430,8 @@ def carry(engine, group):
         group["outcome"] = "review"
         for project in members:
             unit = units[unit_key(project, marker)]
+            if unit["state"] != "group_pending":
+                continue                  # left the group (a user's edit): its own close stands
             carried = _carried(group, scale, unit, project, float(gate))
             _set_transfer(unit, group, scale, carried, None)
             engine.close(unit, "manual_review_recommended",

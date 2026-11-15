@@ -62,9 +62,19 @@ def _root(project, result_id):
 
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(project))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    folder = paths.agent_root() / "exports" / f"qc_{safe}_{result_id}_{stamp}"
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
+    base = paths.agent_root() / "exports" / f"qc_{safe}_{result_id}_{stamp}"
+    base.parent.mkdir(parents=True, exist_ok=True)
+    # One folder per export, never shared: a panel download removes its
+    # folder once sent (routes.download), and two in the same second would
+    # otherwise remove each other's files.
+    for n in range(1000):
+        folder = base if n == 0 else base.with_name(f"{base.name}_{n}")
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            continue
+    raise OSError(f"no free export folder beside {base}")
 
 
 #: The prefix of a QC region's category id in the exported document, so a QC
@@ -297,8 +307,14 @@ def export(call, project, *, what="both", result_id=None):
         files["regions"] = str(path)
     if what in ("cells", "anndata", "both"):
         cells = results.cells(project)
+        # The calls are the active result's only when they were derived for
+        # it: a result activated whose cell write failed (finalize) leaves
+        # the previous result's calls in qc_cells, and those must not go out
+        # under this result's name.
         current = cells is not None and cells.height and \
-            (result_id is None or result_id == document.get("active_result_id"))
+            (result_id is None or result_id == document.get("active_result_id")) and \
+            ("result_id" not in cells.columns
+             or set(cells["result_id"].unique().to_list()) == {result["result_id"]})
         meta = results.roi_meta(project) if current else None
         if what in ("cells", "both"):
             if current:

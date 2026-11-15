@@ -580,16 +580,6 @@ def build_coarse(store: Store, source, report=None, cancel=None, *, copy=True) -
     levels = coarse_levels(volume) if copy else []
     pooled = pooled_levels(volume)
     itemsize = np.dtype(volume.dtype).itemsize
-    need = sum(volume.frames * volume.channels * volume.depth
-               * volume.levels[level].height * volume.levels[level].width * itemsize
-               for level in levels)
-    need += sum(volume.frames * volume.channels * -(-volume.depth // pool)
-                * volume.levels[level].height * volume.levels[level].width * itemsize
-                for level, pool in pooled)
-    free = _free_bytes(store.path.parent)
-    if free is not None and free < need:
-        raise OSError(f"Not enough free space for the stack's 3-D copy: about "
-                      f"{need / 2**20:.0f} MB is needed and {free / 2**20:.0f} MB is free.")
     units = [(level, t, c, z0) for level in levels for t in range(volume.frames)
              for c in range(volume.channels) for z0 in range(0, volume.depth, BRICK[0])]
     pooled_units = [(level, pool, t, c, p0) for level, pool in pooled
@@ -598,6 +588,18 @@ def build_coarse(store: Store, source, report=None, cancel=None, *, copy=True) -
     total = len(units) + len(pooled_units)
     manifest = store.manifest()
     done = set(manifest.setdefault("units", []))
+    # Room for the blocks still to copy: a resumed copy already holds the rest.
+    need = sum((min(volume.depth, z0 + BRICK[0]) - z0) * volume.levels[level].height
+               * volume.levels[level].width * itemsize
+               for level, t, c, z0 in units if f"{level}.{t}.{c}.{z0}" not in done)
+    need += sum((min(-(-volume.depth // pool), p0 + BRICK[0]) - p0)
+                * volume.levels[level].height * volume.levels[level].width * itemsize
+                for level, pool, t, c, p0 in pooled_units
+                if f"{pooled_name(level, pool)}.{t}.{c}.{p0}" not in done)
+    free = _free_bytes(store.path.parent)
+    if need and free is not None and free < need:
+        raise OSError(f"Not enough free space for the stack's 3-D copy: about "
+                      f"{need / 2**20:.0f} MB is needed and {free / 2**20:.0f} MB is free.")
     for count, (level, t, c, z0) in enumerate(units):
         if cancel is not None and cancel.is_set():
             return

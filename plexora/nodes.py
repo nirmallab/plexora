@@ -1402,8 +1402,15 @@ def _reload(name):
     image there, filling globals nothing in that process ever reads. That is
     what `reload=False` on the three `attach_*` functions is for; the sidecar is
     then asked to reload itself over HTTP (see `plexora/memory.py`).
+
+    Only the project this process has loaded, or any when nothing is (the CLI,
+    a script). A process loads ONE project, so re-reading another here -- a
+    dataset imported from a node, an agent attaching sample B's mask -- swapped
+    the user's open sample out from under the viewer. The project attached to
+    is read fresh whenever it is next opened.
     """
     from plexora.server.models import data_model
 
-    data_model.load_datasource(name, reload=True)
+    if data_model._loaded_source is None or data_model.is_loaded(name):
+        data_model.load_datasource(name, reload=True)
     return Project.load(name)

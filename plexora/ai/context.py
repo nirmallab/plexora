@@ -361,6 +361,11 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
             if not (excluded and says(EXCLUDE, text)):
                 ambiguities.append("the note names markers or populations but does not restrict "
                                    "the run to them, so every marker is gated")
+        elif excluded and says(EXCLUDE, text) and set(requested) <= set(excluded):
+            # "Gate everything except CD45" filed as a selection: "except" is
+            # also a restriction cue, but nothing is asked for beyond the
+            # exclusion. Every marker but the excluded ones (settled below).
+            pass
         elif requested:
             out.scope, out.requested = "selected_markers", requested
         elif not _restrict_to_named(out, text, terms, ambiguities):

@@ -117,6 +117,14 @@ class FigureExportUi {
     }
 
     async start() {
+        this.setPhase("running", "Saving your latest changes…");
+        // The job renders the server's copy: wait for the saves in flight, and
+        // do not export a figure that is missing an edit this tab shows.
+        if (this.state?.whenSaved && !(await this.state.whenSaved())) {
+            this.setPhase("failed", "Your latest changes are not saved yet, so the export "
+                + "would leave them out. " + (this.state.statusDetail || ""));
+            return;
+        }
         this.setPhase("running", "Starting…");
         const result = await this.api.startExport(this.figureId, this.options());
         if (!result.ok) {

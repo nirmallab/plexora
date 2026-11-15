@@ -173,6 +173,22 @@ def test_every_sample_on_screen_is_registered(dialog):
     assert "key: sample.key || undefined," in dialog
 
 
+def test_an_import_that_stopped_partway_does_not_register_a_landed_sample_again(dialog):
+    """A multi-sample import that stops partway (a failure, a name taken)
+    keeps what already landed: pressing Import again posts only the rest,
+    instead of registering a landed sample a second time -- under a typed
+    name, a duplicate project."""
+    submit = dialog[dialog.index("async function submit(replace, only)"):
+                    dialog.index("async function submitScoped()")]
+    assert "state.landed = state.landed || {};" in submit
+    assert "const landed = !replace && sample.key ? state.landed[sample.key] : null;" in submit
+    assert "if (!replace && sample.key) state.landed[sample.key] = result;" in submit
+    # Skipped before its POST, and still counted among the results.
+    skip = submit.index("if (landed) {")
+    assert skip < submit.index('plexoraUrl("import/sample")')
+    assert "results.push(landed);" in submit[skip:skip + 200]
+
+
 # -- where the rules live --------------------------------------------------
 
 def test_the_cards_chrome_is_styled_in_the_stylesheet_every_page_loads(dialog):

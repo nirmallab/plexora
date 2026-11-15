@@ -815,7 +815,7 @@
             setBusy(false);
             if (control) control.classList.remove("is-working");
             if (done.ok) {
-                global.PlexoraToast?.show?.({ title: `Reconnected to “${done.label}”` });
+                if (!noticeCopies()) global.PlexoraToast?.show?.({ title: `Reconnected to “${done.label}”` });
                 finish("ready");
                 return;
             }
@@ -1356,8 +1356,13 @@
         } catch (error) {
             return;
         }
-        // A project's page (`/<name>`), not the home page or a page of the client's own.
-        const path = global.location.pathname;
+        // A project's page (`/<name>`), not the home page or a page of the
+        // client's own -- read from the site's base path (services/shell.js
+        // PLEXORA_SITE_BASE: `/app` on a data node, `/rnode/<host>/<port>/app`
+        // behind a portal), or the offer never comes there.
+        const base = String(global.PLEXORA_SITE_BASE || "").replace(/\/+$/, "");
+        let path = global.location.pathname;
+        if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || "/";
         if (!asked || !doc || path === "/" || path.startsWith("/client/") || path.split("/").length !== 2) return;
         try {
             global.sessionStorage.removeItem(OFFER_KEY);
@@ -1378,6 +1383,45 @@
     if (doc && doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", offerLater, { once: true });
     else offerLater();
 
+    //: The copies the last Reconnect made (services/browserStore.js
+    //: `keepBoth`, written to sessionStorage `COPIES_KEY`): told once, on the
+    //: page that reconnected or, when that page reloads, the next one.
+    const COPIES_KEY = "plexora-reconnect-copies";
+
+    /**
+     * A notice for each project changed in this browser while the folder was
+     * closed and in the folder too, of which Reconnect kept both: the
+     * folder's as it is, this browser's under a new name. True when told.
+     */
+    function noticeCopies() {
+        let told = null;
+        try {
+            told = JSON.parse(global.sessionStorage.getItem(COPIES_KEY) || "null");
+        } catch (error) {
+            return false;
+        }
+        const copies = told && Array.isArray(told.copies) ? told.copies.filter((copy) => copy && copy.name) : [];
+        const toast = global.PlexoraToast;
+        if (!copies.length || !toast || typeof toast.show !== "function") return false;
+        try {
+            global.sessionStorage.removeItem(COPIES_KEY);
+        } catch (error) {
+            // Told again on the next page, at worst.
+        }
+        const folder = told.label || "your Plexora folder";
+        const one = copies.length === 1;
+        toast.show({
+            title: one ? `Kept both versions of “${copies[0].from}”` : `Kept both versions of ${copies.length} projects`,
+            note: (one ? "It was" : "They were") + ` changed in this browser while “${folder}” was closed, and in `
+                + "the folder too. The folder's version is unchanged; this browser's is now "
+                + copies.map((copy) => `“${copy.name}”`).join(", ") + ".",
+            timeout: 0,
+        });
+        return true;
+    }
+    if (doc && doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", noticeCopies, { once: true });
+    else noticeCopies();
+
     //: The dialog whatever was chosen before: Settings' "Set up again".
     function open({ reason = "settings", start = "welcome" } = {}) {
         if (!storeOf()) return Promise.resolve("cancelled");
@@ -1386,5 +1430,5 @@
         return pending;
     }
 
-    global.PlexoraOnboarding = Object.freeze({ ensure, open });
+    global.PlexoraOnboarding = Object.freeze({ ensure, open, noticeCopies });
 })(window);

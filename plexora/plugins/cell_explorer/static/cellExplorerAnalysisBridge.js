@@ -8,7 +8,9 @@
  * (services/launchContext.js, through the same command). All three mean "show
  * the cells coloured by this column of the table, in this tab" -- which is
  * exactly what this panel's own variable picker does, so that is the path
- * taken: re-read the variable list, then `select(column, {persist: false})`.
+ * taken: re-read the variable list (`fetchCatalogue`, never the stored
+ * settings, which would drop a change not saved yet), then
+ * `select(column, {persist: false})`.
  *
  * `persist: false` is the point. A colour-by asked for from outside is one
  * page view's arrangement; the project keeps whatever the user last chose by
@@ -56,7 +58,7 @@ class CellExplorerAnalysisBridge {
     async colorBy(column) {
         const name = String(column || "").trim();
         if (!name) throw new Error("needs a `column`");
-        await this.controller.fetchSaved();
+        await this.controller.fetchCatalogue();
         const columns = this.known();
         if (!columns.includes(name)) {
             const listed = columns.slice(0, 12).join(", ");
@@ -87,7 +89,7 @@ class CellExplorerAnalysisBridge {
         const sections = ((detail.payload || {}).sections || []).map(String);
         const current = this.controller.state.column;
         try {
-            await this.controller.fetchSaved();
+            await this.controller.fetchCatalogue();
             if (current && sections.includes(`obs:${current}`) && this.known().includes(current)) {
                 await this.controller.select(current, { persist: false });
             }

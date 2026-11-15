@@ -271,6 +271,18 @@ def test_a_chunk_over_the_size_limit_is_413(video, monkeypatch):
     assert _status(info) == 413
 
 
+def test_one_frame_bigger_than_the_chunk_limit_is_still_accepted(video, monkeypatch):
+    """An 8K RGBA frame is 132 MB, over the 64 MiB chunk cap; the server
+    tells the browser one frame per chunk, so that chunk must be taken, or
+    every such export fails on its first push."""
+    video_id, _ = video
+    export_id = _start(video)["export_id"]
+    monkeypatch.setattr(encode_jobs, "MAX_CHUNK_BYTES", FRAME_BYTES // 2)
+    assert _push(video_id, export_id, 0, 1, _frames(0, 1))["frames_received"] == 1
+    assert _push(video_id, export_id, 1, 1, _pngs(1, 1),
+                 frame_format="png")["frames_received"] == 2
+
+
 def test_finish_before_every_frame_arrived_is_409(video):
     video_id, _ = video
     export_id = _start(video)["export_id"]

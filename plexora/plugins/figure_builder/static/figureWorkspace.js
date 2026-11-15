@@ -2027,9 +2027,15 @@ class FigureWorkspace {
         const onPage = place && this.canvas?.page;
         const result = await FigureCaptureBin.adoptInto(this.state, this.api, entries,
             onPage ? { place: (panels) => this.placementsFor(panels, at) } : {});
+        // Added, but the server would not take them out of the bin: say so,
+        // or the same captures are added again from there.
+        const kept = result.binKept
+            ? " They are still in your captures bin too — remove them there"
+              + " so they are not added twice."
+            : "";
         if (onPage) {
             if (result.panelIds.length) {
-                this.toast(`${FigureSchema.countPhrase(result.panelIds.length, "view")} added to the figure.`);
+                this.toast(`${FigureSchema.countPhrase(result.panelIds.length, "view")} added to the figure.${kept}`);
             } else if (result.failed) {
                 this.toast("That view could not be added to the figure.");
             }
@@ -2048,7 +2054,7 @@ class FigureWorkspace {
         // replace the first and the user would only ever read the bad news or
         // only ever the good.
         const added = result.panelIds.length
-            ? `${FigureSchema.countPhrase(result.panelIds.length, "panel")} added from your captures.`
+            ? `${FigureSchema.countPhrase(result.panelIds.length, "panel")} added from your captures.${kept}`
             : "";
         const lost = result.failed
             ? `${FigureSchema.countPhrase(result.failed, "capture")} could not be added — `
@@ -3422,7 +3428,8 @@ class FigureWorkspace {
                     if (draft.annotations[id].page_id === pageId) delete draft.annotations[id];
                 });
             });
-        this.canvas.pageId = null;
+        // Null: the page list picks the first page left on its next draw.
+        this.canvas.setPage(null);
     }
 
     // -- the tray ------------------------------------------------------------

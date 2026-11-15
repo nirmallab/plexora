@@ -75,7 +75,10 @@ function makeWorld({ where = "viewer", plan = null, confirm = [] } = {}) {
     let replies = { "drop/inspect": plan };
 
     const container = makeElement("div");
-    if (where === "home") container.classList.add("plexora-view-hidden");
+    // "samples": the Samples page routed over the open viewer of tonsil.
+    if (where === "home" || where === "samples") container.classList.add("plexora-view-hidden");
+    const reloads = [];
+    const adopted = [];
     const dialog = { matches: (selector) => selector === ":modal" };
     const document = {
         body: { dataset: { plexoraDatasource: where === "home" ? "" : "tonsil" } },
@@ -88,7 +91,19 @@ function makeWorld({ where = "viewer", plan = null, confirm = [] } = {}) {
     const window = {
         flaskVariables: { datasource: where === "home" ? "" : "tonsil" },
         PlexoraToast: { show: (options) => toasts.push(options) },
-        PlexoraRouter: { go: (href) => went.push(href) },
+        PlexoraRouter: {
+            go: async (href) => {
+                went.push(href);
+                // The router puts this page's own viewer back rather than loading it.
+                if (href === "/tonsil" && where === "samples") container.classList.remove("plexora-view-hidden");
+            },
+        },
+        location: {
+            set href(value) { reloads.push(value); },
+            get href() { return "/samples"; },
+            reload() { reloads.push("reload"); },
+        },
+        __plexora: { adoptLayers: async () => { adopted.push(true); } },
         PlexoraConfirm: {
             choose: (options) => {
                 asked.push(options);
@@ -133,7 +148,7 @@ function makeWorld({ where = "viewer", plan = null, confirm = [] } = {}) {
     runInContext(ROUTER, context);
     return {
         router: window.PlexoraDropRouter, window, requests, toasts, went, added,
-        opened, dropped, applied, asked, storage,
+        opened, dropped, applied, asked, storage, reloads, adopted,
         reply(path, value) { replies[path] = value; },
     };
 }
@@ -400,6 +415,45 @@ const layers = (sample, path, answers = {}) => ({
           world.router.claims(plan([action("open_project")]))
           && !world.router.claims(plan([action("import_new")]))
           && !world.router.claims(null));
+}
+
+{
+    // The Samples page shown over tonsil's viewer, and an image of tonsil
+    // dropped with its mask: the router only shows the viewer again (no page
+    // load, so main.js never takes the handoff) -- the mask is attached here.
+    const then = [action("attach_mask", { id: "t0", sample: "tonsil", paths: [MASK],
+                                          route: layers("tonsil", MASK) })];
+    const opener = action("open_project", {
+        status: "needs_confirm", reason: "open_and_attach", sample: "tonsil",
+        message: "Open tonsil and add 1 file?", paths: ["/data/tonsil.ome.tif"], then,
+        effects: { reload: false, navigate: true },
+    });
+    const world = makeWorld({ where: "samples", plan: plan([opener], { datasource: "tonsil", open: null }),
+                              confirm: ["go"] });
+    await world.router.unclaimed(["/data/tonsil.ome.tif", MASK]);
+    check("over the open sample's own viewer, the drop's follow-up attach still runs",
+          world.went[0] === "/tonsil" && world.added.length === 1 && world.added[0].paths[0] === MASK
+          && !world.storage.has("plexora:drop-handoff"));
+}
+
+{
+    // A mask dropped on the Samples page onto the sample open behind it: the
+    // attach needs the viewer reloaded, which going "there" alone never does.
+    const world = makeWorld({ where: "samples", plan: plan([action("attach_mask", {
+        sample: "tonsil", paths: [MASK], route: layers("tonsil", MASK),
+        effects: { reload: true, navigate: true } })], { datasource: "tonsil", open: null }) });
+    world.reply("import/layers", { reload: true });
+    await world.router.unclaimed([MASK]);
+    check("a drop onto the sample open behind the Samples page that needs a reload reloads it",
+          world.requests.some((r) => r.path === "import/layers") && world.reloads.length === 1
+          && world.reloads[0] === "/tonsil");
+    const added = makeWorld({ where: "samples", plan: plan([action("add_layer", {
+        sample: "tonsil", paths: ["/data/he.tif"], route: layers("tonsil", "/data/he.tif"),
+        effects: { reload: false, navigate: true } })], { datasource: "tonsil", open: null }) });
+    added.reply("import/layers", { reload: false });
+    await added.router.unclaimed(["/data/he.tif"]);
+    check("...and one that does not is taken on by the viewer it shows again",
+          added.went[0] === "/tonsil" && added.adopted.length === 1 && added.reloads.length === 0);
 }
 
 if (failures) {

@@ -341,6 +341,11 @@ def delete_video(call, inp):
         raise AgentError("permission_required", "pass confirm: true to delete this video "
                          "and its exports")
     document = _load(inp.video_id)
+    running = _running_exports(call, inp.video_id)
+    if running:
+        raise AgentError("conflict", f"an export of this video is still running "
+                         f"({running[0]}); cancel it or wait for it before deleting the video",
+                         detail={"export_id": running[0]})
     _repo().delete(inp.video_id)
     receipt = make_receipt(call, changed=True, before={"video_id": inp.video_id,
                                                        "title": document["title"]},

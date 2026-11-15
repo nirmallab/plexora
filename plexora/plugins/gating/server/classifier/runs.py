@@ -245,13 +245,15 @@ def run(ds, marker, *, progress=None, cancelled=None, pixels=True, auto_pick=Fal
                           uncertain, eligible)
     record.update({"origin": origin if origin in ORIGINS else "panel", "auto_pick": picked,
                    "call_rule": "score_0.5"})
-    store.write_arrays(ds.name, marker, run_id, calls=calls, scores=scores,
-                       uncertain=uncertain, agreement=agreement)
     try:
         with store.editing(ds.name) as document:
             # Checked again under the lock the eraser takes: an eraser pressed
             # while this run was writing wins, and nothing of the run is kept.
             stop()
+            # The arrays are written under the same lock as the record, so no
+            # other edit's `remove_runs` sees them unnamed (and deletes them).
+            store.write_arrays(ds.name, marker, run_id, calls=calls, scores=scores,
+                               uncertain=uncertain, agreement=agreement)
             entry = store.marker_state(document, marker)
             _swap_in(ds, marker, entry, record)
             keep = store.kept_run_ids(entry)
@@ -404,11 +406,12 @@ def store_session_result(ds, marker, result, *, cancelled=None) -> dict:
     if record.get("status") != "ready" or arrays is None:
         return record
     run_id = record["run_id"]
-    store.write_arrays(ds.name, marker, run_id, **arrays)
     try:
         with store.editing(ds.name) as document:
             if cancelled is not None and cancelled():
                 raise InterruptedError("cancelled")
+            # Under the lock with the record (`store.remove_runs`).
+            store.write_arrays(ds.name, marker, run_id, **arrays)
             entry = store.marker_state(document, marker)
             record["stored"] = "project"
             entry["session_run"] = record

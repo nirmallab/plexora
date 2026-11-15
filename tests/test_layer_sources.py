@@ -195,7 +195,7 @@ def test_the_etag_carries_the_config_generation_not_the_load_generation(client, 
     unchanged = client.get("/generated/layer/demo/he/he_0/0/0_0").headers["ETag"]
     assert unchanged == before
 
-    scene.patch(last_opened_at="2026-01-01").save()
+    _reregister(scene, offset=777.0)
     after = client.get("/generated/layer/demo/he/he_0/0/0_0").headers["ETag"]
     assert after != before
 
@@ -356,9 +356,67 @@ def test_the_window_cache_dies_with_the_pyramid_it_describes(scene):
     first = layer_sources.open_layer("demo", "he")
     assert first.windows
 
-    scene.patch(last_opened_at="2026-02-02").save()
+    _reregister(scene, offset=321.0)
 
     assert layer_sources.open_layer("demo", "he").windows == {}
+
+
+def _reregister(scene, offset):
+    """Register the layer again with a different transform: a real change."""
+    scene.with_layer(LayerSpec(
+        id="he", kind="image", label="H&E", src=scene.layer("he").src,
+        width=256, height=256, max_level=1, tile_width=256, tile_height=256,
+        transform=(1.0, 0.0, 0.0, 1.0, offset, 0.0),
+    )).save()
+
+
+def test_stamping_last_opened_keeps_the_open_layer(scene):
+    """Every viewer page view stamps lastOpenedAt into config.json. That is a
+    sort key for the Open Project page, not a change to any layer, so it must
+    not throw away the open pyramid and its full-plane window scans
+    (audit sc-routes-3 / sc-datasets-5)."""
+    from plexora.server.routes import page_routes
+
+    layer_sources.layer_channel_stats("demo", "he", "he_0")
+    first = layer_sources.open_layer("demo", "he")
+    assert first.windows
+
+    page_routes._stamp_last_opened("demo")
+    scene.patch(last_opened_at="2026-02-02").save()
+
+    again = layer_sources.open_layer("demo", "he")
+    assert again is first
+    assert again.windows
+
+
+def test_saving_another_project_keeps_the_open_layer(scene, tmp_path):
+    """A write of a different project's record changes nothing this layer is
+    drawn from (audit sc-datasets-5)."""
+    first = layer_sources.open_layer("demo", "he")
+    other = tmp_path / "other.ome.tif"
+    tifffile.imwrite(other, np.zeros((1, 64, 64), dtype=np.uint16))
+    Project(
+        name="other",
+        image=plexora.server.models.project.ImageSpec(
+            src=str(other), width=64, height=64, max_level=1,
+            tile_width=64, tile_height=64,
+            channels=({"name": "c0", "fullname": "DNA", "src": "/t/0"},)),
+    ).save()
+
+    assert layer_sources.open_layer("demo", "he") is first
+
+
+def test_a_rebuild_back_to_the_same_record_still_reopens(scene):
+    """pending then ready again ends on the record the layer was opened with;
+    the pyramid behind it may have been rebuilt, so it must still reopen."""
+    from dataclasses import replace
+
+    first = layer_sources.open_layer("demo", "he")
+    layer = scene.layer("he")
+    scene.with_layer(replace(layer, status="pending")).save()
+    Project.load("demo").with_layer(layer).save()
+
+    assert layer_sources.open_layer("demo", "he") is not first
 
 
 def test_a_density_window_is_not_rounded_up_to_one_transcript(tmp_path):

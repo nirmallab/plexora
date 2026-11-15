@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.request
 
@@ -38,6 +39,7 @@ FILENAME = "licence_switches.json"
 DEFAULT = {"off": [], "trial": True}
 
 _memo = {"at": 0.0, "value": None}
+_refreshing = threading.Lock()
 
 
 def _path():
@@ -101,7 +103,10 @@ def current(*, network: bool = True) -> dict:
     url = _url() if network else ""
     fallback = _clean(saved) if saved is not None else dict(DEFAULT)
     if not url:
-        _memo.update(at=now, value=fallback)
+        # Not asked because asking was not allowed: kept, but stale, so the
+        # next call that may ask does (a refusal's lookup must not hold the
+        # platform's answer off for an hour).
+        _memo.update(at=now if network else 0.0, value=fallback)
         return fallback
     try:
         products = _fetch(url)
@@ -116,6 +121,25 @@ def current(*, network: bool = True) -> dict:
         _path().write_text(json.dumps({"at": now, "products": products}), encoding="utf-8")
     except OSError:
         pass
+    return value
+
+
+def for_page() -> dict:
+    """`current()` for a page load, which must not wait on the platform: what is known, with a stale answer
+    asked again in the background. Only when nothing has ever been known (a fresh install) is the platform
+    asked here, once, at most TIMEOUT -- so Settings is right the first time."""
+    if _memo["value"] is None and _saved()[0] is None:
+        return current()
+    value = current(network=False)
+    if time.time() - _memo["at"] >= MAX_AGE and _refreshing.acquire(blocking=False):
+        def refresh():
+            try:
+                current()
+            except Exception:  # noqa: BLE001 - the last answer stands
+                pass
+            finally:
+                _refreshing.release()
+        threading.Thread(target=refresh, name="licence-switches", daemon=True).start()
     return value
 
 

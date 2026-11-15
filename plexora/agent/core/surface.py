@@ -145,7 +145,11 @@ def surface_create(call, inp):
             break
         if call.cancelled():
             store.cancel(record.name, layer_id)
-            raise InterruptedError("cancelled")
+            # The jobs runner's own exception, so the job ends 'cancelled'
+            # rather than 'failed' with internal_error (audit ai-agent-core-7).
+            from plexora.agent.jobs import JobCancelled
+
+            raise JobCancelled()
         call.progress(job.get("progress"), 100, job.get("message") or "extracting")
         _work.wait(0.25)
     if status == "failed":

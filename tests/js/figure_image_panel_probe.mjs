@@ -804,6 +804,33 @@ const renamedTwice = acted(`
 check("a half-typed rename still addresses its own row",
     renamedTwice[1].payload[0].changes.labels[0].text, "DNA");
 
+// Typing a rename THROUGH another row's text. "SOX10" edited down and up to
+// "DNA" passes through "DNA", which used to merge it into the DNA row on that
+// keystroke: the next one renamed both captions, and the field being typed in
+// was gone from the list.
+const through = acted(`
+    const panel = __build({ pnl_a: __labelled("pnl_a", ["DNA", "SOX10"]) });
+    panel.update(["pnl_a"]);
+    const labels = () => panel.state.document.panels.pnl_a.labels;
+    const type = (value) => {
+        panel.changed({ target: { dataset: { field: "label_text", row: "1" },
+                                  value: value } });
+        labels()[1].text = value;      // what the commit stored
+    };
+    type("DNA");
+    __record("rows", panel.labelRows().map((row) => row.text));
+    type("DNA2");
+    panel.focusedOut({ target: { dataset: { field: "label_text", row: "1" } } });
+    __record("after", panel.labelRows().map((row) => row.text));
+`);
+check("a rename passing through another row's text stays its own row",
+    through.find((c) => c.what === "rows").payload, ["DNA", "DNA"]);
+check("and the next keystroke renames only it",
+    through.filter((c) => c.what === "panelsChange").pop()
+        .payload[0].changes.labels.map((label) => label.text), ["DNA", "DNA2"]);
+check("the rows merge by text again once the field is left",
+    through.find((c) => c.what === "after").payload, ["DNA", "DNA2"]);
+
 const rowEdits = acted(`
     const panel = __build({ pnl_a: __labelled("pnl_a", ["DNA", "SOX10"]),
                             pnl_b: __labelled("pnl_b", ["DNA"]) });
@@ -954,6 +981,35 @@ check("no numeric field is a number input",
     single.includes('type="number"'), false);
 check("and they all ask for the decimal keypad",
     (single.match(/inputmode="decimal"/g) || []).length >= 3, true);
+
+// The rebuild under the caret must not rewrite what is being typed. "0." is
+// committed as 0 and redrawn as "0", so the next "5" made "05": a 0.5 mm margin
+// stored 5 mm, a 7.5 pt caption 75 pt, a 2.5 µm bar 25 µm.
+const midType = run(`
+    const panel = __build({ pnl_a: __panelRecord("pnl_a") });
+    panel.update(["pnl_a"]);
+    const typedText = (field, text) => {
+        const active = { dataset: { field }, value: text, tagName: "INPUT",
+                         selectionStart: text.length, selectionEnd: text.length,
+                         getAttribute: (name) => name === "inputmode" ? "decimal" : null };
+        let rebuilt = null;
+        panel.root.contains = (el) => el === active;
+        panel.root.querySelector = (selector) => {
+            if (!selector.includes(field)) return null;
+            // What the fresh markup holds: the committed number, reformatted.
+            rebuilt = { value: "0", dataset: { field }, focus() {}, setSelectionRange() {} };
+            return rebuilt;
+        };
+        document.activeElement = active;
+        panel.render();
+        document.activeElement = null;
+        return rebuilt && rebuilt.value;
+    };
+    return { margin: typedText("scalebar_margin", "0."),
+             length: typedText("scalebar_length", "2.") };
+`);
+check("a decimal point being typed survives the redraw", midType.margin, "0.");
+check("in the bar length too", midType.length, "2.");
 
 console.error(JSON.stringify({ problems }));
 process.exitCode = problems.length ? 1 : 0;

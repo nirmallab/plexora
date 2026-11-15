@@ -460,7 +460,7 @@ def sends_delta(options) -> bool:
     return options["evidence"] == "delta" and options["reading"] != "every_packet"
 
 
-def as_sent(packet, record, options, *, full=False) -> dict:
+def as_sent(packet, record, options, *, full=False, register_sheets=True) -> dict:
     """The packet as the agent reads it, from the stored one (left as it is).
 
     `evidence: delta` (the default): evidence values -- each key, and each
@@ -469,10 +469,12 @@ def as_sent(packet, record, options, *, full=False) -> dict:
     the whole-image checks lose their passing rows; the
     budget and the viewer's narration stay with the status tool and the
     viewer. `evidence: full` sends the stored packet. `options` are the
-    session's, completed (`Engine.options`)."""
+    session's, completed (`Engine.options`). `register_sheets` False: the
+    packet goes to another reader (a lane), so its sheet rows are not counted
+    as shown to the one `briefed` keeps."""
     seen = briefed(record)["seen"]
     packet_id = packet.get("packet_id")
-    for row, fp in (packet.get("_sheet_rows") or {}).items():
+    for row, fp in ((packet.get("_sheet_rows") or {}) if register_sheets else {}).items():
         seen.setdefault(f"sheet.{row}:{fp}", packet_id)
     out = {k: v for k, v in packet.items() if not k.startswith("_")}
     if not sends_delta(options):
@@ -725,7 +727,7 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
            "slide": _fingerprint({**inputs, "partner": {k: (partner or {}).get(k) for k in
                                                         ("marker", "gate", "relation")}})[0]}
     drawn, left_out = list(rows or sheet.ROWS), {}
-    if engine.options["sheets"] == "trim":
+    if engine.options["sheets"] == "trim" and getattr(engine, "sheet_trim", True):
         seen = briefed(engine.record)["seen"]
         for row in list(drawn):
             first = seen.get(f"sheet.{row}:{fps[row]}")

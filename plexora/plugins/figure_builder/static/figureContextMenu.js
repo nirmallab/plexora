@@ -250,6 +250,19 @@ class FigureContextMenu {
 const FigureClipboard = {
     panels: [],
     annotations: [],
+    //: The figure the contents were copied in. The router keeps this module
+    //: across routed pages, so without it a paste in the next figure opened
+    //: sent `add_panel` with the last one's source ids, which the server
+    //: refuses.
+    figureId: null,
+
+    /** A figure is open: keep what was copied in it, drop anything else. */
+    scope(figureId) {
+        if (figureId === this.figureId) return;
+        this.figureId = figureId || null;
+        this.panels = [];
+        this.annotations = [];
+    },
 
     hasContent() {
         return this.panels.length > 0 || this.annotations.length > 0;

@@ -145,24 +145,33 @@ def _category_delete(state, op):
 # -- ROIs ---------------------------------------------------------------
 
 
-def _roi_create(state, op):
+def _roi_create(state, op, *, ids=None, category_ids=None):
+    """One ROI. `ids` and `category_ids` (sets, kept up to date here) are a
+    bulk create's lookups: without them each feature would scan every stored
+    ROI for its id, quadratic in an import."""
     entry = _image(state, op)
     raw = op.get("feature")
     if not isinstance(raw, dict):
         raise ValueError("roi.create needs a feature")
 
     feature = schema.normalize_feature(raw)
-    _, existing = schema.find(entry["features"], feature["id"])
-    if existing is not None:
+    exists = feature["id"] in ids if ids is not None \
+        else schema.find(entry["features"], feature["id"])[1] is not None
+    if exists:
         raise ValueError(f"ROI {feature['id']!r} already exists")
     if len(entry["features"]) >= schema.MAX_FEATURES:
         raise ValueError(f"an image may hold at most {schema.MAX_FEATURES} ROIs")
-    _category(state, feature["category_id"])
+    if category_ids is None:
+        _category(state, feature["category_id"])
+    elif feature["category_id"] not in category_ids:
+        raise ValueError(f"unknown category {feature['category_id']!r}")
 
     stamp = now()
     feature["created_at"] = feature["created_at"] or stamp
     feature["updated_at"] = stamp
     entry["features"].append(feature)
+    if ids is not None:
+        ids.add(feature["id"])
 
 
 def _roi_update_geometry(state, op):
@@ -298,8 +307,11 @@ def _roi_bulk_create(state, op):
             _require_unique_label(state, category["label"], category["id"])
             state["categories"].append(category)
 
+    entry = _image(state, op)
+    ids = {f.get("id") for f in entry["features"]}
+    category_ids = {c.get("id") for c in state["categories"]}
     for raw in op.get("features") or []:
-        _roi_create(state, {**op, "feature": raw})
+        _roi_create(state, {**op, "feature": raw}, ids=ids, category_ids=category_ids)
 
 
 # -- lookups and rules --------------------------------------------------

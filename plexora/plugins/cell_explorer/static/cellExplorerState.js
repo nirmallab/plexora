@@ -317,7 +317,11 @@ class CellExplorerState {
     /** What gets written to the store. Only preferences -- never values. */
     toSettings() {
         return {
-            selected: this.column,
+            // The column a person last chose (`select` with persist), not
+            // the one on screen: a carried-over, launch, agent or figure
+            // column is one page view's, and a later save of anything else
+            // must not make it the project's.
+            selected: this.settings.selected,
             visited: [...this.settings.visited],
             display: { ...this.settings.display },
             overrides: { ...this.settings.overrides },

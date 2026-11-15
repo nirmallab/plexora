@@ -207,6 +207,11 @@ class GateClassifierControl {
     }
 
     dispose() {
+        // A run's poll (followJob) and a refresh in flight stop here: their
+        // ids are the reopened panel's too, and they would paint into it.
+        this.disposed = true;
+        this.job = null;
+        this._seq += 1;
         this.disarm();
         window.clearTimeout(this._runsTimer);
         this.hover?.destroy();
@@ -350,6 +355,7 @@ class GateClassifierControl {
             }
         }
         await this.drawCalls(this.calls);
+        if (this.disposed) return;
         this.hover?.sync();
         // A run this tab did not start (another tab, an agent) is followed too.
         const running = state.running;
@@ -805,9 +811,10 @@ class GateClassifierControl {
         try {
             answer = await this.api.classifierRun(marker, auto);
         } catch (error) {
-            this.setStatus(String(error.message || error), "error");
+            if (!this.disposed) this.setStatus(String(error.message || error), "error");
             return;
         }
+        if (this.disposed) return;
         const running = answer.running?.marker || marker;
         this.job = { id: answer.job_id, marker: running };
         if (answer.already_running && running !== marker) {
@@ -825,10 +832,12 @@ class GateClassifierControl {
         while (this.job === job) {
             await new Promise((resolve) => window.setTimeout(resolve, wait));
             wait = Math.min(2000, wait + 250);
+            if (this.job !== job) return;
             let record;
             try {
                 record = await this.api.gatingJob(job.id);
             } catch (error) {
+                if (this.job !== job) return;
                 this.job = null;
                 this.setStatus("Lost track of the run; press the wand again", "error");
                 break;
@@ -854,7 +863,7 @@ class GateClassifierControl {
             }
             if (job.marker === this.marker) this.paintProgress(record.progress || {});
         }
-        this.paint();
+        if (!this.disposed) this.paint();
     }
 
     paintProgress(progress) {

@@ -129,6 +129,30 @@ def _n(value):
     return compact_number(value)
 
 
+def dataset_spread(units, order) -> dict:
+    """{marker: {n_images, min, median, max, n_empty, n_review}}: each
+    marker's written gate across images. An empty gate (a failed or
+    all-negative image, `schemas.EMPTY_GATE_STATES`) sits at its column's
+    maximum, a sentinel rather than a threshold, so it is counted apart
+    (`n_empty`) and left out of the spread; a gate written for review is a
+    threshold and stays in, counted in `n_review`."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    spread = {}
+    for marker in order:
+        mine = [u for u in units if u["marker"] == marker and u.get("final") is not None]
+        if not mine:
+            continue
+        empty = [u for u in mine if u.get("state") in schemas.EMPTY_GATE_STATES]
+        finals = [float(u["final"]) for u in mine if u not in empty]
+        spread[marker] = {
+            "n_images": len(finals), "min": min(finals) if finals else None,
+            "median": float(np.median(finals)) if finals else None,
+            "max": max(finals) if finals else None, "n_empty": len(empty),
+            "n_review": sum(1 for u in mine if u not in empty and u.get("needs_review"))}
+    return spread
+
+
 def build(call, session_id) -> dict:
     st = store()
     record = st.load(session_id)
@@ -159,14 +183,8 @@ def build(call, session_id) -> dict:
     out["classifier"] = {"mode": (record.get("options") or {}).get("classifier", "off"),
                          "markers": cellcalls.status_block(record)}
     if record.get("scope") == "dataset":
-        spread = {}
-        for marker in record["order"]:
-            finals = [u.get("final") for u in units if u["marker"] == marker
-                      and u.get("final") is not None]
-            if finals:
-                spread[marker] = {"n_images": len(finals), "min": min(finals),
-                                  "median": float(np.median(finals)), "max": max(finals)}
-        out["dataset"] = {"spread": spread, "experimental_unit": "image"}
+        out["dataset"] = {"spread": dataset_spread(units, record["order"]),
+                          "experimental_unit": "image"}
         from plexora.plugins.gating.server.autogate import engine as engines
         from plexora.plugins.gating.server.autogate import transfer
 
@@ -333,7 +351,9 @@ def to_html(call, report) -> str:
                      "<th>min</th><th>median</th><th>max</th><th>strategy</th></tr>")
         strategy = report["dataset"].get("strategy") or {}
         for marker, row in report["dataset"]["spread"].items():
-            parts.append(f"<tr><td>{esc(marker)}</td><td>{row['n_images']}</td>"
+            images = str(row["n_images"]) + (f" (+{row['n_empty']} empty)"
+                                             if row.get("n_empty") else "")
+            parts.append(f"<tr><td>{esc(marker)}</td><td>{images}</td>"
                          f"<td>{_n(row['min'])}</td><td>{_n(row['median'])}</td>"
                          f"<td>{_n(row['max'])}</td><td>"
                          f"{esc(str((strategy.get(marker) or {}).get('strategy') or '-'))}"
@@ -709,5 +729,31 @@ def source_extras(ds) -> dict:
         qc_fp = ""
     rows = [{**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp}
             for row in provenance_long_of(ds)]
-    return {"provenance": rows, "versions": model.versions_payload(ds.name)}
+    return {"provenance": rows, "versions": model.versions_payload(ds.name),
+            **_not_called_of(ds)}
+
+
+def _not_called_of(ds) -> dict:
+    """{not_called: {marker: [row]}, n_rows} for every gated marker: the
+    cells QC says cannot be called (`obsm[<table>_not_called]`), as
+    `write_gates_to_source` sends them. Every gated marker's column is
+    rewritten (an empty list clears it), so one an earlier write left does
+    not sit beside new gates. Empty when they cannot be read: the gates go
+    without them, as before."""
+    import numpy as np
+
+    from plexora.agent import cell_exclusions
+
+    try:
+        frame = ds.table.geometry()
+        if frame is None:
+            return {}
+        record = cell_exclusions.call_record(ds)
+        not_called = {}
+        for channel in model.active_gates(ds):
+            mask = cell_exclusions.not_called_mask(ds, channel, record)
+            not_called[channel] = np.flatnonzero(mask).tolist() if mask is not None else []
+    except Exception:  # noqa: BLE001 -- no QC to read
+        return {}
+    return {"not_called": not_called, "n_rows": int(frame.height)}
 

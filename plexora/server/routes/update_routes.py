@@ -120,6 +120,9 @@ def _payload(prefs, kind, latest=None, notes='', notes_url=''):
         'latest': latest,
         'available': available,
         'skipped': bool(available and prefs.get('skipped_version') == latest),
+        # The desktop page learns `latest` from its shell, not from here, so
+        # it compares against the skipped version itself.
+        'skipped_version': prefs.get('skipped_version'),
         'notes': notes,
         'notes_url': notes_url or (updates.RELEASE_URL.format(version=latest) if latest else ''),
         'mode': _mode(),
@@ -148,8 +151,11 @@ def update_check():
 
     # The desktop app asks its shell, which reads the signed release manifest
     # rather than PyPI -- the two can disagree for the hours a release takes
-    # to build. This only supplies the preferences it shares.
+    # to build. This only supplies the preferences it shares -- including
+    # "off means off" for the page's background check.
     if kind['kind'] == 'desktop':
+        if auto and not prefs['auto_check']:
+            return jsonify(_payload(prefs, kind) | {'disabled': True})
         return jsonify(_payload(prefs, kind))
 
     if auto:

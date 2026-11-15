@@ -105,15 +105,23 @@ def above(state) -> int:
     return int(state["points"][state["window"][1]]["n_positive"])
 
 
+def _own_image(cell) -> bool:
+    """Whether a shown cell is the unit's own image's: engine v4's pooled
+    looks show another anchor's cells (`image`), read as evidence beside
+    the own reads but never using up the own image's cells."""
+    return cell.get("image") is None
+
+
 def shown(state) -> list:
-    """Cells already shown per interval of the window (sentinels apart, but
-    for anchors: a clear positive a carrier look showed is gone from every
-    later draw, so it is shown though never read)."""
+    """Cells of the unit's own image already shown per interval of the
+    window (sentinels apart, but for anchors: a clear positive a carrier
+    look showed is gone from every later draw, so it is shown though never
+    read)."""
     bounds, n_cells = window(state)
     out = [0] * len(n_cells)
     for obs in state["observations"]:
         for cell in obs.get("cells") or ():
-            if cell.get("sentinel") and not cell.get("anchor"):
+            if (cell.get("sentinel") and not cell.get("anchor")) or not _own_image(cell):
                 continue
             k = evidence.interval_of(float(cell["value"]), bounds)
             if k is not None:
@@ -372,7 +380,7 @@ def tail(state, s) -> dict:
                 # An anchor is gone from the draws above, never read as evidence.
                 shown_above += bool(cell.get("anchor"))
                 continue
-            shown_above += 1
+            shown_above += _own_image(cell)
             if not obs.get("valid", True):
                 continue
             if cell.get("label") == evidence.OWN:
@@ -410,7 +418,8 @@ def _tail_plan(state, s, total) -> dict | None:
     ks = list(range(leader, len(n_cells)))
     available = [max(0, n_cells[k] - seen[k]) for k in ks]
     top_shown = sum(1 for o in state["observations"] for c in o.get("cells") or ()
-                    if not c.get("sentinel") and float(c["value"]) > bounds[-1])
+                    if not c.get("sentinel") and _own_image(c)
+                    and float(c["value"]) > bounds[-1])
     available.append(max(0, above(state) - top_shown))
     picks = allocate([float(a) for a in available], available, total)
     intervals = [{"interval": k, "from": bounds[k], "to": bounds[k + 1], "n": n}

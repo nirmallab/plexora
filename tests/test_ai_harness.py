@@ -1126,3 +1126,24 @@ def test_several_projects_are_gated_in_parallel_with_one_prefix_write(tmp_path):
     assert len(writes) == 1
     for summary in report["sessions"].values():
         assert summary["cache"]["verdicts"]["miss"] == 0
+
+
+def test_a_session_another_run_is_answering_is_not_resumed_twice(tmp_path):
+    """Two in-app runs resuming one paused session would pay for every
+    packet twice and close the shared gateway run under each other: the
+    second is refused before anything is asked of a model or the session."""
+    from plexora.ai.harness import decision
+
+    with FakeGateway(lambda packet, body: {}) as gateway:
+        trace = TraceStore(tmp_path / "trace.sqlite")
+        assert decision._claim_session("gs_busy", "air_first") is None
+        try:
+            second = GatingRun(GatingOptions(project="gsynth", resume_session="gs_busy"),
+                               gateway=client(gateway), trace=trace).run()
+        finally:
+            decision._release_session("gs_busy", "air_first")
+        assert second["status"] == "failed" and "already" in second["reason"], second
+        assert gateway.calls == []
+        # Released: the session is free again, and the refused run held nothing.
+        assert decision._claim_session("gs_busy", "air_third") is None
+        decision._release_session("gs_busy", "air_third")

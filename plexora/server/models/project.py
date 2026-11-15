@@ -69,6 +69,43 @@ def config_generation() -> int:
         return _config_generation
 
 
+#: Per project: the `config_generation` of the last write that changed that
+#: project's record. What a cache of one project's files keys on
+#: (layer_sources.open_layer): a write of ANOTHER project, or the viewer's
+#: lastOpenedAt stamp on every page view, used to evict every open layer
+#: pyramid with its full-plane window scans and GMM fits (audit sc-routes-3,
+#: sc-datasets-5). Taken from the global counter, not counted per project, so
+#: it never goes backwards or repeats within the process.
+_project_generations: dict = {}
+
+#: Entry keys that are bookkeeping, not anything a project's files are read
+#: through. A write that changes only these does not move the project's
+#: generation.
+_UNTRACKED_KEYS = frozenset({"lastOpenedAt"})
+
+#: Set by `bump_config_generation`, which does not say which project changed.
+_every_project_generation = 0
+
+
+def project_generation(name) -> int:
+    """The config generation at which `name`'s record last changed in this
+    process (0 when it has not changed since the process started)."""
+    with _CONFIG_LOCK:
+        return max(_project_generations.get(name, 0), _every_project_generation)
+
+
+def _changed_projects(before: dict, after: dict) -> list:
+    """The project names whose record differs between two configs, ignoring
+    `_UNTRACKED_KEYS`."""
+    def tracked(entry):
+        if not isinstance(entry, dict):
+            return entry
+        return {k: v for k, v in entry.items() if k not in _UNTRACKED_KEYS}
+
+    return [name for name in set(before) | set(after)
+            if tracked(before.get(name)) != tracked(after.get(name))]
+
+
 @contextmanager
 def config_transaction():
     """Hold the config write lock across several operations.
@@ -151,9 +188,10 @@ def read_entry(path, name: str) -> dict:
 
 def bump_config_generation() -> int:
     """Say that a project record changed. Returns the new generation."""
-    global _config_generation
+    global _config_generation, _every_project_generation
     with _CONFIG_LOCK:
         _config_generation += 1
+        _every_project_generation = _config_generation
         return _config_generation
 
 
@@ -168,11 +206,18 @@ def write_config(path, config) -> None:
     notebook sidecar and a CLI server can share one data directory).
     """
     path = Path(path)
+    # Kept as callers hand it in (localized, like `_parsed`) so the write can
+    # tell which projects' records it changes; `record_config` rewrites paths.
+    given = config or {}
     # The paths as recorded, so the other app's survive; in a registry the
     # website shares, with this computer's files identified for it
     # (server/models/sources.py).
     config = sources.record_config(config, shared=paths.is_website_library(path.parent))
     with _CONFIG_LOCK:
+        try:
+            changed = _changed_projects(_parsed(path), given)
+        except (OSError, ValueError):
+            changed = list(given)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         try:
@@ -186,6 +231,8 @@ def write_config(path, config) -> None:
             # the counter is that it moves exactly when the record does.
             global _config_generation
             _config_generation += 1
+            for name in changed:
+                _project_generations[name] = _config_generation
         finally:
             # Nothing to remove on the happy path -- the rename consumed it.
             tmp.unlink(missing_ok=True)
@@ -1041,7 +1088,7 @@ _MODELLED_KEYS = frozenset({
     "imageModality", "imageSource", "imageSourceKey", "bundles",
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode", "segmentationScale",
-    "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
+    "segmentationTransform", "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
     "resources", "spatialLayers", "imageRender", "imageDepth",
     "imageAxes", "imageShape", "imageDefaultView", "imageZSemantics",
     "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews", "imageIndex",

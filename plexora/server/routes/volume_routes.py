@@ -1179,15 +1179,19 @@ def _cells_on_plane(project, z, t):
 
 def _whole_values(frame, id_column, t_column, t, column):
     """Every cell's value in `column` of the loaded table -- what its gate is
-    applied to -- by id, for frame `t`; cached per loaded frame."""
+    applied to -- by id, for frame `t`; cached per loaded frame. The entry
+    holds a weak reference to its frame: a table later loaded at a freed
+    one's address (the same id) is read afresh."""
+    import weakref
+
     import numpy as np
     import polars as pl
 
     key = (id(frame), id_column, t_column, int(t), column)
     with _plane_values_lock:
         hit = _plane_values.get(key)
-    if hit is not None:
-        return hit
+    if hit is not None and hit[0]() is frame:
+        return hit[1]
     ids = frame[id_column].cast(pl.Int64, strict=False).fill_null(-1).to_numpy()
     values = frame[column].cast(pl.Float64, strict=False).fill_null(float("nan")).to_numpy()
     if t_column and t_column in frame.columns:
@@ -1198,7 +1202,7 @@ def _whole_values(frame, id_column, t_column, t, column):
     with _plane_values_lock:
         if len(_plane_values) > 16:
             _plane_values.clear()
-        _plane_values[key] = built
+        _plane_values[key] = (weakref.ref(frame), built)
     return built
 
 

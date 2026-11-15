@@ -289,7 +289,7 @@ class Telemetry:
         upload attempt that keeps the backoff. Returns the uploader's word,
         or `off` / `flushed`. Never raises."""
         try:
-            if not self.enabled or self._queue is None:
+            if not (self.enabled or self.recheck()) or self._queue is None:
                 return "off"
             self.flush()
             if not upload or not config.endpoint():
@@ -387,10 +387,14 @@ class Telemetry:
         root) may have changed it since. Called before every flush and every
         upload. Turning off goes through `reconfigure`, so what is queued is
         dropped; another mode is applied as it is. Turning telemetry back on
-        is left to `reconfigure` (the settings page), which starts threads.
+        is left to `reconfigure` (the settings page), which starts threads --
+        except after a pause the server put on: once it has run out,
+        telemetry comes back on here, or a long-lived process would stay off.
         """
         if not self.enabled:
-            return False
+            if self._started and self.resolved.source == "server":
+                self.reconfigure()
+            return self.enabled
         try:
             with self._state_lock:
                 server = self._queue.get_state("server", {}) if self._queue else None
@@ -599,6 +603,22 @@ class Telemetry:
             if key in env:
                 props[key] = env[key]
         return schema.strip_record("session.summary", props, self.mode)
+
+    def forget_session(self, old_session_id):
+        """After a reset of the install id: drop what this process counted
+        under the old id (the in-memory aggregate, the session's tallies and
+        its saved session state), so nothing sent later links the two ids."""
+        with self._flush_lock:
+            with self._lock:
+                self._agg.clear()
+                self._records.clear()
+                self._viewers.clear()
+                self._projects.clear()
+                self._errors = dict.fromkeys(self._errors, 0)
+            self._started_at = time.time()
+            self._session_written = False
+            if self._queue is not None:
+                self._queue.set_state(f"session:{old_session_id}", None)
 
     def _save_session_state(self):
         if self._queue is None or self.serve_mode == "cli":

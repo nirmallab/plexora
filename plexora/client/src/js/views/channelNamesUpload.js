@@ -374,6 +374,11 @@ window.PlexoraChannelNames = (function () {
         busy = true;
         setBusy(true);
         clearError();
+        // The dialog can be closed (or another opened) while this is out.
+        // Closing does not stop the server applying the names, so a success
+        // is still handed to this session's caller; anything else for a
+        // session that is gone is dropped, not drawn on the next one.
+        const mine = session;
         const task = window.PlexoraStatus?.begin?.("Channel names");
         try {
             const response = await fetch(plexoraUrl("upload_channels"), {
@@ -383,7 +388,15 @@ window.PlexoraChannelNames = (function () {
             const result = await response.json();
             if (result.success) {
                 task?.done?.();
+                if (session !== mine) {
+                    mine.onApplied(result.names || []);
+                    return;
+                }
                 return applied(result.names || []);
+            }
+            if (session !== mine) {
+                task?.done?.();
+                return;
             }
             // Neither of these is a failure -- they are the server asking for
             // one more thing, or reporting a file that does not fit. Both get
@@ -401,6 +414,10 @@ window.PlexoraChannelNames = (function () {
             throw new Error(result.error || "That file could not be read.");
         } catch (error) {
             task?.fail?.("Channel names");
+            if (session !== mine) {
+                console.error("channelNamesUpload:", error.message || error);
+                return;
+            }
             if (session && !dialog) {
                 // Applied without a dialog and refused: the dialog, on the
                 // file it was given, with the server's reason under it.
@@ -409,8 +426,11 @@ window.PlexoraChannelNames = (function () {
             }
             showError(error.message || "That file could not be read.");
         } finally {
-            busy = false;
-            setBusy(false);
+            // A newer session's upload may be the one out now.
+            if (session === mine || session === null) {
+                busy = false;
+                setBusy(false);
+            }
         }
     }
 

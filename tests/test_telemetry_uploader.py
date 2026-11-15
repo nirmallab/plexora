@@ -198,6 +198,25 @@ def test_server_config_is_applied_at_once(started):
     assert fake.uploads[-1]["client"]["mode"] == "anonymous"
 
 
+def test_a_batch_frozen_under_diagnostics_is_not_sent_after_the_mode_drops(started, monkeypatch):
+    t, fake = started
+    t.queue.add_counters(OLD, [("render.summary", "gestures",
+                                '{"browser":"chrome","gpu":"nvidia","os":"mac"}', "count", 1,
+                                None, 0.0, 0.0)])
+    fake.script("/v1/telemetry/events", 500, {"error": "x"})
+    assert uploader.upload_once(t) == "failed"
+    assert fake.of("/v1/telemetry/events")[0]["json"]["client"]["mode"] == "diagnostics"
+    assert t.queue.pending()["batches_waiting"] == 1
+    monkeypatch.setenv("PLEXORA_TELEMETRY", "anonymous")
+    t.reconfigure()
+    assert t.mode == "anonymous"
+    queue_rows(t)
+    uploader.upload_once(t, force=True)
+    sent = fake.of("/v1/telemetry/events")[1:]
+    assert sent and all(r["json"]["client"]["mode"] == "anonymous" for r in sent)
+    assert t.queue.pending()["batches_waiting"] == 0
+
+
 def test_server_pause_stops_everything(started):
     t, fake = started
     queue_rows(t)
@@ -281,3 +300,24 @@ def test_no_endpoint_means_no_thread_and_no_request(telemetry_enabled, monkeypat
     assert not [x for x in threading.enumerate() if x.name == "plexora-telemetry-upload"]
     assert uploader.upload_once(t) == "no_endpoint"
     assert fake.requests == []
+
+
+def test_a_server_pause_ends_when_it_runs_out_in_a_long_lived_process(started):
+    """A day's pause (three rejected batches, or the service's
+    `disabled_until`) is a pause, not off for the rest of the process: once it
+    has run out the next upload attempt turns telemetry back on (audit lead
+    ai-telemetry-6)."""
+    t, fake = started
+    for _ in range(3):
+        queue_rows(t)
+        fake.script("/v1/telemetry/events", 422, {"error": "schema"})
+        assert uploader.upload_once(t) == "rejected"
+    assert t.enabled is False and t.resolved.source == "server"
+    assert t.recheck() is False                       # still paused
+    server = t.queue.get_state("server")
+    t.queue.set_state("server", {**server, "disabled_until": time.time() - 1})   # a day on
+    # Nothing queued (all of it was dropped while paused): the uploader
+    # thread and the website's pump ask `recheck` before anything else.
+    assert t.recheck() is True
+    assert t.enabled is True and t.resolved.source != "server"
+    assert t.pump(upload=False) == "flushed"

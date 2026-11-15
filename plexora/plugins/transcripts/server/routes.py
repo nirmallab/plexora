@@ -438,7 +438,12 @@ def status():
     state = layer_jobs.get(datasource, layer_id)
     if state is None:
         stored = transcript_tiles.read_manifest(datasource, layer_id)
-        return jsonify({"status": "ready" if stored else "missing"})
+        # `ready` only for a cache `/manifest` will also call ready: a stale
+        # one sent the panel round start -> build (refused) -> `ready` forever.
+        readable = bool(stored) and (
+            int(stored.get("version") or 0) == transcript_tiles.CACHE_VERSION
+            and stored.get("record_dtype") == transcript_tiles.RECORD_DTYPE_NAME)
+        return jsonify({"status": "ready" if readable else "missing"})
     return jsonify(state)
 
 

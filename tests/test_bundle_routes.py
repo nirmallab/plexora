@@ -136,3 +136,23 @@ def test_the_older_routes_and_the_desktops_open(project, client, tmp_path):
     assert client.post("/projects/bundle", data=b"nope").status_code == 400
     assert client.get("/project/nothing/bundle").status_code == 404
     assert paths.data_root().exists()
+
+
+def test_a_new_upload_sweeps_uploads_abandoned_after_a_preview(project, client, tmp_path):
+    """sc-bundles-9: an upload whose preview was never imported is swept by
+    the next upload, not only by the next export."""
+    import os
+
+    stale = bundles.staging_root() / "upload-0123456789abcdef"
+    stale.mkdir(parents=True, exist_ok=True)
+    (stale / "old.plexora").write_bytes(b"PK")
+    old = time.time() - 3 * 86400
+    os.utime(stale / "old.plexora", (old, old))
+    os.utime(stale, (old, old))
+    out = tmp_path / "slide.plexora"
+    bundles.export(["slide"], out)
+    with out.open("rb") as handle:
+        fresh = client.post("/projects/import/preview", data={"file": (handle, "slide.plexora")},
+                            content_type="multipart/form-data").get_json()
+    assert not stale.exists()
+    assert (bundles.staging_root() / f"upload-{fresh['upload']}").is_dir()

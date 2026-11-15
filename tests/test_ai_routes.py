@@ -300,3 +300,35 @@ def test_a_gating_run_over_http_gates_every_marker(client, tmp_path, monkeypatch
                     {"detail": "full", "session_id": run["session_id"]})
     states = {u["marker"]: u["state"] for u in status["result"]["units"]}
     assert all(s in ("accepted", "accepted_low_confidence") for s in states.values()), states
+
+
+@pytest.mark.pro
+@pytest.mark.parametrize("reached", [(None, None), ("running", "running"), ("done", "done")])
+def test_stopping_a_run_with_no_session_says_so_when_the_cancel_reached_nothing(
+        tmp_path, monkeypatch, reached):
+    """A run still at its set-up is stopped by cancelling its job. When that
+    job is gone, finished or running in another process the cancel reaches
+    nothing, and the answer must not claim `stopped` (audit lead ai-mcp-5)."""
+    from plexora.ai.harness import trace as trace_mod
+
+    registry.register_core()
+    store = trace_mod.TraceStore(tmp_path / "t.sqlite")
+    store.start_run("air_aaaaaaaaaaaa", "gating", project="p", session_id=None)
+    monkeypatch.setattr(trace_mod, "TraceStore", lambda *a, **k: store)
+    asked = []
+
+    class Jobs:
+        def cancel(self, job_id):
+            asked.append(job_id)
+            return reached
+
+    monkeypatch.setattr(jobs, "store", lambda: Jobs())
+    answer = invoke(AgentSession(), "ai_run_control", {"run_id": "air_aaaaaaaaaaaa", "action": "stop"})
+    assert asked == ["job_aaaaaaaaaaaa"]
+    assert not answer["ok"] and answer["error"]["code"] == "conflict", answer
+
+    asked.clear()
+    reached = ("running", "cancelling")
+    monkeypatch.setattr(jobs, "store", lambda: type("J", (), {"cancel": lambda s, j: reached})())
+    answer = invoke(AgentSession(), "ai_run_control", {"run_id": "air_aaaaaaaaaaaa", "action": "stop"})
+    assert answer["ok"] and answer["result"]["control"]["stopped"] is True, answer

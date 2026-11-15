@@ -335,6 +335,16 @@ class FigureDocumentState {
         return false;
     }
 
+    /**
+     * Resolves once every save asked for so far has finished: `true` when the
+     * server holds everything this tab shows. What Export waits on -- the
+     * server renders what IT stores, so an edit still in flight or one whose
+     * save failed would be missing from the file without a word.
+     */
+    whenSaved() {
+        return this._chain.then(() => this.status === "saved", () => false);
+    }
+
     _enqueue(task) {
         this._chain = this._chain.then(task, task);
         return this._chain;

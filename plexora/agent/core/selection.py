@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from typing import Any
 
 from pydantic import Field
@@ -65,6 +66,29 @@ def ids_hash(ids) -> str:
 
 def ref_for(project, name) -> str:
     return f"plexora://project/{project}/store/core/selections/{name}"
+
+
+#: The table is read, changed and written whole: one writer per project at a
+#: time, or two writes to different selections lose one of them.
+_WRITE_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _write_lock(project) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _WRITE_LOCKS.setdefault(str(project), threading.Lock())
+
+
+def _check_revision(project, name, previous, expected):
+    """An undo hint is pinned to the revision it left (0: no such selection):
+    replaying it over a later edit would overwrite that edit."""
+    if expected is None:
+        return
+    current = int((previous or {}).get("revision") or 0)
+    if current != int(expected):
+        raise AgentError("conflict", f"selection {name!r} of {project!r} is at revision "
+                         f"{current}, not {expected}; it changed since", retryable=False,
+                         detail={"selection_revision": expected, "current_revision": current})
 
 
 def _store(project):
@@ -149,6 +173,10 @@ class SetInput(ProjectInput):
                                          "drawn from, full-resolution pixels, if any.")
     show: bool = Field(False, description="Also point at the cells in an open viewer (the "
                        "first few hundred).")
+    selection_revision: int | None = Field(None, ge=0, description="Write only if the "
+                                          "selection is at this revision now (0: it does "
+                                          "not exist). Undo hints carry it. Not the bridge "
+                                          "workspace's expected_revision.")
 
 
 def _image_id_of(record) -> str | None:
@@ -163,27 +191,30 @@ def set_selection(call, inp):
 
     record = call.session.project(inp.project)
     ids = list(dict.fromkeys(str(i) for i in inp.cell_ids))
-    existing = read_all(inp.project)
-    previous = existing.get(inp.name)
-    now = now_iso()
-    stored = {
-        "name": inp.name, "image_id": inp.image_id or _image_id_of(record), "cell_ids": ids,
-        "shape": inp.shape, "revision": int((previous or {}).get("revision") or 0) + 1,
-        "created": (previous or {}).get("created") or now, "updated": now,
-        "origin": call.extras.get("origin") or CALL_ORIGIN.get() or "in_process",
-        "operation_id": call.operation_id,
-    }
-    existing[inp.name] = stored
-    _write_all(inp.project, existing)
+    with _write_lock(inp.project):
+        existing = read_all(inp.project)
+        previous = existing.get(inp.name)
+        _check_revision(inp.project, inp.name, previous, inp.selection_revision)
+        now = now_iso()
+        stored = {
+            "name": inp.name, "image_id": inp.image_id or _image_id_of(record), "cell_ids": ids,
+            "shape": inp.shape, "revision": int((previous or {}).get("revision") or 0) + 1,
+            "created": (previous or {}).get("created") or now, "updated": now,
+            "origin": call.extras.get("origin") or CALL_ORIGIN.get() or "in_process",
+            "operation_id": call.operation_id,
+        }
+        existing[inp.name] = stored
+        _write_all(inp.project, existing)
     call.project_name = inp.project
     undo = None
     if previous is None:
-        undo = {"tool": "delete_selection", "arguments": {"project": inp.project,
-                                                          "name": inp.name}}
+        undo = {"tool": "delete_selection", "arguments": {
+            "project": inp.project, "name": inp.name, "selection_revision": stored["revision"]}}
     elif len(previous.get("cell_ids") or []) <= INLINE_LIMIT:
         undo = {"tool": "set_selection", "arguments": {
             "project": inp.project, "name": inp.name, "cell_ids": previous["cell_ids"],
-            "image_id": previous.get("image_id"), "shape": previous.get("shape")}}
+            "image_id": previous.get("image_id"), "shape": previous.get("shape"),
+            "selection_revision": stored["revision"]}}
     receipt = make_receipt(
         call, changed=True,
         before=None if previous is None else {"n": len(previous.get("cell_ids") or []),
@@ -242,6 +273,12 @@ class NameInput(ProjectInput):
     name: str = Field(pattern=NAME_PATTERN, description="The selection's name.")
 
 
+class DeleteInput(NameInput):
+    selection_revision: int | None = Field(None, ge=1, description="Delete only if the "
+                                          "selection is at this revision now. Undo hints "
+                                          "carry it.")
+
+
 class GetInput(NameInput):
     inline_limit: int = Field(INLINE_LIMIT, ge=0, le=INLINE_LIMIT,
                               description="Return the ids inline up to this many; past "
@@ -276,18 +313,21 @@ def delete_selection(call, inp):
     from plexora.agent.receipts import make_receipt
 
     _check_project(call, inp.project)
-    records = read_all(inp.project)
-    previous = records.pop(inp.name, None)
-    if previous is None:
-        raise AgentError("invalid_input", f"{inp.project!r} has no selection {inp.name!r}")
-    _write_all(inp.project, records)
+    with _write_lock(inp.project):
+        records = read_all(inp.project)
+        previous = records.pop(inp.name, None)
+        if previous is None:
+            raise AgentError("invalid_input", f"{inp.project!r} has no selection {inp.name!r}")
+        _check_revision(inp.project, inp.name, previous, inp.selection_revision)
+        _write_all(inp.project, records)
     call.project_name = inp.project
     ids = previous.get("cell_ids") or []
     undo = None
     if len(ids) <= INLINE_LIMIT:
         undo = {"tool": "set_selection", "arguments": {
             "project": inp.project, "name": inp.name, "cell_ids": ids,
-            "image_id": previous.get("image_id"), "shape": previous.get("shape")}}
+            "image_id": previous.get("image_id"), "shape": previous.get("shape"),
+            "selection_revision": 0}}
     receipt = make_receipt(
         call, changed=True, before={"name": inp.name, "n": len(ids),
                                     "revision": previous.get("revision")},
@@ -320,6 +360,6 @@ def capabilities():
         cap(name="selection.delete", tool_name="delete_selection",
             purpose="Forget a stored selection. Undoable while it is small enough to carry "
                     "back in the receipt.",
-            permission="reversible_write", input_model=NameInput, handler=delete_selection,
+            permission="reversible_write", input_model=DeleteInput, handler=delete_selection,
             writes=("selections",), persistent=True),
     ]

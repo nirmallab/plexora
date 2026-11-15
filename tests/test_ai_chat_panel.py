@@ -39,6 +39,9 @@ CHECKS = [
     "a line sent from this page is not drawn twice when its user_message comes back",
     "a conversation the server no longer has is not resumed: a new one starts in its place",
     "on Free the panel stays closed and nothing explains or upsells",
+    "a closed panel stops listening: no poll after the one held when it closed",
+    "...and opened again it listens from where it left off, missing nothing",
+    "a message whose POST fails at the network level clears busy and says it was not sent",
     "the panel never parses markup",
 ]
 

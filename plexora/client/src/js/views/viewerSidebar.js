@@ -1583,8 +1583,25 @@ class ViewerSidebar {
         const valid = Array.isArray(order) && order.length === count
             && new Set(order).size === count && order.every((i) => i >= 0 && i < count);
         if (valid && !this.review && order.some((from, to) => from !== to)) {
-            const contents = order.map((from) => {
+            // Work in flight -- a levelling, an ease -- holds the slot OBJECT
+            // it started on and ends on it, so its flags must not travel with
+            // the contents: on another row nothing would ever clear them, and
+            // that row would read as levelling forever. They stay behind (the
+            // run there sees another marker and stops), and the work is taken
+            // up again at the row's new place below.
+            const resume = [];
+            const contents = order.map((from, to) => {
                 const { index, ...rest } = this.channelSlots[from];
+                if (from !== to) {
+                    if (rest.autoLeveling && !rest.autoLeveled) resume.push({ to, level: true });
+                    if (rest.rangeEase && Array.isArray(rest.rangeEaseTarget)) {
+                        resume.push({ to, range: rest.rangeEaseTarget });
+                    }
+                    delete rest.autoLeveling;
+                    delete rest.levelTurn;
+                    delete rest.rangeEase;
+                    delete rest.rangeEaseTarget;
+                }
                 return rest;
             });
             const selectedWas = this.selectedSlot;
@@ -1603,6 +1620,17 @@ class ViewerSidebar {
                 });
             }
             this.scheduleSaveChannels();
+            for (const { to, level, range } of resume) {
+                if (range) {
+                    this.setSlotRange(to, range, false);
+                    this.syncChannelSlider?.(this.channelSlots[to]);
+                }
+                if (level) {
+                    Promise.resolve(this.levelChannel(to)).catch((error) => {
+                        console.warn("auto-contrast after a reorder failed", error);
+                    });
+                }
+            }
         }
         // The DOM back in index order, whatever the drag left it in.
         if (list) this.channelSlots.forEach((slot) => {

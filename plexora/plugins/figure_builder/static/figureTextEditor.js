@@ -296,8 +296,13 @@ class FigureTextEditor {
 
         const accel = event.metaKey || event.ctrlKey;
         if (event.key === "Escape") {
+            // Ends the edit and keeps it, as Ctrl+Enter does, by blurring --
+            // which every engine reports. It used to remove the editor and
+            // leave the rest to the browser: Chromium fires blur on a removed
+            // focused element and so committed; Firefox fires nothing, so the
+            // typed caption was dropped and a fresh box stayed an empty ghost.
             event.preventDefault();
-            this.cancel();
+            this.el.blur();
             return;
         }
         if (event.key === "Enter" && accel) {
@@ -529,11 +534,6 @@ class FigureTextEditor {
     }
 
     // -- committing ----------------------------------------------------------
-
-    cancel() {
-        this.close(true);
-        this.canvas.render();
-    }
 
     commit() {
         const annotationId = this.annotationId;

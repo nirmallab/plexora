@@ -248,8 +248,24 @@ def _probe():
 
 def test_the_viewer_draws_the_planes_on_screens_cells_without_blinking():
     report = _probe()
-    assert report["filter"] == {"CD8": [1, 2], "Z": [6.5, 7.5]}, report
-    assert report["slab_filter"] == {"CD8": [1, 2], "Z": [1.5, 4.5]}, report
+    assert report["filter"]["CD8"] == [1, 2], report
+    assert report["filter"]["Z"] == pytest.approx([6.5, 7.5]), report
+    assert report["slab_filter"]["CD8"] == [1, 2], report
+    assert report["slab_filter"]["Z"] == pytest.approx([1.5, 4.5]), report
+    # Half-way z on the plane floor(z + 0.5) names, as ROI mapping assigns it
+    # (audit lead flow-coords-6).
+    assert report["half_way"] == {"6.5": True, "7.5": False, "7": True, "6.49": False,
+                                  "7.49": True}, report
+    # And as the server applies it to its float32 filter column.
+    import numpy as np
+
+    from plexora.server.models import centroid_tiles
+
+    zs = np.array([6.49, 6.5, 7.0, 7.49, 7.5], dtype=np.float32)
+    records = np.zeros(zs.size, dtype=centroid_tiles.INTERNAL_DTYPE)
+    records["row"] = np.arange(zs.size)
+    kept = centroid_tiles._apply_gates(records, {"Z": zs}, {"Z": report["filter"]["Z"]})
+    assert zs[kept["row"]].tolist() == [6.5, 7.0, 7.489999771118164], kept
     assert report["flat_filter"] == {"CD8": [1, 2]}, report
     # A plane change refetches every visible tile, keeps the old dots until the
     # new ones land, then replaces them.

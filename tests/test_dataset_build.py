@@ -206,6 +206,42 @@ def test_the_build_task_reports_each_project(tmp_path):
     assert sorted(found["dataset"]["projects"]) == ["A", "B", "C"]
 
 
+
+def test_a_second_create_while_the_build_runs_keeps_its_record(tmp_path, monkeypatch):
+    """A second Create for the same scan while its build runs (audit lead
+    sc-datasets-4): the running task is left alone, so its status record must
+    be too -- replacing it left the task writing into a dict nobody reads, and
+    the dialog lost the projects and the dataset."""
+    root = fx.layout_a(tmp_path / "cohort")
+    release, entered = threading.Event(), threading.Event()
+
+    class _Dataset(list):
+        id, name = "ds1", "Task cohort"
+
+    def slow_build(plan, *, report_to, **_):
+        report_to["projects"] = [{"name": "A", "status": "created"}]
+        entered.set()
+        release.wait(10)
+        return {"dataset": _Dataset(["A"])}
+
+    monkeypatch.setattr(dataset_build, "build", slow_build)
+    dataset_build.start_build("scan-twice", _plan(root), name="Task cohort")
+    assert entered.wait(10)
+    try:
+        again = dataset_build.start_build("scan-twice", _plan(root), name="Task cohort")
+        assert again["status"] == "pending"
+    finally:
+        release.set()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        found = dataset_build.build_status("scan-twice")
+        if found["status"] != "pending":
+            break
+        time.sleep(0.02)
+    assert found["status"] == "ready"
+    assert found["projects"] == [{"name": "A", "status": "created"}]
+    assert found["dataset"] == {"id": "ds1", "name": "Task cohort", "projects": ["A"]}
+
 def test_a_taken_dataset_name_is_refused_before_the_task_starts(tmp_path):
     root = fx.layout_a(tmp_path / "cohort")
     plexora.create_dataset("Taken")

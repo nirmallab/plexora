@@ -405,11 +405,17 @@ window.PlexoraSurfaceStudio = (function () {
         if (state.source === MASK) return true;
         state.ui.status.textContent = "Reading the channel…";
         setBusy(true);
+        // Another channel, blur or background asked for since -- or the dock
+        // closed -- makes this answer stale: it must not repaint the current one.
+        const mine = state;
+        const asked = (mine.suggestAsked = (mine.suggestAsked || 0) + 1);
+        const stale = () => state !== mine || mine.suggestAsked !== asked;
         try {
             const answer = await service().suggest({ channel: state.channel,
                                                      t: viewState()?.get?.()?.t || 0,
                                                      sigma_um: state.sigma || undefined,
                                                      background_um: state.background || undefined });
+            if (stale()) return true;
             if (!answer) return false;
             state.suggestion = answer;
             const hist = answer.histogram;
@@ -428,10 +434,10 @@ window.PlexoraSurfaceStudio = (function () {
             setIso(state.iso, { preview: true });
             return true;
         } catch (error) {
-            state.ui.status.textContent = error.message;
+            if (!stale()) state.ui.status.textContent = error.message;
             return true;
         } finally {
-            setBusy(false);
+            if (!stale()) setBusy(false);
         }
     }
 

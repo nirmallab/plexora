@@ -273,7 +273,10 @@ window.PlexoraDatasetBuilder = (function () {
             state.error = null;
             const body = {paths: [path], token: state.token};
             if (state.node) body.node = state.node;
-            const reply = await request("datasets/scan", {method: "POST", body});
+            // A request that never reaches the server rejects; answered as a
+            // refusal, or the dialog's Add folder… stays disabled for good.
+            const reply = await request("datasets/scan", {method: "POST", body}).catch(
+                (error) => ({ok: false, body: {error: error.message}}));
             if (state.closed) return false;
             if (!reply.ok) {
                 state.error = reply.body.error || "That folder could not be added.";

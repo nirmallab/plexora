@@ -577,3 +577,98 @@ def test_describing_a_planar_image_has_no_volume(figure):
     from plexora.plugins.figure_builder.server import sources
 
     assert sources.describe("demo")["volume"] is None
+
+
+def test_a_slow_open_does_not_stall_another_images_reads(figure, monkeypatch):
+    """Opening a reader -- for a node image, HTTP -- used to happen under the
+    one lock every pixel request takes, so one slow open stalled them all."""
+    import threading
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    class Fake:
+        def __init__(self, ds, view=""):
+            if ds == "slow":
+                entered.set()
+                release.wait(10)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pixels, "_image_path", lambda ds: ds)
+    monkeypatch.setattr(pixels, "SourceImage", Fake)
+
+    def open_slow():
+        with pixels._reader("slow"):
+            pass
+
+    slow = threading.Thread(target=open_slow, daemon=True)
+    slow.start()
+    assert entered.wait(5)
+
+    done = threading.Event()
+
+    def open_fast():
+        with pixels._reader("fast"):
+            done.set()
+
+    fast = threading.Thread(target=open_fast, daemon=True)
+    fast.start()
+    try:
+        assert done.wait(2), "a slow open blocked another image's reader"
+    finally:
+        release.set()
+        slow.join(5)
+        fast.join(5)
+        pixels.close_readers()
+
+
+def test_evicting_a_reader_mid_read_does_not_wait_for_that_read(figure, monkeypatch):
+    """The evicted reader is closed by whoever finishes with it, not waited
+    for under the map lock -- and it is not closed under a read in progress."""
+    import threading
+
+    monkeypatch.setattr(pixels, "READER_LIMIT", 1)
+    closed = []
+
+    class Fake:
+        def __init__(self, ds, view=""):
+            self.name = ds
+
+        def close(self):
+            closed.append(self.name)
+
+    monkeypatch.setattr(pixels, "_image_path", lambda ds: ds)
+    monkeypatch.setattr(pixels, "SourceImage", Fake)
+
+    reading = threading.Event()
+    release = threading.Event()
+
+    def long_read():
+        with pixels._reader("a"):
+            reading.set()
+            release.wait(10)
+            closed.append("a-read-finished")
+
+    first = threading.Thread(target=long_read, daemon=True)
+    first.start()
+    assert reading.wait(5)
+
+    done = threading.Event()
+
+    def other():
+        with pixels._reader("b"):
+            done.set()
+
+    second = threading.Thread(target=other, daemon=True)
+    second.start()
+    try:
+        assert done.wait(2), "evicting a reader waited for its read to finish"
+        assert closed == []
+    finally:
+        release.set()
+        first.join(5)
+        second.join(5)
+    assert closed == ["a-read-finished", "a"]
+    pixels.close_readers()

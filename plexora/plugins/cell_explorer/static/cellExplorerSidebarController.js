@@ -288,6 +288,18 @@ class CellExplorerSidebarController {
         return null;
     }
 
+    /**
+     * The variable list alone, read again: the table gained a column, or an
+     * agent asks for one. Not fetchSaved -- adopting the stored settings
+     * there would throw away a change the save debounce has not written yet
+     * (and clear `dirty`, so it never would be).
+     */
+    async fetchCatalogue() {
+        const catalogue = await this.api.variables();
+        this.state.descriptors = catalogue.variables || [];
+        this.state.canDraw = catalogue.can_draw || this.state.canDraw;
+    }
+
     async applyOrDefault() {
         this.restoreOpacity();
         this.restoreMode();
@@ -436,6 +448,7 @@ class CellExplorerSidebarController {
             // Only here, where a person chose it: a restored, carried-over or
             // notebook-requested column was not visited by anybody.
             this.state.markVisited(column);
+            this.state.settings.selected = column;
             this.state.dirty = true;
             this.scheduleSave();
         }

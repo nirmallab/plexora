@@ -177,7 +177,9 @@ function build({ projects, datasets, answers = {}, folder = null, typing = false
                     json: () => Promise.resolve({ success: true, dataset: null }),
                 });
             }
-            const body = path === "/projects" ? projects
+            //: `projects` may be a function, asked on every read: the
+            //: answer (or a promise of it) for that read.
+            const body = path === "/projects" ? (typeof projects === "function" ? projects() : projects)
                 : path === "/datasets" ? { success: true, datasets }
                 : null;
             return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
@@ -212,6 +214,7 @@ function build({ projects, datasets, answers = {}, folder = null, typing = false
         crumbs: elements.get("project-crumbs"),
         posted, asked, teardown,
         doc: context.document,
+        win: context,
         async key(init) {
             const event = { key: "", ctrlKey: false, metaKey: false, shiftKey: false,
                             altKey: false, defaultPrevented: false,
@@ -740,6 +743,13 @@ function drag(names) {
     check("and the page takes its listener off when it is torn down",
         (page.doc.listeners.get("keydown") || []).length === 0,
         "it is mounted as a fragment, so this runs on every navigation");
+    // The import dialog and the dataset builder are loaded once, in base.html,
+    // and outlive this page: they ask for PlexoraOpenProject and fall back to
+    // routing to /open_project when it is absent. A handle left behind by a
+    // torn-down page swallows that fallback and does nothing.
+    check("and takes back window.PlexoraOpenProject, which only a mounted page can answer",
+        page.win.PlexoraOpenProject === undefined,
+        "a later 'Open dataset' from another page calls into the dead page and goes nowhere");
 }
 
 // -- where each project is kept (Settings > Data's locations) --------------
@@ -829,6 +839,36 @@ const PLACED = [
     check("a location named in the URL but no longer there falls back to all",
         gone.results.innerHTML.includes('data-project-name="tonsil_01"')
         && gone.results.innerHTML.includes('data-project-name="kidney_02"'));
+}
+
+// -- back-to-back reloads ---------------------------------------------------------
+
+{
+    // Two moves in a row: the first reload's /projects is slow, the second's
+    // is not. The older answer landing last must not draw over the newer.
+    const held = [];
+    let reads = 0;
+    const older = PROJECTS.map((p) => ({ ...p }));
+    const newer = PROJECTS.map((p) => (p.name === "loose_one" ? { ...p, name: "renamed_one" } : { ...p }));
+    const page = build({
+        projects: () => {
+            reads += 1;
+            if (reads === 1) return PROJECTS;
+            if (reads === 2) return new Promise((resolve) => held.push(() => resolve(older)));
+            return newer;
+        },
+        datasets: DATASETS,
+    });
+    await page.settle();
+    page.win.PlexoraOpenProject.refresh();
+    page.win.PlexoraOpenProject.refresh();
+    await page.settle();
+    held.forEach((release) => release());
+    await page.settle();
+    await page.settle();
+    const html = page.results.innerHTML;
+    check("an older /projects answer landing last does not draw over a newer one",
+        html.includes('data-project-name="renamed_one"') && !html.includes('data-project-name="loose_one"'));
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

@@ -107,6 +107,7 @@ Entry points:
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/_guard.py` | The browser guard, stdlib only and importing nothing from `plexora` (same rule as `_url.py`, because `__init__.py` uses it mid-initialisation). `cross_site_refusal` refuses a write whose `Sec-Fetch-Site` says `cross-site` or `same-site` -- same-site too, because a port is not part of a site and `localhost:<other port>` is a stranger -- unless its Origin names the Host it arrived on or `PLEXORA_ALLOWED_ORIGINS`. `trusted_host` admits IP literals, `localhost` and `*.localhost` (names no page can rebind) plus `--allowed-host` names, against DNS rebinding. `auth_cookie_name` names the token cookie per port, because cookies are scoped by host, not port, and two servers on 127.0.0.1 overwrote each other's token. A request with neither `Sec-Fetch-Site` nor `Origin` passes: that is every non-browser client (MCP, askpass, curl, the test client), and a browser always sends them. |
 | `plexora/_lifetime.py` | Leaf module, stdlib only: what ends this process cleanly. `ensure_std_streams()`, `flush_std()`; `watch_stdin(on_eof)` (a daemon thread that calls `on_eof` once stdin reaches EOF -- the shape `--desktop` and the data node's `--exit-on-stdin-close` both build on); `request_shutdown(reason, grace=...)` raises `KeyboardInterrupt` on the MAIN thread, because that is waitress's own clean stop (`serve()` returns, every `atexit` handler runs), with a 10s `os._exit` backstop if that wedges; `shutdown_requested()`, `install_signal_handlers()` (SIGTERM, SIGHUP and SIGBREAK the same way; called next to `make_interruptible()` in `cli.main` and `server_cli` as well as the desktop path, because a terminal `plexora` or a sidecar killed without it ran no `atexit` and left ssh tunnels, cluster jobs and `nodes.json`/`servers.json` entries behind; a signal already ignored is left alone, so `nohup plexora` still survives a hangup), and `exit_when_stdin_closes(log=print)` -- the data node's old `os._exit(0)`-on-EOF behaviour, moved here so the desktop app's server can tie its life to stdin the same way without duplicating the watcher. `request_restart(reason)` sets a flag and then calls `request_shutdown` -- the restart itself happens after `serve()` returns, in `cli.restart_after_update`, not here. `make_interruptible()` explicitly sets SIGINT back to its default disposition on the main thread before installing the handler: a launcher that starts Plexora as `plexora &` from a script leaves SIGINT inherited as `SIG_IGN`, which makes `interrupt_main()` a no-op and silently drops every Quit/restart to the 10s `os._exit` backstop -- fixed here, in both `cli.main` and `server_cli`. |
+| `plexora/_process_lock.py` | Leaf module, stdlib only: a read-modify-write lock that holds across processes, not just threads, because the viewer server and `plexora mcp serve` are two processes on one data root running the same capabilities, and a `threading.Lock` let both read revision N and both write N+1. `ProcessLock` is a re-entrant thread lock plus an advisory lock on a small file for the outermost hold (`fcntl.flock` on POSIX; `msvcrt.locking` polled for up to `WINDOWS_WAIT_SECONDS` = 120 on Windows, which has no blocking form); the file is named by a callable resolved at each outermost acquire, since the data root can change under a running process, and when it cannot be had the thread lock alone is kept. `lock_for(key, path_fn)` hands out one lock per key per process, because `flock` locks belong to an open file description and two objects on one file would block each other. Began as the QC store's own `_ProjectLock`, now deleted; held by the ROI repository (`roi.lock`), gating's model, provenance and classifier stores (`gates.lock`, `provenance.lock`, `classifier.lock`), QC results (`qc.lock`), `agent/revision.py` (`revision.lock`), `server_records.py` (`servers.json.lock`) and a session's `control.json` (`control.json.lock`). Video Studio's repository uses SQLite's `BEGIN IMMEDIATE` instead. |
 | `plexora/_logging.py` | What Plexora writes to the terminal, decided in one place. `configure(level=None, *, verbose=False, fmt=None, everything=False)` puts one stderr handler on the ROOT logger (so waitress's `basicConfig()` adds none), sets the `plexora` logger to `resolve_level` (`-v` -> DEBUG, else `PLEXORA_LOG_LEVEL`, else WARNING; an unreadable value falls back rather than stopping a server) and takes Flask's `default_handler` off, so no line is written twice. **Never stdout**, because the desktop app reads one JSON line from it, `plexora connect` parses a node's announce from it and MCP speaks JSON-RPC over it. Called once before serving by `cli.py`'s serve path (`-v/--verbose`), `_desktop_logging` (`DESKTOP_FORMAT`, `everything=True` -- every library's loggers, as the desktop log file always had), `server_cli.py`, `run.py` and `server/node/app.py`'s `serve_node`; library use configures nothing. Modules log through a per-module `_log` (not `log`, because `prime_hot_code(log=)` already takes that name) and never print progress. |
 | `plexora/_subprocess.py` | Leaf module, stdlib only, importable without the package for the same reason `cli.py`/`connect.py` are (see Key Invariants): `popen_kwargs()` returns `{"creationflags": CREATE_NO_WINDOW}` only for a console-less Windows process -- the desktop shell launches its server with `CREATE_NO_WINDOW`, and without this every child THAT process starts (an `nvidia-smi` probe, an ssh, a tkinter dialog) would flash its own console. `{}` everywhere else, including a Windows terminal launch, where a child sharing the console is correct (ssh prompting for a password needs it). Every `Popen`/`run` in the package passes `popen_kwargs()`; `cli.py`, `connect.py` and `gcloud.py` reach it through a lazy `_spawn_flags()` helper rather than importing it at module level. `tests/test_subprocess_flags.py` statically scans the tree for a spawn call that forgot it. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
@@ -1349,7 +1350,13 @@ Entry points:
   not `data_model.load_generation` (which moves when a different project loads,
   not when a layer is added to the one already open) — so anything caching
   something derived from a project's record (a layer pyramid, a layer tile, its
-  ETag) knows when to throw it away. `project.py` also gained `LayerSpec` (one
+  ETag) knows when to throw it away. Such a cache keys on
+  `project_generation(name)`, not the global counter: the `config_generation`
+  of the last write that changed THAT project's record, ignoring
+  `lastOpenedAt` (`_UNTRACKED_KEYS`), because another project's save or the
+  viewer's `lastOpenedAt` stamp on every page view used to evict every open
+  layer pyramid with its window scans and GMM fits. `bump_config_generation`,
+  which does not say which project changed, moves every project's. `project.py` also gained `LayerSpec` (one
   registered layer of a spatial scene — `kind` is `"image"`/`"labels"`/
   `"points"`/`"shapes"`/`"surface"`, a rendering strategy, not a modality) and
   `Project.spatial_layers` — stored as `spatialLayers` in config.json, because
@@ -1539,7 +1546,19 @@ Entry points:
   (`workspace`, `legacy-nested`, `projects-inside`, `empty`, ...),
   `adoptWorkspace`, `reconnect`, `locations`/`addLocation`/`removeLocation`/
   `setDefault`. The folder dialog is the first thing a click awaits, so the
-  browser lets it open.
+  browser lets it open. Once the browser's projects are in a workspace
+  (`adoptWorkspace`, `reconnect`), the browser's copies of what the folder
+  now holds are moved to OPFS `plexora/set-aside/<time>/` (`setAside`) and
+  never served again, because a later visit that does not open the folder
+  would otherwise start on copies older than the folder's. A project the
+  folder also holds that was changed in the browser while the folder was
+  closed is kept twice on Reconnect (`keepBoth`): the folder's as it is, and
+  the browser's as "<name> (browser copy, YYYY-MM-DD)", copied by Python
+  through `POST /projects/<name>/copy` `{name}` so its rows, paths and id are
+  its own; `reconnect()` returns the `copies`, and
+  `PlexoraOnboarding.noticeCopies` (`views/webOnboarding.js`, from
+  sessionStorage `plexora-reconnect-copies`, since the home page reloads
+  after a Reconnect) tells the user once.
 - `models/datasets.py` — the **dataset registry**: a dataset is a folder a
   cohort of projects lives in (a trial's forty slides, a TMA series), and
   nothing else — it holds names, not data. Lives at `<data_root>/datasets.json`,
@@ -4648,7 +4667,8 @@ deliberately left out and what should be built next.
   `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
   `qc_cell_rois` tables, each pair keeping the `geometry_hash` it was read
   under; `lock()` also holds an advisory `qc.lock` file for its outermost
-  hold, because a server and a headless `plexora ai run qc` are two processes;
+  hold, because a server and a headless `plexora ai run qc` are two processes
+  (`plexora._process_lock`, which replaced the store's own `_ProjectLock`);
   the document gained `exclusion_filter` (`disabled_categories`) and the
   `source_writes` ledger, `record_source_write`/`last_source_write`, which is
   what the SCIMAP Pro hand-off may point at), `roi_link.py` (QC regions are ROIs, one of the
@@ -4703,7 +4723,9 @@ deliberately left out and what should be built next.
   changed regions are read from the mask, unless a `MAPPING` input changed
   (`CELLS_VERSION` "7"); `calls.write_for_active` stamps
   `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
-  moved since makes the calls detectably stale), `tissue.py` (the one
+  moved since makes the calls detectably stale; it is read before the
+  regions are, not after deriving, because a read afterwards would call a
+  region drawn meanwhile seen and gating would never re-derive for it), `tissue.py` (the one
   definition of tissue: `estimate` wraps `scan.tissue_estimate` and adds the
   FEATHERED mask, grown `TISSUE["feather_um"]` by an exact distance
   transform; the tight mask stays every score's denominator, the feathered
@@ -6456,7 +6478,12 @@ deliberately left out and what should be built next.
   this control. `go(target)` calls `carryOver.stash(target)` before a full
   page navigation (`PlexoraRouter.go`, or `window.location` if the router is
   absent): the server holds one loaded datasource and the viewer has no
-  teardown path, so this cannot be anything softer. `go()` also closes the
+  teardown path, so this cannot be anything softer. Before leaving it sends
+  the saves still waiting on their debounce (the plane, the rotation, the
+  viewer preferences, the channel list, the Layers panel, each tool's
+  `flushSave`) with keepalive, and on `pagehide` too, because a link, the
+  navbar, Back or a closed tab leaves without a walk and the timers die with
+  the page. `go()` also closes the
   thumbnail grid below, since a B/N walk with it open has nothing left to
   show. The "2 / 12" counter is itself a button now
   (`aria-haspopup`/`aria-expanded`); pressing it opens `datasetStrip.js` under
@@ -9437,9 +9464,11 @@ route instead: `GET /generated/layer/<datasource>/<layer>/<channel>/<level>/
 <tile>` → `layer_sources.layer_tile`. Core, not a plugin — it is the layer
 MODEL, not any one modality, so it serves a second registered slide or a
 transcript density raster (a uint16 channel like any other) the same way.
-Its ETag carries `project.config_generation()`, not `load_generation`: this
-tile is a function of the project record and the file it names, not of which
-datasource the viewer happens to have open. Two sibling routes beside it,
+Its ETag carries `project.project_generation(<datasource>)`, not
+`load_generation`: this tile is a function of the project record and the file
+it names, not of which datasource the viewer happens to have open — nor of
+another project's record, which is why it is not the global
+`config_generation()`. Two sibling routes beside it,
 `GET /generated/layer/<datasource>/<layer>/<channel>/stats` and `.../gmm`
 (`data_routes.generate_layer_channel_stats`/`generate_layer_channel_gmm` →
 `layer_sources.layer_channel_stats`/`layer_channel_gmm`), are what let the
@@ -10223,6 +10252,17 @@ in **5.6 s**.
   additionally needs the server started with `--allow-source-writes` AND
   `confirm: true` on the call; a destructive one (e.g. deleting an ROI) needs
   `--allow-destructive` and `confirm: true`.
+- **A revision-checked read-modify-write of a shared store is held across
+  processes, not just threads.** The viewer server and `plexora mcp serve`
+  run the same capabilities against one data root, so a `threading.Lock`
+  around the load-check-store let both pass the check on revision N and both
+  write N+1, one edit lost without a conflict. The ROI repository, gating's
+  gates/provenance/classifier stores, the QC store, `agent/revision.py`,
+  `servers.json` and a session's `control.json` take
+  `plexora._process_lock.lock_for(...)` with a `.lock` file beside what they
+  guard; Video Studio's `video.db` takes `BEGIN IMMEDIATE` and checks the
+  revision again under it. A new store written from both processes needs one
+  or the other.
 - **A render's manifest is deterministic: the same spec gives the same bytes
   and the same manifest, no clock or RNG in either** (`agent/render.py`,
   `agent/render_spec.py`). `agent/gate_sampling.py`'s field choice is
@@ -12117,6 +12157,18 @@ list every line the probe prints, so a check added or renamed in one is
 added in the other. `tests/js/mini_dom.mjs` is a shared mini DOM, a copy of
 `web_onboarding_probe.mjs`'s own with `firstChild`/`lastChild`. No full run
 was reported for this work.
+
+**The audit-leads pass (branch `fix/audit-leads`, 2026-11-14)** fixed about
+190 audit leads and added their tests (the
+cross-process locks in `tests/test_agent_revision_cross_process.py`,
+`test_session_control_lock.py`, `plexora/plugins/roi/tests/test_roi_cross_process.py`,
+`plexora/plugins/gating/tests/test_gating_cross_process_locks.py`,
+`plexora/plugins/video_studio/tests/test_video_cross_process.py`; Reconnect's
+keep-both in `tests/test_browser_store_reconnect_edits.py` with
+`tests/js/browser_store_reconnect_edits_probe.mjs`). Full suite in that
+worktree: **13297 passed, 139 skipped, 0 failed** (macOS, 1:00:37),
+run with `--basetemp` because another pytest on the machine prunes the
+shared temp root (see Sharp Edges).
 
 **The desktop app has its own validation, outside pytest:**
 
@@ -15198,6 +15250,11 @@ two in `test_gating_delta`,
   `icon: "fa-globe"` fails as an icon called `fa-globe`.
   `views/quickViewLanding.js`'s status lines and machine menu carry icons
   this way.
+- **Two pytest runs on one machine delete each other's temp folders.** Both
+  share the numbered `pytest-of-<user>` basetemps, and each run prunes the
+  older numbered ones, so a long run beside another session's pytest loses
+  its `tmp_path` folders mid-run and fails in ways that have nothing to do
+  with the change. Pass `--basetemp` with a folder of the run's own.
 - **Windows keeps an image file locked for as long as its project is
   loaded**, so a test that registered a file cannot unlink it to simulate it
   going missing. Swap the path in the record with `dataclasses.replace`

@@ -34,8 +34,10 @@ from biocognia.entitlements import normalize, satisfies, valid
 
 PROOF_HEADER = "X-Plexora-Entitlement-Proof"
 PROOF_TTL_SECONDS = 3600
-#: A proof dated this far in the future is refused: a clock that is off by an
-#: hour between two of the user's own machines is already worth saying.
+#: Clock skew allowed between the primary and a node, either way: a proof is
+#: taken this long after it runs out by the node's clock, and refused when it
+#: runs out further ahead than an hour plus this. The primary renews a cached
+#: proof this long (plus a minute) before it runs out by its own clock.
 MAX_SKEW_SECONDS = 300
 
 #: Table operations a node runs only for a licensed primary: operation-name
@@ -89,7 +91,7 @@ def verify_proof(node_token: str, proof: str | None, required: str, *,
     except ValueError:
         return False
     moment = time.time() if now is None else now
-    if expires < moment or expires > moment + PROOF_TTL_SECONDS + MAX_SKEW_SECONDS:
+    if expires < moment - MAX_SKEW_SECONDS or expires > moment + PROOF_TTL_SECONDS + MAX_SKEW_SECONDS:
         return False
     if not hmac.compare_digest(_mac(node_token, grants_text, expires), mac):
         return False
@@ -122,7 +124,7 @@ def _current_grants() -> tuple:
 
 def proof_for(node_token: str) -> str | None:
     """The proof to attach for `node_token`, or None when nothing is licensed.
-    Cached until a minute before it runs out."""
+    Cached until `MAX_SKEW_SECONDS` and a minute before it runs out."""
     if not node_token:
         return None
     grants = _current_grants()
@@ -132,7 +134,7 @@ def proof_for(node_token: str) -> str | None:
     now = time.time()
     with _cache_lock:
         cached = _cache.get(key)
-        if cached and cached[1] - 60 > now:
+        if cached and cached[1] - MAX_SKEW_SECONDS - 60 > now:
             return cached[0]
     proof = mint_proof(node_token, grants, now=now)
     with _cache_lock:

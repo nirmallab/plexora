@@ -307,12 +307,31 @@ def _qc_provider(ds, mode):
     finally:
         _BUSY.on = False
     after = _inputs_token(ds)
+    if after is not None and after != token:
+        # Something was written while the record was made: QC's own
+        # re-derivation, or a region drawn meanwhile. The token read now
+        # stands for the record only if the state read after it is the state
+        # the record was keyed on (`_provide`'s cache); otherwise the next ask
+        # derives again rather than keep the old exclusions under the new token.
+        key = _state_key(ds, mode)
+        with _CACHE_LOCK:
+            if _CACHE.get(key, _ABSENT) is not record:
+                after = None
     if after is not None:
         with _CACHE_LOCK:
             if len(_FAST) > _CACHE_MAX:
                 _FAST.clear()
             _FAST[(ds.name, mode, after)] = record
     return record
+
+
+def _state_key(ds, mode):
+    """`_provide`'s cache key for the state as it is now."""
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
+    now = _inputs(ds)
+    return (ds.name, mode, roi_revision(ds.name), results.revision(ds.name),
+            cell_inputs.digest(now) if now is not None else "")
 
 
 def _provide(ds, mode):
@@ -348,8 +367,11 @@ def _provide(ds, mode):
             _CACHE[key] = record
         return record
     # Keyed by what was read before any re-derive as well as after, so the
-    # next call with the same inputs is a dictionary lookup.
-    after = (ds.name, mode, roi_revision(ds.name), results.revision(ds.name, document), stamp)
+    # next call with the same inputs is a dictionary lookup. "After" is the
+    # ROI revision the calls were derived for (stamped on them), never one
+    # read now: a region drawn since the derivation must miss this cache.
+    derived_for = (result.get("cells") or {}).get("roi_revision", roi_rev)
+    after = (ds.name, mode, derived_for, results.revision(ds.name, document), stamp)
     with _CACHE_LOCK:
         if len(_CACHE) > _CACHE_MAX:
             _CACHE.clear()

@@ -348,8 +348,10 @@
         if (row.isDefault && row.kind === "folder" && row.state !== "available") {
             button("Reconnect", "plug", () => store.reconnect(), (done) => {
                 if (!done) return;
-                if (done.ok) webSay(`${done.label || row.label} is open again.`);
-                else if (done.reason === "denied") webFail("The browser did not allow Plexora to open it.");
+                if (done.ok) {
+                    // Both versions of what changed on both sides are kept: said so.
+                    if (!window.PlexoraOnboarding?.noticeCopies?.()) webSay(`${done.label || row.label} is open again.`);
+                } else if (done.reason === "denied") webFail("The browser did not allow Plexora to open it.");
                 else if (done.reason === "missing") webFail("The folder is not where it was. Choose it again with Set up again.");
                 else if (done.reason !== "none") webFail(done.error || "That did not work.");
             });
@@ -646,8 +648,16 @@
         // A migration survives the page: it runs in a server thread, so a
         // reload during one has to find it rather than show an idle form.
         getJson("settings/data/migration").then((job) => {
-            if (job && job.status === "running") this.watch();
+            if (job && job.status === "running" && !this.stopped) this.watch();
         });
+    };
+
+    /** The page is going: no tick may follow, including one whose request is
+     *  out now (it would otherwise reschedule itself when it lands). */
+    DataSection.prototype.stop = function () {
+        this.stopped = true;
+        window.clearTimeout(this.polling);
+        this.polling = null;
     };
 
     DataSection.prototype.wire = function () {
@@ -867,6 +877,7 @@
         show(el("settings_progress"), true);
         const tick = () => {
             getJson("settings/data/migration").then((job) => {
+                if (this.stopped) return;
                 this.renderProgress(job);
                 if (job.status === "running") {
                     this.polling = window.setTimeout(tick, POLL_MS);
@@ -2163,6 +2174,12 @@
     RemotesSection.prototype.stop = function () {
         if (this.watching) this.watching();
         this.watching = null;
+        // A start or stop's recheck asks Google again in 45 s: not for a page
+        // that has gone.
+        Object.values(this.cards || {}).forEach((card) => {
+            if (card.vmRecheck) window.clearTimeout(card.vmRecheck);
+            card.vmRecheck = null;
+        });
     };
 
     RemotesSection.prototype.refresh = function () {
@@ -3292,6 +3309,11 @@
     };
 
     LicenseSection.prototype.stop = function () {
+        // A device-code poll ends with the page: the code can be asked for
+        // again, and `poll` checks `connecting` before and after each ask.
+        const run = this.connecting;
+        if (run && run.timer) clearTimeout(run.timer);
+        this.connecting = null;
         if (this.onExternal && typeof window.removeEventListener === "function") {
             window.removeEventListener("plexora:license-external", this.onExternal);
         }
@@ -3778,7 +3800,7 @@
         // page (or just switching tabs) has already made it stop asking --
         // this only has to drop the timer that would otherwise fire once more.
         return () => {
-            if (section) window.clearTimeout(section.polling);
+            if (section) section.stop();
             if (remotes) remotes.stop();
             if (webdata) webdata.stop();
             if (license) license.stop();

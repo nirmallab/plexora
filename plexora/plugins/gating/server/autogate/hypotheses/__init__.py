@@ -244,6 +244,15 @@ def start(engine, unit) -> dict:
     state = unit.get("hypotheses")
     if state is not None and state.get("version") == VERSION:
         return state
+    if state is not None and state.get("status") is None and state.get("observations"):
+        # Built by another VERSION mid-unit (an upgrade between looks): its
+        # reads stand on that version's points, so the unit starts again --
+        # with them kept on record and the restart logged, not dropped.
+        unit.setdefault("hypotheses_history", []).append(
+            {**state, "status": "superseded", "superseded_by": VERSION})
+        engine.log(event="hypotheses_version_restart",
+                   unit=f"{unit['project']}::{unit['marker']}", was=state.get("version"),
+                   now=VERSION, looks=len(state["observations"]))
     lat = engine.lattice_for(unit)
     ds, col = _column(engine, unit)
     begin = start_low(unit)

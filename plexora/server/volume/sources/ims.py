@@ -497,6 +497,29 @@ class _StreamRaw:
 _UNLOCATED = object()
 
 
+#: cache_id -> how many open sources share it: every source of one unchanged
+#: file has the same id, so a short-lived one (a scale lookup, an agent call)
+#: closing must not drop the chunks the viewer's source is still reading.
+_CACHE_HOLDERS: dict = {}
+_CACHE_HOLDERS_LOCK = threading.Lock()
+
+
+def _hold_cache_id(cache_id) -> None:
+    with _CACHE_HOLDERS_LOCK:
+        _CACHE_HOLDERS[cache_id] = _CACHE_HOLDERS.get(cache_id, 0) + 1
+
+
+def _release_cache_id(cache_id) -> bool:
+    """One holder gone; True when it was the last."""
+    with _CACHE_HOLDERS_LOCK:
+        left = _CACHE_HOLDERS.get(cache_id, 1) - 1
+        if left > 0:
+            _CACHE_HOLDERS[cache_id] = left
+            return False
+        _CACHE_HOLDERS.pop(cache_id, None)
+        return True
+
+
 class ImsVolumeSource(VolumeSource):
     prefers_block = True
 
@@ -531,12 +554,14 @@ class ImsVolumeSource(VolumeSource):
         if stream is not None:
             # h5py asked for the length when it opened the stream.
             self.cache_id = ("ims", self.path, stream.known_size)
-            return
-        try:
-            stat = os.stat(self.path)
-            self.cache_id = ("ims", self.path, stat.st_size, stat.st_mtime_ns)
-        except OSError:
-            self.cache_id = ("ims", self.path)
+        else:
+            try:
+                stat = os.stat(self.path)
+                self.cache_id = ("ims", self.path, stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                self.cache_id = ("ims", self.path)
+        self._released = False
+        _hold_cache_id(self.cache_id)
 
     def decode_chunk(self, level):
         """(z, y, x) of one decode at `level`: the dataset's chunk."""
@@ -804,7 +829,10 @@ class ImsVolumeSource(VolumeSource):
 
     def close(self) -> None:
         super().close()
-        chunk_cache.CACHE.forget(self.cache_id)
+        if not getattr(self, "_released", True):
+            self._released = True
+            if _release_cache_id(self.cache_id):
+                chunk_cache.CACHE.forget(self.cache_id)
         self._layouts.clear()
         self._open.clear()
         self._direct.clear()

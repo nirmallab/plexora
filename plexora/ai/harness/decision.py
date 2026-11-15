@@ -479,6 +479,31 @@ class Stopped(Exception):
     """Raised by a run's `check` hook: the job running it was cancelled."""
 
 
+#: session id -> the run answering it, in this process. Two in-app runs on
+#: one session (a resume clicked twice, a resume while the run that paused
+#: it is still unwinding) would pay for every packet twice and close the
+#: shared gateway run under each other.
+_ACTIVE_SESSIONS: dict[str, str] = {}
+_ACTIVE_LOCK = threading.Lock()
+
+
+def _claim_session(session_id: str, run_id: str) -> str | None:
+    """Claim `session_id` for `run_id`: None when claimed, else the run
+    that holds it."""
+    with _ACTIVE_LOCK:
+        holder = _ACTIVE_SESSIONS.get(session_id)
+        if holder is not None and holder != run_id:
+            return holder
+        _ACTIVE_SESSIONS[session_id] = run_id
+        return None
+
+
+def _release_session(session_id: str | None, run_id: str) -> None:
+    with _ACTIVE_LOCK:
+        if session_id and _ACTIVE_SESSIONS.get(session_id) == run_id:
+            del _ACTIVE_SESSIONS[session_id]
+
+
 class SetupAbandoned(Exception):
     """The run was stopped while it waited for the user's set-up form: it
     ends `stopped`, nothing started, quoted or asked of a model."""
@@ -608,10 +633,23 @@ class DecisionRun:
         from plexora.agent import registry
 
         registry.discover(list(self.wf.plugins))
-        self.trace.start_run(self.run_id, self.wf.name, project=self.o.project, capability=self.o.capability,
-                             billing="dev" if self.gateway.dev else "credits", session_id=self.session_id)
+        holder = _claim_session(self.session_id, self.run_id) if self.session_id else None
+        # A refused resume's row does not name the session: `_open_gateway_run`
+        # reads the newest row of a session as the one that paused it.
+        try:
+            self.trace.start_run(self.run_id, self.wf.name, project=self.o.project,
+                                 capability=self.o.capability,
+                                 billing="dev" if self.gateway.dev else "credits",
+                                 session_id=None if holder else self.session_id)
+        except BaseException:
+            _release_session(self.session_id, self.run_id)
+            raise
         status, reason = "failed", None
         try:
+            if holder is not None:
+                raise StartRefused({"code": "session_busy", "message":
+                                    f"Session {self.session_id} is already being answered by "
+                                    f"run {holder}; wait for it to stop before resuming."})
             result = self._start()
             if self.parallel > 1:
                 status, reason = self._run_lanes(result)
@@ -636,6 +674,7 @@ class DecisionRun:
                 reason = f"{type(exc).__name__}: {exc}"
         finally:
             summary = self._finish(status, reason)
+            _release_session(self.session_id, self.run_id)
         return summary
 
     def _start(self) -> dict:
@@ -664,6 +703,7 @@ class DecisionRun:
             raise StartRefused(answer.get("error") or {})
         started = answer["result"]
         self.session_id = started["session_id"]
+        _claim_session(self.session_id, self.run_id)    # new: nobody else can hold it
         self.trace.update_run(self.run_id, session_id=self.session_id)
         if started.get("state") == "needs_setup" and started.get("setup"):
             # Nothing is planned until the user has finished the set-up form,
@@ -969,9 +1009,13 @@ class DecisionRun:
                 try:
                     result = first if lane.index == 0 else self._next(lane)
                     outcomes[lane.index] = self._loop(result, lane)
-                except (GatewayError, Stopped) as exc:
-                    with self._lock:
-                        self._halt = self._halt or exc
+                except Exception as exc:
+                    # A job cancel too: the scheduler would record it as a
+                    # failed task, and the run would end `failed` unpaused
+                    # where a serial run pauses.
+                    if isinstance(exc, (GatewayError, Stopped)) or type(exc).__name__ == "JobCancelled":
+                        with self._lock:
+                            self._halt = self._halt or exc
                     raise
                 return outcomes[lane.index]
             return task

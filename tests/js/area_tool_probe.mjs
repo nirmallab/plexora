@@ -244,6 +244,30 @@ const flat = { viewState: { ...vs, depth: 1 }, volumeSupported: true, toggleVolu
 Strip.prototype.onKey.call(flat, { code: "KeyV", preventDefault() {} });
 check("nor on a single plane", sets.length === 0);
 
+// -- the reference image, not world item 0 ---------------------------------------------
+{
+    // A registered layer at item 0 (offset by its registration), the
+    // reference image at item 1: the pointer is read through the reference,
+    // as every other image-pixel conversion is (viewerScene.referenceItem).
+    const registered = { name: "registered", offset: 1000 };
+    const reference = { name: "reference", offset: 0 };
+    const savedTransform = box.PlexoraViewTransform;
+    const savedScene = box.PlexoraViewerScene;
+    const savedWorld = viewer.world;
+    box.PlexoraViewTransform = { screenToImage: (v, item, p) => ({ x: p.x * zoom + item.offset, y: p.y * zoom }) };
+    box.PlexoraViewerScene = { ...savedScene,
+        referenceItem: (iv) => iv.referenceItem?.() || iv.viewer.world.getItemAt(0) };
+    viewer.world = { getItemAt: (i) => [registered, reference][i] || null };
+    imageViewer.referenceItem = () => reference;
+    const p = tool.imagePoint({ x: 100, y: 50 });
+    check("the pointer is read through the reference image, not a registered layer at item 0",
+          p && p.x === 200 && p.y === 100, JSON.stringify(p));
+    box.PlexoraViewTransform = savedTransform;
+    box.PlexoraViewerScene = savedScene;
+    viewer.world = savedWorld;
+    delete imageViewer.referenceItem;
+}
+
 // -- Esc --------------------------------------------------------------------------------
 box.PlexoraAreaTool.arm();
 documentListeners.keydown.forEach((fn) => fn({ key: "Escape", preventDefault() {} }));

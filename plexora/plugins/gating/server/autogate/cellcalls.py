@@ -580,7 +580,9 @@ def run_job(call, session_id) -> dict:
                     gate_source=pending.get("gate_source") or "session",
                     rule=settings["rule"], c_add=settings["c_add"], c_clean=settings["c_clean"],
                     band_halves=settings["band_halves"], seed=settings["seed"],
-                    keep=bool(pending.get("store")), cancelled=call.cancelled)
+                    # Stored below, under the session's lock, only if the
+                    # gate it was made at is still the unit's.
+                    keep=False, cancelled=call.cancelled)
                 done["layers"] += 1
         except InterruptedError:
             break
@@ -597,20 +599,29 @@ def run_job(call, session_id) -> dict:
                     state["ready"].append(key)
                     engine.log(event="classifier_prefetch", unit=key)
                 continue
+            now = (unit or {}).get("classifier") or {}
+            if now.get("status") == "pending" and (now.get("gate_used") or [None])[0] \
+                    != pending["gate_used"][0]:
+                # Re-queued at another gate while this one ran: that layer is
+                # still to make (left pending, so the loop takes it next), and
+                # this one, made at the old gate, is not kept.
+                continue
             if key in state.get("pending", []):
                 state["pending"].remove(key)
-            if unit is None or (unit.get("classifier") or {}).get("status") != "pending":
+            if unit is None or now.get("status") != "pending":
                 continue
             if isinstance(outcome, Exception):
                 unit["classifier"] = {"status": "failed", "reason": str(outcome)[:300]}
                 engine.log(event="classifier_error", unit=key, error=str(outcome)[:200])
-            elif (unit["classifier"].get("gate_used") or [None])[0] != low:
-                continue    # the gate moved meanwhile; its own layer is pending
-            else:
-                _record(engine, unit, outcome["record"],
-                        pending.get("gate_source") or "session")
-                if outcome["record"].get("stored"):
-                    _tell(call, project, marker)
+                continue
+            if now.get("store"):
+                try:
+                    runs.store_session_result(ds, marker, outcome, cancelled=call.cancelled)
+                except InterruptedError:
+                    break
+            _record(engine, unit, outcome["record"], pending.get("gate_source") or "session")
+            if outcome["record"].get("stored"):
+                _tell(call, project, marker)
     return {"session_id": session_id, **done}
 
 

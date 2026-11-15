@@ -81,6 +81,39 @@ def test_cell_at_reads_the_mask_and_falls_back_nearby(ds, made):
     assert panel.cell_at(ds, cell["x"] + 32, cell["y"] + 32, radius=4)["cell_id"] is None
 
 
+def test_cell_at_reads_a_mask_drawn_finer_than_its_image_on_the_image_grid(ds, made, monkeypatch):
+    """flow-coords-5: a polygon mask `scale` times finer than its image has the
+    image's grid at its level log2(scale); a click in image pixels is looked up
+    there, not at the mask's own level 0."""
+    import dataclasses
+
+    from plexora.agent import render
+
+    real, *rest = render._mask_for(ds.project)
+
+    class Finer:
+        """Level 2 of a 4x mask is the image's grid; level 0 is 4x finer."""
+
+        def read_region(self, level, box, **kwargs):
+            if level == 2:
+                return real.read_region(0, box, **kwargs)
+            return np.zeros((box[3] - box[1], box[2] - box[0]), np.uint32)
+
+    monkeypatch.setattr(render, "_mask_for", lambda project: (Finer(), *rest))
+    scaled = dataclasses.replace(ds.project, segmentation=dataclasses.replace(
+        ds.project.segmentation, scale=4))
+
+    class Handles:
+        project = scaled
+
+        def __getattr__(self, name):
+            return getattr(ds, name)
+
+    cell = made["cells"][9]
+    hit = panel.cell_at(Handles(), cell["x"], cell["y"])
+    assert hit["cell_id"] == cell["id"] and hit["method"] == "mask"
+
+
 # -- running ------------------------------------------------------------------
 
 

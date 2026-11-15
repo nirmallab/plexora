@@ -237,10 +237,13 @@ def payload(source, entry, t, channels, at_list, voxel_format, identity) -> byte
     for index, _name, window in channels:
         keys = {at: (identity, entry["level"], entry["pool"], t, index, tuple(window),
                      voxel_format, at) for at in at_list}
-        missing = [at for at in at_list if _cached(keys[at]) is None]
+        # One look each: a brick found here is kept, not looked up again --
+        # another request may evict it in between.
+        held = {at: _cached(keys[at]) for at in at_list}
+        missing = [at for at in at_list if held[at] is None]
         raw = read_bricks(source, entry, t, index, missing) if missing else {}
         for at in at_list:
-            found = _cached(keys[at])
+            found = held[at]
             if found is None:
                 found = encode(raw[at], window, voxel_format)
                 _remember(keys[at], found)

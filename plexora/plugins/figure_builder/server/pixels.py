@@ -103,14 +103,21 @@ class _Reader:
     at once is a data race in tifffile, not merely a slow spot. Different
     datasources hold different locks and still overlap, which is the case that
     matters -- a figure spanning two slides fetches from both at once.
+
+    `retired` is set, under the map lock, on a reader taken off the shelf while
+    somebody was reading through it; whoever holds it then closes it on the
+    way out. `closed` tells a thread that was queued on the lock to go back to
+    the shelf for a fresh one.
     """
 
-    __slots__ = ("source", "path", "lock")
+    __slots__ = ("source", "path", "lock", "retired", "closed")
 
     def __init__(self, source, path):
         self.source = source
         self.path = path
         self.lock = threading.Lock()
+        self.retired = False
+        self.closed = False
 
 
 def _image_path(datasource):
@@ -133,6 +140,62 @@ def _image_path(datasource):
     return str(source.path) if source is not None and source.path else None
 
 
+def _retire(reader, to_close):
+    """Take a reader out of service. Under `_READERS_LOCK`.
+
+    Closed now if nobody is reading through it (by the caller, after it lets
+    go of the map lock); otherwise marked, and closed by whoever is. Never
+    WAITED for here: that was one slow read stalling every pixel request.
+    """
+    if reader.lock.acquire(blocking=False):
+        reader.closed = True
+        to_close.append(reader)
+    else:
+        reader.retired = True
+
+
+def _close_all(readers):
+    """Close readers whose locks the caller acquired in `_retire`."""
+    for reader in readers:
+        try:
+            reader.source.close()
+        finally:
+            reader.lock.release()
+
+
+def _shelved(datasource, view, key):
+    """The reader for `key`, opened if need be.
+
+    The project-record read and the open -- which for an image on a data node
+    is HTTP -- happen OUTSIDE the map lock, which every pixel request takes.
+    Two threads racing to open the same image both open it; the second to
+    finish closes its own and uses the first's.
+    """
+    path = _image_path(datasource)
+    to_close = []
+    with _READERS_LOCK:
+        held = _READERS.get(key)
+        if held is not None and held.path == path:
+            _READERS.move_to_end(key)          # what makes this an LRU
+            return held
+    source = SourceImage(datasource, view=view) if view else SourceImage(datasource)
+    fresh = _Reader(source, path)
+    with _READERS_LOCK:
+        held = _READERS.get(key)
+        if held is not None and held.path == path:
+            _READERS.move_to_end(key)
+        else:
+            if held is not None:
+                _retire(_READERS.pop(key), to_close)
+            _READERS[key] = held = fresh
+            while len(_READERS) > READER_LIMIT:
+                _retire(_READERS.popitem(last=False)[1], to_close)
+    if held is not fresh:
+        fresh.source.close()                    # lost the race; never shared
+    _close_all(to_close)
+    return held
+
+
 @contextlib.contextmanager
 def _reader(datasource, view=""):
     """The open reader for a datasource (at a z-stack view), made once and kept.
@@ -144,36 +207,35 @@ def _reader(datasource, view=""):
     """
     view = str(view or "").strip()
     key = f"{datasource}\0{view}" if view else datasource
-    with _READERS_LOCK:
-        held = _READERS.pop(key, None)
-        if held is not None and held.path != _image_path(datasource):
-            held.source.close()
-            held = None
-        if held is None:
-            path = _image_path(datasource)
-            source = SourceImage(datasource, view=view) if view else SourceImage(datasource)
-            held = _Reader(source, path)
-        # Re-inserted at the end, which is what makes this an LRU.
-        _READERS[key] = held
-        while len(_READERS) > READER_LIMIT:
-            _, evicted = _READERS.popitem(last=False)
-            # Waited for rather than closed underneath: a reader in the middle
-            # of a read is a file another thread is still holding. Nothing
-            # acquires the map lock while holding a reader's, so this cannot
-            # deadlock.
-            with evicted.lock:
-                evicted.source.close()
-
-    with held.lock:
+    while True:
+        held = _shelved(datasource, view, key)
+        held.lock.acquire()
+        if not held.closed:
+            break
+        # Retired and closed while this thread queued for it.
+        held.lock.release()
+    try:
         yield held.source
+    finally:
+        with _READERS_LOCK:
+            close = held.retired and not held.closed
+            if close:
+                held.closed = True
+        if close:
+            _close_all([held])
+        else:
+            held.lock.release()
 
 
 def close_readers():
     """Close every held reader. For shutdown and for tests."""
     with _READERS_LOCK:
-        while _READERS:
-            _, held = _READERS.popitem()
-            with held.lock:
+        readers = list(_READERS.values())
+        _READERS.clear()
+    for held in readers:
+        with held.lock:
+            if not held.closed:
+                held.closed = True
                 held.source.close()
 
 

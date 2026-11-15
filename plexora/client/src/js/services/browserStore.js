@@ -49,7 +49,10 @@
  *   prepareBrowser()        -> the browser's own storage made and written to once
  *   useBrowser()            -> remember the browser's storage as the choice
  *   continueInBrowser()     -> this visit only: the chosen folder left closed, nothing asked again
- *   reconnect()             -> from a click: the chosen folder opened again, Python moved there
+ *   reconnect()             -> from a click: the chosen folder opened again, Python moved there;
+ *                              `copies`: [{from, name}] for each project this visit
+ *                              changed that the folder holds too, kept beside the
+ *                              folder's under a new name (`keepBoth`)
  *   locations() / addLocation({startIn, init, handle}) / removeLocation(id) / setDefault(id)
  *                           -> the extra workspaces this browser keeps handles for (Settings)
  *   pyramids()              -> the workspace's pyramids folder, when it is open this visit
@@ -57,6 +60,15 @@
  *   useFolder(startIn)      -> from a click: pick, inspect, adopt (services/desktopHandoff.js)
  *   switchTo(kind, startIn, {reload}) -> from Settings: change, bring the projects along
  *   (every move merges: a project of the same name already there is kept)
+ *
+ * Once the browser's projects are in a workspace (`adoptWorkspace`,
+ * `reconnect`), the browser's copies of what the workspace now holds are set
+ * aside, to OPFS plexora/set-aside/<time> (`setAside`), and never served
+ * again: a later visit that does not open the folder starts without them
+ * rather than on copies older than the folder's. On such a visit, a project
+ * the folder also holds that was changed here is kept twice on Reconnect: the
+ * folder's as it is, and this visit's as "<name> (browser copy, <date>)",
+ * made by Python so its database rows, paths and id are its own (`keepBoth`).
  *
  * The choice is kept in IndexedDB plexora-store/store/data:
  *   {kind, home, workspaceId, name, label, chosen, onboarded, desktopFinds, locations: [{id, handle, label, name, workspaceId, addedAt}]}
@@ -100,6 +112,20 @@
     //: Where the worker keeps a store in the browser (its boot says):
     //: "opfs", "indexeddb", or "memory" -- kept nowhere, lost with the tab.
     let storage = null;
+    //: When this page loaded: a file of the browser's storage written since
+    //: was written on this visit (`editedHere`).
+    const loadedAt = Date.now();
+    //: The browser's project registry as a visit that did not open the
+    //: chosen folder found it (`prepare`): an entry changed since was
+    //: changed on this visit.
+    let browserAtBoot = null;
+    //: OPFS plexora/<SET_ASIDE>/<time>: the browser's copies of projects a
+    //: workspace holds now (`setAside`).
+    const SET_ASIDE = "set-aside";
+    //: sessionStorage: the copies the last Reconnect made, for the app's
+    //: frame to tell (views/webOnboarding.js `noticeCopies`) on this page or
+    //: the next one, since the home page reloads after a Reconnect.
+    const COPIES_KEY = "plexora-reconnect-copies";
 
     function database() {
         return new Promise((resolve, reject) => {
@@ -258,6 +284,134 @@
         }
     }
 
+    //: The browser's registry as this visit found it (`browserAtBoot`).
+    async function snapshotBrowser() {
+        try {
+            browserAtBoot = await readJson(await browserState(), "config.json");
+        } catch (error) {
+            browserAtBoot = null;
+        }
+    }
+
+    //: Whether a file under `dir` was written at `since` or later.
+    async function changedSince(dir, since) {
+        for await (const [, handle] of dir.entries()) {
+            if (handle.kind === "directory") {
+                if (await changedSince(handle, since)) return true;
+            } else {
+                const file = await handle.getFile();
+                if (typeof file.lastModified === "number" && file.lastModified >= since) return true;
+            }
+        }
+        return false;
+    }
+
+    //: Whether project `name` of the browser's storage was changed on this
+    //: visit: its registry entry is not what this visit found (or it was not
+    //: there), or a file in its folder was written since the page loaded.
+    async function editedHere(browser, name, entry) {
+        if (browserAtBoot) {
+            if (!Object.prototype.hasOwnProperty.call(browserAtBoot, name)) return true;
+            if (JSON.stringify(browserAtBoot[name]) !== JSON.stringify(entry)) return true;
+        }
+        const dir = await child(browser, name, "directory");
+        return Boolean(dir) && changedSince(dir, loadedAt);
+    }
+
+    //: "<name> (browser copy, <today>)", or with " 2", " 3"... when a
+    //: registry or a folder on either side has it (letter case aside: the
+    //: folder may be on a disk that ignores it).
+    function copyName(name, taken) {
+        const now = new Date();
+        const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-`
+            + String(now.getDate()).padStart(2, "0");
+        const base = `${name} (browser copy, ${day})`;
+        let candidate = base;
+        for (let n = 2; taken.has(candidate.toLowerCase()); n += 1) candidate = `${base} ${n}`;
+        return candidate;
+    }
+
+    //: Project `name` copied by Python as `wanted` (server/models/bundles.py
+    //: `copy_project`: its rows, paths and id made its own), in the store
+    //: Python has open. The name the copy got.
+    async function copyInPython(python, name, wanted) {
+        const answer = async (response) => {
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || `“${name}” could not be copied.`);
+            return body;
+        };
+        let status = await answer(await python.fetch(`/projects/${encodeURIComponent(name)}/copy`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wanted }),
+        }));
+        while (!["ready", "failed", "cancelled"].includes(status.status)) {
+            await new Promise((resolve) => global.setTimeout(resolve, 250));
+            status = await answer(await python.fetch(`/projects/import/${encodeURIComponent(status.job)}`));
+        }
+        if (status.status !== "ready") throw new Error(status.error || `“${name}” could not be copied.`);
+        const made = ((status.result && status.result.projects) || []).find((item) => item.action !== "skip");
+        return (made && made.target) || wanted;
+    }
+
+    /**
+     * Reconnect's "keep both": each project of the browser's storage that the
+     * workspace's projects folder holds too and that this visit changed,
+     * copied by Python under a name of its own, so the merge that follows
+     * brings it in beside the folder's instead of dropping it. [{from, name}].
+     */
+    async function keepBoth(browser, projects, python) {
+        const theirs = await readJson(browser, "config.json");
+        const ours = await readJson(projects, "config.json");
+        const taken = new Set([...Object.keys(theirs), ...Object.keys(ours)].map((name) => name.toLowerCase()));
+        for (const dir of [browser, projects]) {
+            for await (const [name] of dir.entries()) taken.add(name.toLowerCase());
+        }
+        const copies = [];
+        for (const [name, entry] of Object.entries(theirs)) {
+            if (!Object.prototype.hasOwnProperty.call(ours, name)) continue;
+            if (!await editedHere(browser, name, entry)) continue;
+            const made = await copyInPython(python, name, copyName(name, taken));
+            taken.add(made.toLowerCase());
+            copies.push({ from: name, name: made });
+        }
+        return copies;
+    }
+
+    /**
+     * The browser's copies of the projects the workspace's projects folder
+     * holds now, moved out of the browser's store to OPFS
+     * plexora/set-aside/<time> with their registry entries: a visit that does
+     * not open the folder then starts without them, rather than on copies
+     * older than the folder's that Reconnect could not bring back. Run only
+     * once Python has moved to the folder. Never fails its caller: the names
+     * set aside, or [].
+     */
+    async function setAside(browser, projects) {
+        try {
+            const theirs = await readJson(browser, "config.json");
+            const ours = await readJson(projects, "config.json");
+            const names = Object.keys(theirs).filter((name) => Object.prototype.hasOwnProperty.call(ours, name));
+            if (!names.length) return [];
+            const plexora = await (await global.navigator.storage.getDirectory())
+                .getDirectoryHandle("plexora", { create: true });
+            const aside = await (await plexora.getDirectoryHandle(SET_ASIDE, { create: true }))
+                .getDirectoryHandle(stamp().replace(/:/g, "-"), { create: true });
+            const entries = {};
+            for (const name of names) entries[name] = theirs[name];
+            await writeFile(aside, "config.json", JSON.stringify(entries, null, 4));
+            for (const name of names) {
+                const dir = await child(browser, name, "directory");
+                if (dir) await copyTree(dir, await aside.getDirectoryHandle(name, { create: true }));
+            }
+            const left = { ...theirs };
+            for (const name of names) delete left[name];
+            await writeFile(browser, "config.json", JSON.stringify(left, null, 4));
+            for (const name of names) await browser.removeEntry(name, { recursive: true }).catch(() => null);
+            return names;
+        } catch (error) {
+            return [];
+        }
+    }
+
     //: Whether Python has started: a pick before then is still mounted on
     //: the browser's storage, and a flush would wait for the start.
     async function pythonStarted() {
@@ -290,6 +444,7 @@
         const state = await rec.home.queryPermission(RW).catch(() => "denied");
         if (state !== "granted") {
             current = { kind: "browser", chosen: true, notOpened: label, needsPermission: true };
+            await snapshotBrowser();
             return null;
         }
         try {
@@ -298,6 +453,7 @@
             // Moved or deleted since: the browser still grants a handle to a
             // folder that is no longer there.
             current = { kind: "browser", chosen: true, notOpened: label, needsPermission: false, missing: true };
+            await snapshotBrowser();
             return null;
         }
         current = { kind: "folder", chosen: true, onboarded: true, label, workspaceId: rec.workspaceId || null,
@@ -511,6 +667,8 @@
         }
         const python = global.PlexoraPython;
         const up = await pythonStarted();
+        //: The browser's own storage is what is brought (no folder open yet).
+        const fromBrowser = !opened;
         const from = async () => (opened ? opened.projects : browserState());
         say("merge");
         let moved = { moved: [], kept: [] };
@@ -541,6 +699,9 @@
                     }
                 }
                 await python.useStore(next.projects);
+                // Python reads the folder now: the browser's copies of what it
+                // holds are set aside, never served again (`setAside`).
+                if (bring && fromBrowser) await setAside(await browserState(), next.projects);
             }
         } catch (error) {
             current = { kind: "browser", chosen: true, notOpened: label, needsPermission: false };
@@ -646,12 +807,19 @@
             current = { ...current, missing: true };
             return { ok: false, reason: "missing", error: error && error.message };
         }
+        let copies = [];
         try {
             const python = global.PlexoraPython;
             if (python) {
                 await python.flush();
-                await merge(await browserState(), next.projects);
+                const browser = await browserState();
+                // A project the folder holds too and this visit changed is
+                // kept twice, never dropped for the folder's (`keepBoth`).
+                copies = await keepBoth(browser, next.projects, python);
+                if (copies.length) await python.flush();
+                await merge(browser, next.projects);
                 await python.useStore(next.projects);
+                await setAside(browser, next.projects);
             }
         } catch (error) {
             return { ok: false, reason: "failed", error: error && error.message ? error.message : String(error) };
@@ -659,8 +827,15 @@
         opened = next;
         current = { kind: "folder", chosen: true, onboarded: true, label, workspaceId: rec.workspaceId || null,
                     desktopFinds: desktopFinds(rec) };
+        if (copies.length) {
+            try {
+                global.sessionStorage.setItem(COPIES_KEY, JSON.stringify({ label, copies }));
+            } catch (error) {
+                // Not told then; the copies are in the folder all the same.
+            }
+        }
         if (derived && derived.migrate) derived.migrate().catch(() => null);
-        return { ok: true, ...current };
+        return { ok: true, ...current, copies };
     }
 
     /**
@@ -875,6 +1050,7 @@
         switchTo,
         FOLDER,
         WORKSPACE_FILE,
+        COPIES_KEY,
         labelOf,
     });
 })(window);

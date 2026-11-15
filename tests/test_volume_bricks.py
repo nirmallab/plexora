@@ -98,6 +98,35 @@ def test_a_copy_interrupted_resumes_where_it_stopped(tmp_path, small_levels):
         source.close()
 
 
+def test_a_resumed_copy_asks_for_room_for_what_is_left_only(tmp_path, small_levels,
+                                                             monkeypatch):
+    """Audit io-volume-8: the free-space check counts the blocks still to copy,
+    so a copy nearly done is not refused for space it already holds."""
+    path, _data, source = _stack(tmp_path)
+    try:
+        store = _store(tmp_path, path, source)
+        reads = []
+        original = source.read_block
+        source.read_block = lambda *a: reads.append(a) or original(*a)
+
+        class StopAfter:
+            def is_set(self):
+                return len(reads) >= 7
+
+        bricks.build_coarse(store, source, cancel=StopAfter())
+        assert not store.coarse_complete()
+        # Room for the one block left (level 2: 75 x 65, 8 planes), not the
+        # whole copy.
+        left = 8 * 75 * 65 * 2
+        monkeypatch.setattr(bricks, "_free_bytes", lambda _p: left + 1)
+        bricks.build_coarse(store, source)
+        assert store.coarse_complete()
+        monkeypatch.setattr(bricks, "_free_bytes", lambda _p: 0)
+        bricks.build_coarse(store, source)          # nothing left: never refused
+    finally:
+        source.close()
+
+
 def test_a_changed_source_throws_the_copy_away(tmp_path, small_levels):
     path, _data, source = _stack(tmp_path)
     try:

@@ -761,7 +761,15 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
         # this started from, and is kept.
         latest = load(project)
         if latest and not reset_choices:
-            choices = {**choices, **(latest.get("choices") or {})}
+            # The stored choices as they are NOW, not merged over the copy
+            # read before computing: a `forget_choices` (a contrast redo)
+            # that landed meanwhile stays forgotten (audit ai-agent-evidence-5).
+            choices = dict(latest.get("choices") or {})
+        if stored is not None and latest and latest.get("table") == table \
+                and latest.get("qc") == qc:
+            # Likewise the entries this run does not recompute: a forgotten
+            # choice's window was put back to the rule's in `latest`.
+            stored = latest
         if was and was != now:
             choices = _without_observed(choices)       # other cells than these
         merged = dict(stored or {"version": VERSION, "channels": {}})

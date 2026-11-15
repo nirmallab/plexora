@@ -22,7 +22,8 @@ paths already do rather than chosen fresh:
 - **Labels are subsampled, never averaged.** The mean of two cell ids is a third
   cell's id. `pyramidize_segmentation_mask` takes every `factor`-th row and
   column of level 0; so does this, which for a numpy array makes every coarse
-  level a strided VIEW and costs no memory at all.
+  level a strided VIEW and costs no memory at all (and for a lazy one a
+  `_StridedLevel`, which reads only what a tile asks for).
 
 Level 0 is always the caller's own array, never a copy. The derived levels an
 image gains add about a third of it, which is the price of being able to zoom
@@ -83,7 +84,8 @@ def label_pyramid(array, target: int = EXTENSION_TARGET) -> NgffPyramid:
     Every coarse level is `level0[::factor, ::factor]` with `factor = 2**level`,
     which is what `pyramidize_segmentation_mask` writes for a mask on disk. For
     a numpy array each of those is a view, so a mask costs exactly its own
-    memory however many levels it gains.
+    memory however many levels it gains; for a lazy one (zarr, dask, xarray)
+    a `_StridedLevel`, read only where a tile asks.
 
     Nearest-neighbour is not an approximation to be improved on later: label ids
     are names, and the mean of cell 41 and cell 43 is cell 42.
@@ -94,7 +96,10 @@ def label_pyramid(array, target: int = EXTENSION_TARGET) -> NgffPyramid:
     factor = 1
     while max(-(-height // factor), -(-width // factor)) > target:
         factor *= 2
-        levels.append(array[::factor, ::factor])
+        # A lazy mask's level stays lazy: `array[::factor, ::factor]` on the
+        # wrapper would read the whole level now, at attach time.
+        levels.append(array[::factor, ::factor] if isinstance(array, np.ndarray)
+                      else _StridedLevel(array, factor))
     return NgffPyramid(levels, axes=("y", "x"))
 
 
@@ -128,6 +133,52 @@ class _NumpyLevel:
 
     def __array__(self, dtype=None, copy=None):
         values = np.asarray(self._array)
+        return values.astype(dtype) if dtype is not None else values
+
+
+class _StridedLevel:
+    """`level0[::factor, ::factor]` of a lazy 2-D mask (a `_NumpyLevel`),
+    without reading it: each read is turned into the strided read of level 0
+    it stands for, and only that is materialized."""
+
+    __slots__ = ("_source", "_factor", "shape", "ndim", "dtype", "nbytes")
+
+    def __init__(self, source, factor):
+        self._source = source
+        self._factor = int(factor)
+        self.shape = tuple(-(-int(size) // self._factor) for size in source.shape)
+        self.ndim = 2
+        self.dtype = np.dtype(source.dtype)
+        self.nbytes = 0
+
+    def _axis(self, index, size):
+        f = self._factor
+        if isinstance(index, slice):
+            start, stop, step = index.indices(size)
+            if step < 0:
+                raise IndexError("a mask level is read forwards")
+            return slice(start * f, max(start, stop) * f, step * f)
+        position = int(index)
+        if position < 0:
+            position += size
+        if not 0 <= position < size:
+            raise IndexError(f"index {index} is outside an axis of {size}")
+        return position * f
+
+    def __getitem__(self, index):
+        index = index if isinstance(index, tuple) else (index,)
+        if any(part is Ellipsis for part in index):
+            at = index.index(Ellipsis)
+            fill = (slice(None),) * (2 - (len(index) - 1))
+            index = index[:at] + fill + index[at + 1:]
+        index = index + (slice(None),) * (2 - len(index))
+        if len(index) != 2:
+            raise IndexError("a mask level has two axes")
+        mapped = tuple(self._axis(part, size) for part, size in zip(index, self.shape))
+        return np.asarray(self._source[mapped])
+
+    def __array__(self, dtype=None, copy=None):
+        values = self[:, :]
         return values.astype(dtype) if dtype is not None else values
 
 

@@ -200,7 +200,7 @@ def push(video_id: str, export_id: str, first: int, count: int, payload: bytes, 
         raise JobError(f"expected frame {job['frames_received']}, got {first}", 409)
     if count < 1 or job["frames_received"] + count > job["frames_expected"]:
         raise JobError("more frames than the export was started with", 400)
-    if len(payload) > MAX_CHUNK_BYTES:
+    if len(payload) > _chunk_limit(job):
         raise JobError("chunk too large", 413)
     frames = _split(payload, count, job, frame_format)
     try:
@@ -211,6 +211,15 @@ def push(video_id: str, export_id: str, first: int, count: int, payload: bytes, 
     job["_touched"] = time.monotonic()
     _resume(job)
     return describe(job)
+
+
+def _chunk_limit(job: dict) -> int:
+    """MAX_CHUNK_BYTES, but never less than one frame: past 32 MB a frame
+    (8K RGBA is 132 MB) is sent alone, as `chunk_frames` says, and must fit.
+    A PNG can come out a little larger than its raw pixels, hence the slack."""
+    output = job.get("_output") or {}
+    frame = int(output.get("width") or 0) * int(output.get("height") or 0) * 4
+    return max(MAX_CHUNK_BYTES, frame + frame // 64 + 4096 + 4)
 
 
 def _split(payload: bytes, count: int, job: dict, frame_format: str) -> list:
@@ -385,6 +394,14 @@ def _keep_partial(job):
         if candidate.name != manifest.FILENAME and candidate.stat().st_size > 0:
             return candidate
     return None
+
+
+def running(video_id) -> list:
+    """This video's exports this process is running now."""
+    with _LOCK:
+        jobs = list(_JOBS.values())
+    return [job["export_id"] for job in jobs
+            if job["video_id"] == video_id and job["status"] in ("running", "finishing")]
 
 
 def get(video_id, export_id):

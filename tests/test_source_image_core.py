@@ -71,6 +71,27 @@ def test_the_shelf_reopens_when_the_image_moves(ds, tmp_path):
         assert reopened is not first
 
 
+def test_the_shelf_reopens_an_image_rewritten_in_place(ds):
+    """A file overwritten at the same path (a re-export) is read again, not
+    through the handle on the old file (audit io-image-9). `identity_of` is
+    left as it was: QC and the classifier store it as a fingerprint."""
+    import os
+
+    path = ds.image.source.path
+    before = source_image.ReaderShelf.identity_of(ds)
+    with source_image.SHELF.reader(ds) as first:
+        pass
+    data = open(path, "rb").read()
+    os.replace(path, str(path) + ".old")          # POSIX: old inode stays open
+    with open(path, "wb") as out:
+        out.write(data)
+    stat = os.stat(path)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+    with source_image.SHELF.reader(ds) as again:
+        assert again is not first
+    assert source_image.ReaderShelf.identity_of(ds) == before
+
+
 def test_two_threads_reading_one_image_each_get_a_reader(ds):
     """A reader is one file handle, read by one thread at a time: a second
     reader of the same image is opened rather than waited for, up to

@@ -97,10 +97,12 @@ class FigureCaptureBin {
      *        state on the same figure -- see FigureWorkspace's class comment.
      * @param {FigureBuilderApi} api
      * @param {Array} entries bin rows, as `listCaptures` returns them.
-     * @returns {Promise<{panelIds: string[], failed: number}>}
+     * @returns {Promise<{panelIds: string[], failed: number, binKept: number}>}
+     *     `binKept`: captures added as panels whose bin rows the server
+     *     refused to empty -- still in the bin, so addable a second time.
      */
     static async adoptInto(state, api, entries, { place = null } = {}) {
-        const out = { panelIds: [], failed: 0 };
+        const out = { panelIds: [], failed: 0, binKept: 0 };
         if (!state || !state.document || !Array.isArray(entries) || !entries.length) {
             out.failed = Array.isArray(entries) ? entries.length : 0;
             return out;
@@ -150,10 +152,18 @@ class FigureCaptureBin {
         // are emptied by this call -- except a bookmark's, which stays in the
         // bin (`kept`; server/captures.py). A preview that did not move leaves
         // a panel that re-renders from its scene -- slower, never wrong.
+        // A refusal comes back as `{ok: false}`, not a throw (FigureBuilderApi
+        // never throws on a status), and it leaves the bin rows in the bin.
         try {
-            await api.adoptPreviews(state.figureId, pairs);
+            const answer = await api.adoptPreviews(state.figureId, pairs);
+            if (answer && answer.ok === false) {
+                console.error("figure_builder: capture previews did not move",
+                              answer.status, answer.data);
+                out.binKept = pairs.length;
+            }
         } catch (error) {
             console.error("figure_builder: capture previews did not move", error);
+            out.binKept = pairs.length;
         }
         return out;
     }

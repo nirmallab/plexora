@@ -990,22 +990,30 @@ def references_for(context, marker, gated, *, limit=MAX_REFERENCES):
 
 
 def load(hash_) -> dict | None:
+    from plexora._transient_locks import past_transient_locks
+
     path = _path(hash_)
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        # A read refused mid-replace (Windows: loads take no lock) is waited
+        # out, not taken for a missing context.
+        return json.loads(past_transient_locks(lambda: path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return None
 
 
 def save(context) -> str:
+    from plexora._transient_locks import past_transient_locks
+
     path = _path(context["panel_hash"])
     with _LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(context, indent=1, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, path)
+        # Windows refuses the replace while a load (or a scanner) has the
+        # file open; it clears in milliseconds.
+        past_transient_locks(lambda: os.replace(tmp, path))
     return revision(context)
 
 
@@ -1033,6 +1041,14 @@ def for_project(ds, *, create=True) -> dict:
                                         if entry.get(k) is not None},
                                      "source": entry["source"]}
     context = build(markers, overrides=overrides, image_channels=channels)
+    if stored is not None:
+        # The partner reviews and their tiles-only proposals are of the panel
+        # in a context (`proposal_key`), not of the marker order or the
+        # vocabulary version: a rebuild for either keeps them, so a settled
+        # review is not asked again (or lost to another project's order).
+        for key in ("reviewed", "proposed"):
+            if stored.get(key):
+                context[key] = stored[key]
     if create:
         save(context)
     return context

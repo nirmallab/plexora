@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
 import threading
 from collections import OrderedDict
 
@@ -798,19 +799,44 @@ class ReaderShelf:
         return f"{source.path}#image{index}" if index else str(source.path)
 
     @staticmethod
-    def _open(dataset, view):
-        return SourceImage(dataset, view=view) if view else SourceImage(dataset)
+    def _stamp_of(dataset) -> tuple | None:
+        """(size, mtime_ns) of a local image path: a file rewritten in place
+        is reopened rather than read through the handle on the old file.
+        Kept out of `identity_of`, which QC and the classifier store."""
+        image = dataset.image
+        source = image.source if image.is_local else None
+        if source is None or not source.path:
+            return None
+        try:
+            found = os.stat(source.path)
+        except OSError:
+            return None
+        return (found.st_size, found.st_mtime_ns)
+
+    @staticmethod
+    def _open(dataset, view, budgeted=False):
+        if not view:
+            return SourceImage(dataset)
+        return SourceImage(dataset, view=view, budgeted=budgeted)
 
     @contextlib.contextmanager
-    def reader(self, dataset, view=None):
+    def reader(self, dataset, view=None, *, budgeted=False):
         """An open reader for a handle set, exclusive for the block.
 
         `view` is a plane or projection of a z-stack (volume/viewspec.py);
         each view a caller reads is its own reader, so a flat image and the
-        default view keep the one key they always had.
+        default view keep the one key they always had. `budgeted` (a view
+        only) is `SourceImage`'s; a budgeted reader is its own key, and its
+        `coarsened` count starts at 0 for each block.
         """
         identity = self.identity_of(dataset)
+        identity = (identity, self._stamp_of(dataset))
+        budgeted = bool(budgeted and view)
         key = dataset.name if not view else f"{dataset.name}\x00{view}"
+        if budgeted:
+            key += "\x00budgeted"
+        opener = (lambda: self._open(dataset, view, True)) if budgeted \
+            else (lambda: self._open(dataset, view))
         closing = []
         with self._lock:
             helds = self._held.pop(key, None)
@@ -818,14 +844,14 @@ class ReaderShelf:
                 closing.extend(helds)
                 helds = None
             if not helds:
-                helds = [_Held(self._open(dataset, view), identity)]
+                helds = [_Held(opener(), identity)]
             self._held[key] = helds
             while len(self._held) > self.limit:
                 _, evicted = self._held.popitem(last=False)
                 closing.extend(evicted)
             held = next((h for h in helds if h.lock.acquire(blocking=False)), None)
             if held is None and len(helds) < self.per_image:
-                held = _Held(self._open(dataset, view), identity)
+                held = _Held(opener(), identity)
                 held.lock.acquire()
                 helds.append(held)
         for gone in closing:
@@ -836,6 +862,8 @@ class ReaderShelf:
             held = helds[0]
             held.lock.acquire()
         try:
+            if budgeted:
+                held.source.coarsened = 0
             yield held.source
         finally:
             held.lock.release()

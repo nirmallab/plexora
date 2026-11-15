@@ -136,7 +136,8 @@ def _regression(ds, payload):
 
     return regression.numeric_checks(ds, payload["marker"], float(payload["final"]),
                                      float(payload["gmm"]), payload.get("prior"),
-                                     payload.get("partners") or [], payload.get("guard"))
+                                     payload.get("partners") or [], payload.get("guard"),
+                                     high=payload.get("high"))
 
 
 def _gates_at(ds, payload):

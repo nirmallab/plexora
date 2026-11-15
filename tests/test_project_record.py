@@ -566,3 +566,17 @@ def test_replacing_the_data_file_forgets_the_answers_that_named_no_column():
 
     assert after.dataset.row_number_ids is False
     assert after.dataset.single_image is False
+
+
+def test_a_cleared_mask_transform_stays_cleared():
+    """segmentationTransform is SegmentationSpec's: an unmodelled key would
+    also land in `extra`, and come back from there after it was cleared."""
+    from dataclasses import replace
+
+    from plexora.server.models.project import Project
+
+    entry = {"segmentation": "/seg.tif", "segmentationTransform": [2, 0, 0, 2, 5, 0]}
+    p = Project.from_entry("demo", entry)
+    assert p.segmentation.transform == (2.0, 0.0, 0.0, 2.0, 5.0, 0.0)
+    cleared = replace(p, segmentation=replace(p.segmentation, transform=None))
+    assert "segmentationTransform" not in cleared.to_entry()

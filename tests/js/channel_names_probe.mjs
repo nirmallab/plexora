@@ -176,6 +176,8 @@ function boot(options = {}) {
     const applied = [];
     //: Every drop zone the dialog registered: {zone, spec}.
     const dropZones = [];
+    //: The next upload, held until the probe releases it: {release}.
+    let held = null;
 
     function respond(url) {
         if (url.includes("check_file_existence")) return exists;
@@ -272,6 +274,14 @@ function boot(options = {}) {
         },
         fetch: (url, options) => {
             requests.push({ url, options });
+            if (held && url.includes("upload_channels")) {
+                const reply = respond(url);
+                const out = held;
+                held = null;
+                return new Promise((resolve) => {
+                    out.release = () => resolve({ ok: true, json: () => Promise.resolve(reply) });
+                });
+            }
             return Promise.resolve({
                 ok: true,
                 json: () => Promise.resolve(respond(url)),
@@ -298,6 +308,8 @@ function boot(options = {}) {
         browseCalls,
         /** What the server will say to the next upload. */
         reply(value) { uploadReply = value; },
+        /** Hold the next upload's reply; returns a handle whose release() lets it land. */
+        holdUpload() { held = {}; return held; },
         /** Whether the path box's live check finds anything. */
         pathExists(value) { exists = value; },
         get dialog() { return body.first("channel-names-modal"); },
@@ -985,6 +997,41 @@ const CLUSTER = [
     await app.win.PlexoraChannelNames.apply({ datasource: "tonsil", path: "/data/panel.xlsx" });
     check("...and opens the dialog only to ask which column",
         app.dialog && app.dialog.modalOpen && app.title === "Which column has the channel names?");
+}
+
+{
+    // The dialog closed while Load is in flight: the server still applies
+    // the names, so the page must still be told.
+    const app = boot();
+    const gate = app.holdUpload();
+    await app.type("/data/markers.csv");
+    app.loadButton.click();
+    await tick();
+    app.closeButton.click();
+    gate.release();
+    await tick();
+    await tick();
+    check("names applied after the dialog was closed mid-Load still reach the page",
+        app.applied.length === 1 && app.applied[0].join(",") === "DAPI,CD3" && app.dialog === null,
+        JSON.stringify(app.applied));
+}
+
+{
+    // Closed mid-Load, then opened afresh: the old reply must not land on
+    // the new dialog, nor free its guard against a second upload.
+    const app = boot();
+    const gate = app.holdUpload();
+    app.reply({ success: false, error: "old file was unreadable" });
+    await app.type("/data/markers.csv");
+    app.loadButton.click();
+    await tick();
+    app.closeButton.click();
+    app.win.PlexoraChannelNames.open({ datasource: "tonsil", onApplied: () => {} });
+    gate.release();
+    await tick();
+    await tick();
+    check("...and a late refusal for a closed dialog is not shown on the next one",
+        app.dialog && app.dialog.modalOpen && app.error.hidden === true, app.error.textContent);
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

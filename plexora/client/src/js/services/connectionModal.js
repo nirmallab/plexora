@@ -2343,6 +2343,10 @@ window.PlexoraConnectionModal = (function () {
             let bucketListToken = 0;
             let projectToken = 0;
             let instanceToken = 0;
+            //: Bumped by each zone lookup and by anything that sets the zone
+            //: itself (`useInstanceZone`), so an answer that arrives after
+            //: either -- for a region the form has left -- is dropped.
+            let zoneToken = 0;
             //: The VMs this project already has, by name, so that choosing one
             //: can take its zone. Empty until the bring-your-own field is
             //: shown, because nothing else on the form needs it.
@@ -3233,6 +3237,7 @@ window.PlexoraConnectionModal = (function () {
                 const project = projectSelect.value;
                 const region = regionSelect.value;
                 if (!project || !region) return;
+                const mine = ++zoneToken;
                 let payload = {};
                 try {
                     payload = await gcloudAsk(
@@ -3242,6 +3247,7 @@ window.PlexoraConnectionModal = (function () {
                 } catch (e) {
                     return;
                 }
+                if (mine !== zoneToken) return;
                 zoneSelect.setOptions(
                     [{ value: "", label: "Choose automatically" }].concat(
                         (payload.zones || []).map(
@@ -3321,6 +3327,9 @@ window.PlexoraConnectionModal = (function () {
              * mismatch warning still fires; it is information, not a refusal.
              */
             function useInstanceZone() {
+                // The zone is decided here, so a lookup still in flight is
+                // answering a question nobody is asking any more.
+                zoneToken++;
                 const chosen = (boxes.vm_name.value || "").trim();
                 const found = known[chosen];
                 if (!found || !found.zone) {
