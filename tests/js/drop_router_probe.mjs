@@ -456,6 +456,63 @@ const layers = (sample, path, answers = {}) => ({
           added.went[0] === "/tonsil" && added.adopted.length === 1 && added.reloads.length === 0);
 }
 
+// -- the website: the viewer and the library take the file itself -------------
+
+{
+    // The zones as base.html mounts them: browsePicker.js's two registrations
+    // stubbed, the page's register run at once.
+    const zones = { desktop: [], web: [] };
+    const requests = [];
+    const toasts = [];
+    const bodyDiv = makeElement("div");
+    const library = makeElement("div");
+    const container = makeElement("div");
+    const document = {
+        body: { dataset: { plexoraDatasource: "tonsil" } },
+        getElementById: (id) => ({ bodyDiv, container }[id] || null),
+        querySelector: (selector) => (selector === ".open-project-page" ? library : null),
+        querySelectorAll: () => [],
+        createElement: makeElement,
+    };
+    const window = {
+        flaskVariables: { datasource: "tonsil" },
+        PlexoraToast: { show: (options) => toasts.push(options) },
+        PlexoraImportSample: { addToSample: () => Promise.resolve({ ok: true, result: {} }) },
+    };
+    const fetch = (url, options) => {
+        requests.push({ path: url.replace(/^\//, ""), body: options && options.body ? JSON.parse(options.body) : null });
+        return Promise.resolve({ ok: true, status: 200,
+                                 json: () => Promise.resolve(plan([action("noop_already_open")])) });
+    };
+    const context = createContext({
+        window, document, fetch, console, setTimeout, JSON, Date, Promise, Number,
+        plexoraUrl: (path) => `/${path}`,
+        PlexoraPage: { register: (fn) => fn() },
+        attachDropTarget: (el, options) => zones.desktop.push({ el, options }),
+        attachWebDrop: (el, options) => zones.web.push({ el, options }),
+    });
+    runInContext(ROUTER, context);
+    const viewer = zones.web.find((zone) => zone.el === bodyDiv);
+    const home = zones.web.find((zone) => zone.el === library);
+    check("on the website the viewer takes a drop of the files themselves",
+          Boolean(viewer) && viewer.options.count === "many");
+    check("...and so does the library page", Boolean(home) && home.options.count === "many");
+    check("...beside the desktop's zones, which stay as they were",
+          zones.desktop.some((zone) => zone.el === bodyDiv) && zones.desktop.some((zone) => zone.el === library));
+    check("the viewer's web zone stands aside while the viewer is hidden",
+          typeof viewer.options.enabled === "function");
+    await viewer.options.onDrop(["/picked/ab/cells.ome.tif"]);
+    const asked = requests.find((r) => r.path === "drop/inspect");
+    check("a web drop on the viewer is planned as a desktop drop is, from its mounted path",
+          Boolean(asked) && asked.body.target === "viewer" && asked.body.datasource === "tonsil"
+          && asked.body.paths[0] === "/picked/ab/cells.ome.tif" && asked.body.forget === true);
+    check("...and the plan is carried out", toasts.some((t) => t.title === "Already open"));
+    requests.length = 0;
+    await home.options.onDrop(["/picked/cd/run"]);
+    check("a web drop on the library is planned for home",
+          requests.some((r) => r.path === "drop/inspect" && r.body.target === "home" && r.body.datasource === null));
+}
+
 if (failures) {
     console.log(`${failures} failed`);
     process.exit(1);

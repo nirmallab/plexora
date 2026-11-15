@@ -94,7 +94,7 @@
     //: whichever store is in use: storeSync `OWN`), project bundles' staging
     //: and exports, and write probes.
     const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json",
-        "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
+        "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent", ".config"]);
     const KEPT_OUT_PREFIXES = [".importing-", ".bundles"];
     const PROBE_PREFIX = ".plexora-write-probe";
     //: Files that do not make a folder anybody's: the operating systems' own.

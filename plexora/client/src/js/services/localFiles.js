@@ -266,23 +266,45 @@
         return { last_dir: "", recent: [], pinned: [], view: null };
     }
 
-    async function readPrefs() {
-        const stored = await transact(PREFS, "readonly", (store) => store.get("explorer")).catch(() => null);
+    //: The record a machine's places are kept in: this browser's own folders
+    //: under "explorer" (what it always was, so they carry over), a node's or
+    //: a server's under "explorer:<its name>" -- the name the machine chip
+    //: gives it, which is the name it was saved under (nodes.json,
+    //: remotes.json), so its pins come back whenever it is listed again.
+    //: `view` is one for every machine, as on the desktop (browse_routes.py
+    //: `_view_record`), and lives in "explorer" only.
+    const prefsKey = (node) => (node ? `explorer:${node}` : "explorer");
+
+    async function readRecord(key) {
+        return transact(PREFS, "readonly", (store) => store.get(key)).catch(() => null);
+    }
+
+    async function readPrefs(node = "") {
+        const stored = await readRecord(prefsKey(node));
+        const shared = node ? await readRecord(prefsKey("")) : stored;
         const strings = (value) => (Array.isArray(value) ? value.filter((v) => typeof v === "string") : []);
-        if (!stored) return freshPrefs();
+        const view = shared && shared.view && typeof shared.view === "object" ? shared.view : null;
+        if (!stored) return { ...freshPrefs(), view };
         return { last_dir: typeof stored.last_dir === "string" ? stored.last_dir : "",
                  recent: strings(stored.recent).slice(0, RECENT_LIMIT),
                  pinned: strings(stored.pinned).slice(0, PINNED_LIMIT),
-                 view: stored.view && typeof stored.view === "object" ? stored.view : null };
+                 view };
     }
 
-    function writePrefs(prefs) {
-        return transact(PREFS, "readwrite", (store) => store.put({ key: "explorer", ...prefs }));
+    async function writePrefs(prefs, node = "") {
+        const { view, ...places } = prefs;
+        if (!node) return transact(PREFS, "readwrite", (store) => store.put({ key: "explorer", ...places, view }));
+        await transact(PREFS, "readwrite", (store) => store.put({ key: prefsKey(node), ...places }));
+        const shared = (await readRecord(prefsKey(""))) || { key: "explorer", ...freshPrefs() };
+        if (JSON.stringify(shared.view || null) !== JSON.stringify(view || null)) {
+            await transact(PREFS, "readwrite", (store) => store.put({ ...shared, key: "explorer", view }));
+        }
+        return undefined;
     }
 
     /** browse_routes.py `_update_picker_record`, over this browser's copy. */
-    async function savePrefs(change) {
-        const prefs = await readPrefs();
+    async function savePrefs(change, node = "") {
+        const prefs = await readPrefs(node);
         const text = (field) => (typeof change[field] === "string" ? change[field].trim() : "");
         if (text("last_dir")) prefs.last_dir = text("last_dir");
         if (text("add_recent")) {
@@ -298,7 +320,7 @@
             prefs.pinned = [...ordered, ...prefs.pinned.filter((p) => !ordered.includes(p))];
         }
         if (change.view && typeof change.view === "object") prefs.view = { ...(prefs.view || {}), ...change.view };
-        await writePrefs(prefs);
+        await writePrefs(prefs, node);
         return prefs;
     }
 
@@ -545,7 +567,7 @@
      * dataset's banner is about.
      */
     async function answer(request, page = null) {
-        if (!available()) return null;
+        if (!global.indexedDB) return null;
         const url = new URL(request.url);
         const base = String(global.PLEXORA_SITE_BASE || "");
         const route = base && url.pathname.startsWith(base) ? url.pathname.slice(base.length) : url.pathname;
@@ -559,19 +581,29 @@
                 return null;
             }
         }
-        const node = method === "POST" ? body.node : url.searchParams.get("node");
-        if (node) return null;
+        const node = String((method === "POST" ? body.node : url.searchParams.get("node")) || "").trim();
+        // Where the explorer was and what was pinned, for any machine and in
+        // any browser: kept here, in this browser's own storage. Python's
+        // settings file on the website is in the worker's memory and was
+        // gone at the next reload -- a node's pins with it, and in a browser
+        // that cannot give the site a folder, this machine's too.
+        if (route === "/picker_prefs") {
+            try {
+                const prefs = method === "POST" ? await savePrefs(body, node) : await readPrefs(node);
+                return respond(200, { last_dir: prefs.last_dir, recent: prefs.recent, pinned: prefs.pinned,
+                                      view: prefs.view || {}, drives: [] });
+            } catch (error) {
+                return null;
+            }
+        }
+        // A node's listing is the node's; folders only where they can be given.
+        if (node || !available()) return null;
         const allows = page && page.PlexoraPro && page.PlexoraPro.allows;
         const licensed = (entitlement) => (allows ? allows(entitlement) : true);
         try {
             if (route === "/fs_places") {
                 return respond(200, { platform: "browser", hostname: "", home: null, known: [], volumes: [],
                                       cloud: [], project: [], folders: await folders(), search: false });
-            }
-            if (route === "/picker_prefs") {
-                const prefs = method === "POST" ? await savePrefs(body) : await readPrefs();
-                return respond(200, { last_dir: prefs.last_dir, recent: prefs.recent, pinned: prefs.pinned,
-                                      view: prefs.view || {}, drives: [] });
             }
             const path = String(body.path || "");
             if (!ours(path)) return null;

@@ -813,7 +813,11 @@
            so somebody with twenty samples lands here too. Three rows, from
            page_routes._recent_rows, rendered with the page so nothing moves
            when they arrive; quiet until pointed at, because the card above is
-           what this page is for. Absent on an install with nothing to reopen. #}
+           what this page is for. Absent on an install with nothing to reopen.
+           The mark before it is where the website puts the rows it kept
+           (services/shell.js `withRecent`) into a home page drawn before
+           Python has started. #}
+        <!--plexora:recent-->
         {% if data.recent_projects %}
         <section class="quick-view-recent" aria-labelledby="quick_view_recent_heading">
             <div class="quick-view-recent-head">
@@ -847,6 +851,6 @@
         {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261114_audit_leads2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261115_int1" defer></script>
 {% endif %}
 {% endblock %}

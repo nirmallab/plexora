@@ -289,3 +289,53 @@ def test_the_shipped_pyodide_glue_takes_the_fix():
         pytest.skip("the pinned Pyodide release is not unpacked here (tools/browser_build/build.py)")
     text = glue.read_bytes().decode("utf-8")
     assert all(text.count(old) == 1 for old, _ in build.GLUE_FIXES)
+
+
+SHAPELY = "shapely-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl"
+
+
+def _shapely_wheel(folder, name=SHAPELY, geos="3.13.1"):
+    folder.mkdir(parents=True, exist_ok=True)
+    wheel = folder / name
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("shapely.libs/libgeos-0.so", b"geos " + geos.encode())
+    (folder / "shapely-geos.json").write_text(json.dumps({"geos": geos, "pyodide": "314.0.7"}))
+    return wheel
+
+
+def _bundle(tmp_path):
+    out = tmp_path / "py"
+    (out / "pyodide").mkdir(parents=True)
+    lock = {"packages": {"shapely": {"file_name": SHAPELY, "sha256": "pyodides"}}}
+    return out, lock
+
+
+def test_shapely_against_a_newer_geos_is_shipped_as_pyodides(tmp_path, monkeypatch):
+    """The website's GEOS 3.12.1 refused valid outlines now and then (NaN in a
+    simplify); tools/browser_build/geos/build.sh builds shapely against 3.13.1,
+    shipped in Pyodide's place under the lockfile's own name."""
+    monkeypatch.setattr(build, "precompile", lambda src, dst, python, stored: dst.write_bytes(src.read_bytes()))
+    out, lock = _bundle(tmp_path)
+    wheel = _shapely_wheel(tmp_path / "geos")
+    swapped = build.swap_shapely(out, lock, wheel, None, None)
+    shipped = out / "pyodide" / SHAPELY
+    assert shipped.read_bytes() == wheel.read_bytes()
+    assert lock["packages"]["shapely"]["sha256"] == build.sha256(shipped)
+    assert json.loads((out / "pyodide" / "pyodide-lock.json").read_text()) == lock
+    assert swapped == {"wheel": SHAPELY, "sha256": build.sha256(wheel), "geos": "3.13.1"}
+
+
+def test_a_shapely_built_for_another_pyodide_is_refused(tmp_path):
+    out, lock = _bundle(tmp_path)
+    other = _shapely_wheel(tmp_path / "geos", name=SHAPELY.replace("2026_0", "2025_0"))
+    with pytest.raises(SystemExit, match="not this Pyodide's shapely"):
+        build.swap_shapely(out, lock, other, None, None)
+    assert lock["packages"]["shapely"]["sha256"] == "pyodides"
+
+
+def test_without_one_pyodides_shapely_stays(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "GEOS_DIST", tmp_path / "nothing")
+    assert build.shapely_wheel(None) is None
+    out, lock = _bundle(tmp_path)
+    assert build.swap_shapely(out, lock, None, None, None) is None
+    assert lock["packages"]["shapely"]["sha256"] == "pyodides"

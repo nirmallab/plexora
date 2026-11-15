@@ -76,3 +76,19 @@ def test_off_the_website_it_never_asks(monkeypatch):
 def test_the_page_that_cannot_answer_leaves_it_to_python(asked):
     browser.set_asker(lambda kind, args: None)
     assert browser.page_window(_provider("/picked/ab/i.tif"), {"0": np.zeros((1, 4, 4), np.uint16)}, 0) is None
+
+
+def test_a_single_plane_tiff_is_scanned_by_the_page_as_one_channel(asked):
+    """A one-plane TIFF (a Xenium morphology image): its level is 2-D in
+    Python, one channel to the page. Left to Python, the request that asked
+    read all 1.2 gigapixels in WebAssembly -- 102 s with every other request
+    of the page waiting behind it."""
+    pyramid = {"0": np.zeros((40, 50), dtype=np.uint16)}
+    assert browser.page_window(_provider("/picked/ab/morphology.ome.tif"), pyramid, 0) == (0.0, 1200.0)
+    assert asked == [("window", {"path": "/picked/ab/morphology.ome.tif", "channel": 0,
+                                 "shape": [1, 40, 50], "dtype": "uint16"})]
+
+
+def test_a_single_plane_has_no_second_channel(asked):
+    assert browser.page_window(_provider("/picked/ab/m.tif"), {"0": np.zeros((4, 4), np.uint16)}, 1) is None
+    assert asked == []

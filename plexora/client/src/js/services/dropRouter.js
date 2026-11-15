@@ -576,6 +576,7 @@ window.PlexoraDropRouter = (function () {
                 await runPlan(known, paths);
             },
         });
+        mountWebZone(shell, "viewer", viewerShowing);
     }
 
     function mountLibraryZone() {
@@ -587,6 +588,27 @@ window.PlexoraDropRouter = (function () {
             onDrop: async (paths, {plan}) => {
                 const known = plan || await planFor(paths, {target: "home", forget: true});
                 await runPlan(known, paths);
+            },
+        });
+        mountWebZone(page, "home", null);
+    }
+
+    /**
+     * The same zone on the website, where a drop is the file itself and not a
+     * path: `attachWebDrop` mounts it (`PlexoraPicks.take`, in the drop's own
+     * turn) and hands over the `/picked/...` paths, which the page's Python
+     * plans exactly as the desktop's server plans a path (`/drop/inspect`).
+     * No hover hint, because there is nothing to plan until the drop is
+     * mounted; the zone's edge lights instead. A no-op off the website.
+     */
+    function mountWebZone(zone, target, enabled) {
+        if (!zone || typeof attachWebDrop !== "function") return;
+        attachWebDrop(zone, {
+            count: "many",
+            enabled,
+            onDrop: async (paths) => {
+                const list = Array.isArray(paths) ? paths : [paths];
+                await runPlan(await planFor(list, {target, forget: true}), list);
             },
         });
     }

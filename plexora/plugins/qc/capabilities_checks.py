@@ -483,6 +483,16 @@ def _blur_labels(call, project, channel=None, channels=None):
 
 
 def run_blur(call, inp):
+    """The job. On the website, its steps (`_run_blur_steps`), which the job
+    runner takes one at a time with the page's requests answered between
+    (agent/jobs.py `_advance`); on threads, all of them now."""
+    from plexora import _work
+
+    steps = _run_blur_steps(call, inp)
+    return _blur().drive(steps) if _work.threaded() else steps
+
+
+def _run_blur_steps(call, inp):
     from plexora.plugins.qc.server import results
 
     blur = _blur()
@@ -502,7 +512,7 @@ def run_blur(call, inp):
                               message=f"{label} · {message}" if len(labels) > 1 and message
                               else message)
 
-            summary, reused = blur.load_or_run(
+            summary, reused = yield from blur.load_or_run_steps(
                 call.session, inp.project, channel=label, params=params, force=inp.force,
                 progress=progress, check_cancelled=call.check_cancelled)
             out.append({"channel": label, "reused": reused,

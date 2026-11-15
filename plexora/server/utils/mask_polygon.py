@@ -54,23 +54,76 @@ def _lists(value):
     return value
 
 
+#: The grid a geometry is snapped to when GEOS refuses it (`geos_again`), in
+#: the geometry's own units (full-resolution pixels): the 2 decimals
+#: `to_geojson` rounds to anyway.
+GEOS_RETRY_GRID = 0.01
+
+
+def geos_again(first, *others):
+    """`first()`, or each of `others()` in turn when GEOS raises.
+
+    The website's GEOS (3.12.1, built for WebAssembly in Pyodide) now and then
+    refuses a valid outline -- "CGAlgorithmsDD::orientationIndex encountered
+    NaN/Inf numbers", most often in a topology-preserving simplify -- and not
+    reliably for the same input: about one outline in 300 of the artifact
+    detector's, a different one each run, never on the desktop's GEOS 3.13.
+    Asked again a second way (the outline snapped to `GEOS_RETRY_GRID`, a
+    simplify that does not keep topology made valid after) it answers. The
+    last one's refusal is raised. A bundle built with shapely against GEOS
+    3.13.1 (tools/browser_build/geos/build.sh) has none of these refusals --
+    0 in 17,322 outlines, against 47 -- and the desktop's very outlines; the
+    retry stays for a bundle built without it."""
+    import shapely
+
+    attempts = (first, *others)
+    for index, attempt in enumerate(attempts):
+        try:
+            return attempt()
+        except shapely.errors.GEOSException:
+            if index == len(attempts) - 1:
+                raise
+    return None
+
+
+def _simplified(shape, tolerance):
+    """`shape.simplify(tolerance, preserve_topology=True)`, asked again a
+    second and third way where GEOS refuses it (`geos_again`)."""
+    import shapely
+
+    def loose():
+        made = polygonal(shapely.make_valid(shape.simplify(tolerance, preserve_topology=False)))
+        if made is None:
+            raise shapely.errors.GEOSException("nothing left of the outline")
+        return made
+
+    return geos_again(
+        lambda: shape.simplify(tolerance, preserve_topology=True),
+        lambda: shapely.set_precision(shape, GEOS_RETRY_GRID).simplify(
+            tolerance, preserve_topology=True),
+        loose)
+
+
 def to_geojson(shape, *, simplify_px, max_vertices=MAX_VERTICES, min_area_px=0.0):
     """GeoJSON of a shapely (Multi)Polygon simplified to `max_vertices`, or None.
 
     Coordinates are rounded to 2 decimals. Not validated -- see the module
-    docstring."""
+    docstring. A GEOS refusal is asked again before it is raised
+    (`geos_again`)."""
+    import shapely
     from shapely.geometry import MultiPolygon, Polygon, mapping
 
     if shape is None or shape.is_empty:
         return None
-    shape = shape.buffer(0)
+    shape = geos_again(lambda: shape.buffer(0),
+                       lambda: shapely.make_valid(shapely.set_precision(shape, GEOS_RETRY_GRID)))
     tolerance = float(simplify_px)
-    simplified = shape.simplify(tolerance, preserve_topology=True) if tolerance > 0 else shape
+    simplified = _simplified(shape, tolerance) if tolerance > 0 else shape
     for _ in range(12):
         if vertex_count(simplified) <= max_vertices:
             break
         tolerance *= 1.5
-        simplified = shape.simplify(tolerance, preserve_topology=True)
+        simplified = _simplified(shape, tolerance)
     parts = [p for p in (simplified.geoms if isinstance(simplified, MultiPolygon)
                          else [simplified]) if isinstance(p, Polygon) and p.area > min_area_px]
     if not parts:

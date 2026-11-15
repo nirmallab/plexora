@@ -2231,7 +2231,20 @@ Entry points:
 - `utils/mask_polygon.py` — the one polygoniser for a mask. QC's
   `refine`/`polygons` delegate to it, and QC validates at its own boundary,
   so a polygon from the model and one from the classical tracer are checked
-  by the same rules.
+  by the same rules. `geos_again(first, *others)` asks GEOS again a second
+  way when it raises, because the website's GEOS (3.12.1, Pyodide) now and
+  then refuses a valid outline ("orientationIndex encountered NaN/Inf",
+  about one in 300, a different one each run): `_simplified` retries on the
+  `GEOS_RETRY_GRID` (0.01 px) grid, then simplifies without topology and
+  makes the result valid. The artifact detector's `_shape_of`/`_geojson`
+  drop an outline refused even so, one object missing, never the run.
+  The cause is fixed in the bundle when it is built with
+  `tools/browser_build/geos/build.sh` (Pyodide's own recipes, libgeos moved
+  to 3.13.1; Pyodide 314.0.8 still ships 3.12.1) and `build.py
+  --shapely-wheel` (default `tools/browser_build/geos/dist`, also in
+  `--plexora-only`; recorded as the manifest's `shapely`): 0 refusals in
+  17,322 outlines against 47, and outlines byte-identical to the desktop's
+  GEOS 3.13.1. The retry stays for a bundle built without it.
 - `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
   show_hidden=False)`, one directory as `{path, parent, crumbs, entries,
   truncated, total, partial, dataset, platform}`. Shared, because both
@@ -2492,7 +2505,10 @@ One authoritative database; nodes are data services with no project state.
   on a 40-channel slide, 40 tiles of 2 MiB -- 20 s from a file share -- that
   every first request of the viewer waited behind. The same values; None
   elsewhere, for a level too large, or when the page declines a channel, and
-  Python reads it as before.
+  Python reads it as before. `page_window` asks a 2-D single-plane level (a
+  Xenium morphology image, any one-channel TIFF) as `[1, h, w]`, because
+  declined, Python read the whole plane inside the asking request (102 s on
+  a 1.2-gigapixel plane, every other request behind it).
   `LocalTableProvider.lazy_features`/`read_feature_column` are the seam a WIDE
   table (see the adapters row's WIDE mode) reads through: `load()` keeps the
   adapter it built the frame from (`self._adapter`), and `describe`/
@@ -3697,7 +3713,14 @@ deliberately left out and what should be built next.
   `__signature__` so the SDK actually threads it), `job_cancel` (receipted).
   `conftest.py`'s autouse `_finish_agent_jobs` drains job threads before a
   test repoints the data root, so a job never survives to write into the next
-  test's tree.
+  test's tree. **A handler may return a generator** (blur QC on the website):
+  `_advance` takes its steps for `STEP_S` (0.1 s), then queues the rest as a
+  task of its own (`_work.spawn`), so the website's one Python thread answers
+  the page's requests between them; `_scope` re-enters the admitted licence
+  grants and cell exclusions around every step, and the generator is kept in
+  the record as the private `_steps`. **A step holds no lock across its
+  `yield`** -- a request waiting on one (`ReaderShelf.reader`'s per-image
+  lock, say) would wait on the only thread, for good.
 - `agent/core/operations.py` — `undo_operation` replays a receipt's
   `undo_hint` through `registry.invoke(..., undo_of=...)`; refuses an unknown
   operation, an irreversible one, one already undone, or one the project has
@@ -4833,7 +4856,13 @@ deliberately left out and what should be built next.
   (`evaluate`), so moving the slider never rereads a pixel, and a whole-image
   `global_blur` flag warns when even the sharpest cells lack fine detail, where
   an in-image reference cannot see it. `settings.json` holds the channel,
-  threshold and minimum region size. **Artifact Detector** (`artifacts.py`,
+  threshold and minimum region size. The run is a generator, a step a block
+  (`run_steps`/`load_or_run_steps`, the image's reader opened inside each
+  step and never held across one); `run`/`load_or_run` drain it now
+  (`drive`), and `capabilities_checks.run_blur` hands the job runner the
+  generator itself only when not `_work.threaded()` -- on the website, where
+  a channel's map (54 s on a 1.2-gigapixel plane) used to freeze every
+  request of the page. **Artifact Detector** (`artifacts.py`,
   `VERSION = "3"`, `CATEGORIES` fold/tear/debris/saturation, across every
   channel, coarse to fine: stage 1 reads each channel once at a level of at
   most 4096 px into a pan image, agreement counters and saturation seeds
@@ -5076,8 +5105,9 @@ deliberately left out and what should be built next.
   (`derive_retention`, no-nucleus, `dna_loss` markers, the digest),
   `test_review_images.py` (an artifact field drawn in its nuclear and lead
   channel; a black or dim score tile redrawn stretched, marked `*`),
-  `plexora/plugins/qc/tests/test_blur_qc.py` (9 tests, synthetic scenes with
-  a blurred disc, none, and blur everywhere), `tests/test_qc_blur_js.py` +
+  `plexora/plugins/qc/tests/test_blur_qc.py` (14 tests, synthetic scenes with
+  a blurred disc, none, and blur everywhere; one that the website's job hands
+  Python back between blocks), `tests/test_qc_blur_js.py` +
   `tests/js/qc_blur_probe.mjs` (the plot-on-the-rail behavior above),
   `plexora/plugins/qc/tests/test_artifact_detector.py` (11 tests, one of
   them a Pro session test), `tests/test_qc_artifacts_js.py` +
@@ -5987,7 +6017,12 @@ deliberately left out and what should be built next.
   layer-scoped instance, which must never rewrite the reference image's
   rows — plus a `destroy()` that drops its `plexora:hd-mode-changed` window
   listener and destroys its sliders/pickers/selects, called by
-  `dropChannelPanel` when a layer's card goes away. **Every instance's list
+  `dropChannelPanel` when a layer's card goes away. A new slot's default
+  colour comes from the whole Quick Select palette in order
+  (`ViewerSidebar.slotPalette()`, `ColorSwatchPicker.DEFAULT_PRESETS`, or
+  `FALLBACK_PALETTE` where the picker is not loaded), so a fifth channel is
+  not Blue again; the old four lead it, so a saved project's first four
+  look as they did. **Every instance's list
   ends in the add row** (2026-10-27; `ensureAddRow`, `syncAddRow`,
   `nextChannelToAdd`): a `<button class="channel-slot channel-slot-add"
   id="{prefix}add_channel_button">` built AFTER `channel_slot_list`, never
@@ -6316,6 +6351,14 @@ deliberately left out and what should be built next.
   the navigation in sessionStorage under `plexora:drop-handoff`, and
   `main.js` calls `takeHandoff(datasource)` once the viewer is up. Plugin
   kinds run through `registerExecutor(kind, fn)` (gating's `upload_gates`).
+  On the website `mountWebZone` gives the same two zones `attachWebDrop`
+  (`count: "many"`): the drop is mounted, and its `/picked/...` paths are
+  planned by the page's Python through the same `/drop/inspect`. No hover
+  hint there, because nothing can be planned before the drop is mounted;
+  the zone's edge lights instead (`main.css` `#bodyDiv.is-drop-over`).
+  `quickViewLanding.js`'s website drop asks the router for a plan too (a
+  folder, several files), unless a lone file's first view already began;
+  that one, and anything the router does not claim, opens as before.
   Covered by `tests/js/drop_router_probe.mjs` (run by
   `tests/test_drop_router.py`); the server policy by `tests/test_drop_plan.py`.
 - `services/pointerDrag.js` — pointer-driven intra-page drags (`cardList.js`'s
@@ -7193,7 +7236,12 @@ deliberately left out and what should be built next.
   `/fs_places`, `/picker_prefs`, and `/search_dir` as `unsupported` (the
   explorer then offers the filter alone) -- in `dir_listing.py`'s shape and
   under its limits, so the explorer itself needs no website branch beyond
-  `inPage`. Paths are virtual (`/local` the list of folders, a `place_root`
+  `inPage`. `/picker_prefs` alone is answered for every machine and in every
+  browser, in IndexedDB (record `explorer` for this browser's folders,
+  `explorer:<node>` for a node's or server's, `view` shared in `explorer`),
+  because Python's settings file on the website lives in the worker's memory
+  and was gone at the next reload; the listings still decline a node and a
+  browser without folder access. Paths are virtual (`/local` the list of folders, a `place_root`
   listing; `/local/<id>/a/b` inside one), and every one the explorer goes to
   came from an answer here, keeping the no-path-arithmetic rule. A folder the
   browser stopped granting (Chrome asks again after a restart) answers 403
@@ -7228,6 +7276,16 @@ deliberately left out and what should be built next.
   `moved`, `nohandle`, `none`), `chooseFile(item)`, `keep(chosen, {ask})`
   and `idOf`; `find` matches a renamed file by size and date and answers
   null on a cancel.
+- `services/shell.js` `pageStore` — **the website's home page before Python
+  starts.** The page Python last drew for `/` is kept in Cache Storage
+  `plexora-pages` per site version, Python bundle and base path, so every
+  release drops it (it names that release's scripts). Its Recent rows are kept
+  apart, under no version, in `plexora-recent` (`recent()`, which falls back to
+  an older release's kept page the first time), and `withRecent` puts them into
+  the build's home page (`builtHome`) at the `<!--plexora:recent-->` mark in
+  `templates/index.html`; Python's own page replaces it once up if they
+  differ (`earlyPage`). Live: a returning user's Recent rows after a release
+  0.75 s instead of 6.7 s. Probe: `tests/js/shell_pages_probe.mjs`.
 - `services/reopenFiles.js` — `window.PlexoraReopen.run({doc, project, python,
   picks, derived, reveal, status})`, **a project's files opened again on a
   later visit to the website**, loaded by `services/shell.js` in the host
@@ -10110,7 +10168,16 @@ statistics, which are the stack's, wrong for a picture of it). Those are kept
 in a small LRU in `resource.derived` (`MINIMAP_PLANES`, 8), not `_cached`,
 which keeps forever and would hold every plane of a scrub; a reopen drops
 them. In 3-D the lens asks for the cut as a projection (see `views/miniMap.js`
-in the Repository Map).
+in the Repository Map). On the website, while the page still scans a planar
+channel for its exact window, the route answers with
+`data_model.provisional_channel_overview` -- quantized with the provisional
+window, said in `OVERVIEW_WINDOW_HEADER` (`X-Plexora-Window: provisional`) and
+sent `no-store` -- because making the exact window inside the request held
+Python's one thread for the whole scan (103 s on a 1.2-gigapixel Xenium
+plane), the lens black throughout. `miniMap.js` asks again
+(`_refreshProvisional`) on an exact `plexora:channel-window` and on a
+backing-off timer (`EXACT_FIRST_MS` 3 s to `EXACT_MAX_MS` 20 s), the event
+the usual way and the timer the one that cannot be missed.
 
 If the lens opens to a black circle, check the server's age before the code —
 see "A Python change needs a restart" under Key Invariants. `MiniMap._updateNote`
@@ -11037,7 +11104,13 @@ in **5.6 s**.
   is exact (`views/channelList.js` `awaitExactWindow`), as on the website.
   A remote image, a volume, or a window that failed behind once is made
   inline as it always was, and so is any ask that is not provisional (a
-  tile's encode, the warm-up). Pinned by `tests/test_page_window_warm.py`.
+  tile's encode, the warm-up). On the website a plane the page cannot scan
+  (JPEG 2000, a format with no exact codec in the page) is scanned by Python
+  a chunk-aligned block (`_scan_blocks`, about `_STEPPED_WINDOW_BYTES` 4 MiB)
+  per queued task (`_stepped_window`/`_step_window`), answering
+  `WINDOW_PENDING` meanwhile, not inside the asking request -- which held a
+  1.2-gigapixel Xenium plane's page frozen for 102 s; a reload ends the scan.
+  Pinned by `tests/test_page_window_warm.py`.
   A node's own provisional answer for a planar image is a guess on the
   primary too: `providers/node.py` reads the node's exact flag and no-store
   header, the primary does not cache those stats, fit or window, and marks
@@ -11331,6 +11404,16 @@ in **5.6 s**.
   with `npm run build` on an `npm ci` of `plexora/client`'s lockfile (an
   install that has drifted from it, as the main tree's had on 2026-11-06 with
   jsPDF 3.0.4 against the lock's 4.2.1, builds a different bundle).
+- **JPEG 2000 TIFFs are read by the page** (`node/tiffReader.js` `Jpeg2000`,
+  TIFF code 34712, in `services/browserNode.js` `EXACT`): with the OpenJPEG
+  build in `client/external/openjpeg-1.3.6`, found beside the worker's bundle
+  -- the same build the website's Python decodes them with
+  (`imagecodecs_shim`), so the page's samples are Python's bit for bit
+  (checked on a 1.2-gigapixel Xenium plane; the desktop's newer OpenJPEG
+  differs slightly on such lossy files). Before, Python served every tile and
+  scanned the window itself (125 s to draw, 100 s frozen; now 29 s, none).
+  One component only; a colour stream stays Python's. Pinned by
+  `tests/test_tiff_writer.py` (lossless, against numpy).
 - **A change to a `client/src/js/node/*.js` file the website's worker imports
   means rebuilding `client/dist/tiffWorker_bundle.js`** (`npm run
   build:worker`, `webpack.worker.config.js`). `workers/tiffWorker.js` bundles
@@ -11986,7 +12069,11 @@ in **5.6 s**.
   and `tests/test_browser_store.py` `test_kept_out_matches_the_store_sync` parses
   both lists and fails when they differ. Change both together. The
   per-browser registries (`nodes.json`, `remotes.json`, `servers.json`,
-  `sidecars.json`, `.agent`) are in it, and in its `OWN` subset kept in this
+  `sidecars.json`, `.agent`) and the website's settings (`.config`:
+  `browser/boot.py` sets `XDG_CONFIG_HOME` to `/data/.config`, so
+  `paths.settings_path()` -- and spatialbridge's read of it -- is in the kept
+  store, not the worker's memory, where every reload lost it) are in it, and
+  in its `OWN` subset kept in this
   browser's own storage instead, because one browser's `nodes.json` (its
   relay endpoint and node bearer token) written into a shared workspace was
   read by every other browser on it, whose reconcile then unregistered the
@@ -12169,6 +12256,16 @@ keep-both in `tests/test_browser_store_reconnect_edits.py` with
 worktree: **13297 passed, 139 skipped, 0 failed** (macOS, 1:00:37),
 run with `--basetemp` because another pytest on the machine prunes the
 shared temp root (see Sharp Edges).
+
+**Keeping the website's page answering through long reads added tests**:
+`tests/test_geos_again.py` (the GEOS retries, an artifact outline dropped
+rather than the run), `tests/test_page_window_warm.py` (the provisional
+mini-map, Python's stepped scan of a plane the page cannot read),
+`tests/test_browser_page_window.py` (a single plane asked as one channel),
+`plexora/plugins/qc/tests/test_blur_qc.py` (a blur job hands Python back
+between blocks), and new cases in `tests/js/drop_router_probe.mjs`,
+`shell_pages_probe.mjs` and `website_pick_probe.mjs`. The boundary goldens
+carry the `20261114_web7` tags. No full run was reported for this work.
 
 **The desktop app has its own validation, outside pytest:**
 

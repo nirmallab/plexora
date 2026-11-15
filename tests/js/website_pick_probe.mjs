@@ -202,11 +202,11 @@ function fakeIndexedDB() {
  * pickedFiles.js and localFiles.js in one window, as the site's host page
  * runs them. `folderPicker`: whether the browser has showDirectoryPicker.
  */
-function bootHost({ folderPicker = true, filePicker = true } = {}) {
+function bootHost({ folderPicker = true, filePicker = true, indexedDB = null } = {}) {
     const mounted = [];
     let counter = 0;
     const picked = { folder: null, files: null, folderOptions: [], fileOptions: [] };
-    const db = fakeIndexedDB();
+    const db = indexedDB || fakeIndexedDB();
     const context = {
         console, Promise, Object, Array, Map, Set, JSON, Error, String, Number, Boolean, Uint8Array,
         setTimeout, URL, Response, Request, performance,
@@ -308,6 +308,34 @@ await check("a node's listing, and a path in Python's own files, are not the pag
     assert.equal(await route(host.local, "/list_dir", { path: "/data/projects" }), null);
     assert.equal(await route(host.local, "/fs_places?node=hpc"), null);
     assert.equal(await route(host.local, "/serve_config"), null);
+});
+
+await check("a node's pins are kept in this browser, apart from this machine's, and come back", async () => {
+    const host = bootHost();
+    await route(host.local, "/picker_prefs", { pin: "/local/mine" });
+    await route(host.local, "/picker_prefs", { node: "hpc", pin: "/n/scratch/lab", last_dir: "/n/scratch/lab" });
+    await route(host.local, "/picker_prefs", { node: "hpc", add_recent: "/n/scratch/lab/run1" });
+    await route(host.local, "/picker_prefs", { node: "hpc", view: { layout: "grid" } });
+    const hpc = (await route(host.local, "/picker_prefs?node=hpc")).body;
+    assert.deepEqual([hpc.pinned, hpc.recent, hpc.last_dir], [["/n/scratch/lab"], ["/n/scratch/lab/run1"], "/n/scratch/lab"]);
+    assert.deepEqual(hpc.drives, []);
+    const mine = (await route(host.local, "/picker_prefs")).body;
+    assert.deepEqual(mine.pinned, ["/local/mine"]);
+    // One layout for every machine, as on the desktop.
+    assert.equal(mine.view.layout, "grid");
+    assert.deepEqual((await route(host.local, "/picker_prefs?node=other")).body.pinned, []);
+    // The page's next visit: the same browser storage, a new page.
+    const again = bootHost({ indexedDB: host.db });
+    assert.deepEqual((await route(again.local, "/picker_prefs?node=hpc")).body.pinned, ["/n/scratch/lab"]);
+});
+
+await check("a browser that cannot give the site a folder still keeps the explorer's places", async () => {
+    const host = bootHost({ folderPicker: false });
+    await route(host.local, "/picker_prefs", { node: "hpc", pin: "/n/scratch/lab" });
+    await route(host.local, "/picker_prefs", { pin: "/data/projects" });
+    assert.deepEqual((await route(host.local, "/picker_prefs?node=hpc")).body.pinned, ["/n/scratch/lab"]);
+    assert.deepEqual((await route(host.local, "/picker_prefs")).body.pinned, ["/data/projects"]);
+    assert.equal(await route(host.local, "/list_dir", { path: "", node: "hpc" }), null);
 });
 
 await check("with no folder given, the explorer opens on an empty list of places", async () => {

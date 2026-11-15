@@ -241,8 +241,14 @@ def page_window(provider, pyramid, index, *, wait_ms=None, urgent=True, ahead=()
         level = pyramid["0"]
     except Exception:  # noqa: BLE001 -- one level, or not a level group
         return None
-    shape = list(getattr(level, "shape", ()))
+    shape = [int(side) for side in getattr(level, "shape", ())]
     dtype = str(getattr(level, "dtype", ""))
+    if len(shape) == 2 and int(index) == 0:
+        # One plane (a Xenium morphology image, any single-channel TIFF): the
+        # page reads it as one channel. Declined, Python read all of it
+        # itself inside the request that asked -- 102 s for a 1.2-gigapixel
+        # plane, every other request of the page waiting behind it.
+        shape = [1, *shape]
     if len(shape) != 3 or dtype not in ("uint8", "uint16"):
         return None
     question = {"path": path, "channel": int(index), "shape": shape, "dtype": dtype}

@@ -30,6 +30,8 @@ JS = REPO_ROOT / "plexora" / "client" / "src" / "js"
 CHECKS = (
     "a browser that cannot give the site a folder answers none of the explorer's routes",
     "a node's listing, and a path in Python's own files, are not the page's to answer",
+    "a node's pins are kept in this browser, apart from this machine's, and come back",
+    "a browser that cannot give the site a folder still keeps the explorer's places",
     "with no folder given, the explorer opens on an empty list of places",
     "Add folder keeps the folder, and the list of places shows it by its name",
     "the same folder given twice is one, and one inside it opens there",

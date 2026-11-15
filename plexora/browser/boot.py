@@ -78,6 +78,10 @@ WEBSITE_LIMITS = {
 }
 
 
+#: The website's config folder (`XDG_CONFIG_HOME`), at the top of its data root.
+CONFIG_DIRNAME = ".config"
+
+
 def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
                 licence_dir: str = "/bioc", telemetry: dict | None = None) -> None:
     """What the app reads from the environment as it builds (create_app) and
@@ -105,6 +109,13 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         # unset, paths would look for Documents/Plexora and the workspaces
         # added in a settings file inside the worker's own filesystem.
         "PLEXORA_LIBRARY_PATH": "",
+        # The settings file (paths.settings_path, platformdirs' config dir)
+        # inside the store the page keeps, not in the worker's memory, where
+        # every reload and every release lost it: the explorer's layout, the
+        # 3-D viewer's choices, a notice dismissed. Kept in this browser's own
+        # storage even when the store is a folder the desktop app shares
+        # (workers/storeSync.js `OWN` ".config"): the desktop has its own.
+        "XDG_CONFIG_HOME": f"{data_root.rstrip('/')}/{CONFIG_DIRNAME}",
         **WEBSITE_LIMITS,
     })
     for name in ("PLEXORA_SHARED_PATH", "PLEXORA_AUTH_TOKEN", "PLEXORA_TRUSTED_HOSTS",

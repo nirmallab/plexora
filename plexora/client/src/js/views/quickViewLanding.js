@@ -1193,9 +1193,21 @@ PlexoraPage.register(function () {
                 dropping = lit;
                 paint();
             },
-            onDrop: (paths) => {
+            onDrop: async (paths) => {
                 problem = "";
                 if (menuOpen()) closeMenu(false);
+                // A folder or several files: what the page's Python reads
+                // them as, as the desktop asks while they hover -- a project
+                // folder opens, a mask goes to its sample. A lone file whose
+                // first view is already on screen opens as it is.
+                const router = window.PlexoraDropRouter;
+                if (!previewing && router) {
+                    const plan = await router.planFor(paths, {target: "home", forget: true});
+                    if (router.claims(plan)) {
+                        router.runPlan(plan, paths);
+                        return;
+                    }
+                }
                 if (paths.length > 1) {
                     window.PlexoraImportSample?.open({paths});
                     return;
