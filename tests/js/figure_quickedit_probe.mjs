@@ -415,9 +415,11 @@ const follow = await (async () => {
 check("the session moves to the panel that was selected", follow.panelId, "p2");
 // Before anything is fetched for the new panel. The work already done on the
 // old one is work, and moving forward must not be how it is lost.
+// A channel summary already fetched for this image is not asked again
+// (FigureQuickEdit keeps them per source), so there may be no fetch at all.
+const firstFetch = follow.log.findIndex((entry) => entry.startsWith("pixelInfo:"));
 check("and the one being left is saved first",
-    follow.log.indexOf("commit:p1") < follow.log.findIndex(
-        (entry) => entry.startsWith("pixelInfo:")), true);
+    follow.log.includes("commit:p1") && (firstFetch === -1 || follow.log.indexOf("commit:p1") < firstFetch), true);
 
 const ignored = await (async () => {
     const quickEdit = build();

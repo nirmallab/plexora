@@ -137,63 +137,59 @@ class FigureLinePanel {
         const opacity = Math.round(
             (style.opacity === undefined ? 1 : style.opacity) * 100);
         const headSize = style.head_size_pt || 0;
+        const field = (id, kind, value, label, suffix, placeholder, extra = "") => `
+            <label class="fb-insp-field ${extra}" title="${escape(label)}">
+                ${kind === "head" ? '<span class="fb-insp-field-label">Head</span>' : ""}
+                <input class="fb-insp-input" id="${id}" type="text" inputmode="decimal"
+                       spellcheck="false" data-${kind}="1" value="${escape(String(value))}"
+                       ${placeholder ? `placeholder="${escape(placeholder)}"` : ""}
+                       aria-label="${escape(label)}">
+                <span class="fb-insp-suffix">${suffix}</span></label>`;
 
-        this.root.innerHTML = `
-            <header class="fb-side-heading">
-                <span class="fb-side-title">Line</span>
-                <button type="button" class="fb-icon-button" data-close="1"
-                        title="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
-                </button>
+        // The design's two sections: the stroke (colour, weight, dash,
+        // opacity), then its ends. The box is the inspector's, below.
+        this.root.innerHTML = `<section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Line</span>
+                <button type="button" role="switch" class="fb-switch${hasStroke ? " is-on" : ""}"
+                        id="fb_line_stroke_on" data-toggle-stroke="1" aria-checked="${hasStroke}"
+                        aria-label="${hasStroke ? "Hide" : "Draw"} this line"><span></span></button>
             </header>
-
-            ${this.field("Stroke", "fb_line_stroke", `
-                <input type="checkbox" id="fb_line_stroke_on"
-                       data-toggle="stroke" ${hasStroke ? "checked" : ""}
-                       aria-label="Draw this line">
+            <div class="fb-insp-row">
                 ${FigureColorField.swatch({
                     field: "color", id: "fb_line_stroke", label: "Line color",
                     value: style.color || "#000000", disabled: !hasStroke })}
-                <input class="fb-input fb-input-hex" id="fb_line_stroke_hex" type="text"
-                       data-hex="color" spellcheck="false" maxlength="7"
-                       value="${escape(style.color || "")}" placeholder="None"
-                       ${hasStroke ? "" : "disabled"}
-                       aria-label="Line color, as a hex code">`)}
-
-            ${this.field("Width", "fb_line_width",
-                this.stepper("fb_line_width", "width", style.line_width_pt,
-                             hasStroke, "Line width, in points"))}
-
-            ${this.field("Style", null, this.segmented("Line style",
-                FigureStrokeGeometry.LINE_STYLES.map((id) => ({
-                    value: id, group: "line_style", on: style.line_style === id,
-                    icon: FigureLineDefs.styleIcon(id), label: FigureLinePanel.title(id),
-                }))))}
-
-            ${this.field("Start head", null, this.headRow("start_head", style.start_head))}
-            ${this.field("End head", null, this.headRow("end_head", style.end_head))}
-
-            ${this.field("Head size", "fb_line_head",
-                this.stepper("fb_line_head", "head", headSize || "", true,
-                             "Head size, in points, or blank for automatic",
-                             "Auto"))}
-
-            ${this.field("Edge", "fb_line_edge", `
-                <select class="fb-select" id="fb_line_edge" data-edge="1"
+                ${field("fb_line_width", "width", style.line_width_pt, "Line thickness, in points", "pt", "", "fb-insp-w84")}
+                ${this.segmented("Line style",
+                    FigureStrokeGeometry.LINE_STYLES.map((id) => ({
+                        value: id, group: "line_style", on: style.line_style === id,
+                        icon: FigureLineDefs.styleIcon(id), label: FigureLinePanel.title(id),
+                    })))}
+            </div>
+            <div class="fb-insp-switch-row"><span>Opacity</span>
+                <span class="fb-insp-slider">
+                    <input id="fb_line_opacity" type="range" min="0" max="100" step="1" value="${opacity}"
+                           data-opacity="1" aria-label="Opacity, as a percentage"></span>
+            </div>
+        </section>
+        <section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Ends</span></header>
+            <div class="fb-insp-ends">
+                <span class="fb-insp-note">Start</span>${this.headRow("start_head", style.start_head)}
+                <span class="fb-insp-note">End</span>${this.headRow("end_head", style.end_head)}
+            </div>
+            <div class="fb-insp-row">
+                ${field("fb_line_head", "head", headSize || "", "Head size, in points, or blank for automatic", "pt", "Auto")}
+                <select class="fb-insp-select fb-insp-grow" id="fb_line_edge" data-edge="1"
                         aria-label="Edge treatment">
                     ${FigureLinePanel.EDGES.map(([value, label]) =>
                         `<option value="${value}"${style.edge === value ? " selected" : ""}
                          >${escape(label)}</option>`).join("")}
-                </select>`)}
+                </select>
+            </div>
             ${FigureStrokeGeometry.isTaper(style.edge) && style.line_style !== "solid"
-                ? `<p class="fb-side-note">A tapered line is drawn as solid ink,
-                   so it has no dashes. Its dash setting is kept for when the
-                   edge goes back to standard.</p>` : ""}
-
-            ${this.field("Opacity", "fb_line_opacity", `
-                <input id="fb_line_opacity" type="range"
-                       min="0" max="100" step="1" value="${opacity}"
-                       data-opacity="1" aria-label="Opacity, as a percentage">`)}`;
+                ? `<p class="fb-insp-note">A tapered line is drawn as solid ink, so it has
+                   no dashes. Its dash setting is kept for when the edge goes back to standard.</p>` : ""}
+        </section>`;
 
         this.upgradeSliders();
         this.restore(focus);
@@ -215,11 +211,10 @@ class FigureLinePanel {
     }
 
     segmented(label, cells) {
-        return `<div class="fb-segmented fb-segmented-icons" role="group"
+        return `<div class="fb-insp-seg fb-insp-grow fb-segmented-icons" role="group"
                      aria-label="${FigureSchema.escapeHtml(label)}">
             ${cells.map((cell) => `<button type="button"
-                    class="fb-segmented-button${cell.on ? " is-on" : ""}${
-                        cell.mirror ? " is-mirrored" : ""}"
+                    class="${cell.on ? "is-on" : ""}${cell.mirror ? " is-mirrored" : ""}"
                     data-pick="${cell.group}" data-value="${cell.value}"
                     aria-pressed="${cell.on ? "true" : "false"}"
                     title="${FigureSchema.escapeHtml(cell.label)}"
@@ -233,44 +228,6 @@ class FigureLinePanel {
     static title(id) {
         const words = String(id).replace(/_/g, " ");
         return words.charAt(0).toUpperCase() + words.slice(1);
-    }
-
-    /** One row: the property's name, then its control. */
-    field(name, forId, control) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const label = forId
-            ? `<label class="fb-field-name" for="${forId}">${escape(name)}</label>`
-            : `<span class="fb-field-name">${escape(name)}</span>`;
-        return `<div class="fb-field">${label}
-            <div class="fb-field-control">${control}</div></div>`;
-    }
-
-    /**
-     * Minus, the number, plus -- the shape panel's stepper.
-     *
-     * A TEXT input and not a number one, which is not a detail: `focused()`
-     * keeps the caret across the panel's redraw by reading `selectionStart`,
-     * and that property is null on a number input. Typing "20" put 02 in the
-     * field. `inputmode="decimal"` keeps the numeric keypad on a touch device
-     * and Up/Down are handled in `keyDown`.
-     */
-    stepper(id, kind, value, enabled, label, placeholder) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        return `<div class="fb-stepper">
-            <button type="button" class="fb-stepper-button" data-step="-1"
-                    data-step-kind="${kind}" ${enabled ? "" : "disabled"}
-                    aria-label="Smaller">
-                <span class="fas fa-minus" aria-hidden="true"></span></button>
-            <input class="fb-stepper-value" id="${id}" type="text"
-                   inputmode="decimal" spellcheck="false" data-${kind}="1"
-                   value="${escape(String(value))}" ${enabled ? "" : "disabled"}
-                   ${placeholder ? `placeholder="${escape(placeholder)}"` : ""}
-                   aria-label="${escape(label)}">
-            <button type="button" class="fb-stepper-button" data-step="1"
-                    data-step-kind="${kind}" ${enabled ? "" : "disabled"}
-                    aria-label="Larger">
-                <span class="fas fa-plus" aria-hidden="true"></span></button>
-        </div>`;
     }
 
     /** Which control had the keyboard, and where its caret was. The panel
@@ -308,6 +265,11 @@ class FigureLinePanel {
         const step = event.target.closest?.("[data-step]");
         if (step && !step.disabled) {
             this.step(step.dataset.stepKind, Number(step.dataset.step));
+            return;
+        }
+        const stroke = event.target.closest?.("[data-toggle-stroke]");
+        if (stroke) {
+            this.toggle(stroke.getAttribute("aria-checked") !== "true");
             return;
         }
         const pick = event.target.closest?.("[data-pick]");

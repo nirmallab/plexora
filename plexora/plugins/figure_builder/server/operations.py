@@ -490,6 +490,30 @@ def _ungroup_items(document, op):
     document["groups"].pop(group_id)
 
 
+def _update_group(document, op):
+    """Rename a group, reorder its members, or change or clear its layout.
+
+    Membership can be REORDERED here and nothing else: `member_ids` must be the
+    same set it was. A layout's cells are filled in member order, so swapping
+    two panels in a 2 x 2 is a reorder -- but adding or removing a member is
+    what group_items and ungroup_items are for, with their own rules about who
+    may belong where.
+    """
+    group_id = op.get("group_id")
+    current = document["groups"].get(group_id)
+    if current is None:
+        raise ValueError(f"unknown group {group_id!r}")
+    changes = op.get("changes")
+    if not isinstance(changes, dict):
+        raise ValueError("update_group needs changes")
+    merged = {**current, **changes, "group_id": current["group_id"]}
+    updated = schema.normalize_group(merged)
+    if set(updated["member_ids"]) != set(current["member_ids"]) \
+            or len(updated["member_ids"]) != len(current["member_ids"]):
+        raise ValueError("update_group may reorder a group's members, not change them")
+    document["groups"][group_id] = updated
+
+
 # -- lookups and rules ---------------------------------------------------
 
 
@@ -559,6 +583,7 @@ _HANDLERS = {
     "unlink_panels": _unlink_panels,
     "group_items": _group_items,
     "ungroup_items": _ungroup_items,
+    "update_group": _update_group,
 }
 
 OPERATION_NAMES = tuple(sorted(_HANDLERS))

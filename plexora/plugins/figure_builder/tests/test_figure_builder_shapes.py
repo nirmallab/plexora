@@ -392,14 +392,14 @@ def test_the_panel_and_the_mode_are_wired_end_to_end():
     body = (TEMPLATES / "workspace_body.html").read_text(encoding="utf-8")
     actions = (STATIC / "figureActions.js").read_text(encoding="utf-8")
 
-    assert 'shape: "fb_shape_panel"' in workspace, "the strip cannot hold the panel"
+    assert 'shape: "fb_shape_panel"' in workspace, "the inspector cannot hold the panel"
     assert 'id="fb_shape_panel"' in body, "the panel has no element"
     assert "new FigureShapePanel(" in workspace, "the panel is never built"
     assert 'id: "editpoints"' in actions, "there is no way into Edit Points"
     assert "editPoints(annotationId)" in workspace, "the action leads nowhere"
-    # A contextual panel must never become the pinned one, or shutting it hands
-    # the strip to itself.
-    assert 'name !== "text" && name !== "shape" && name !== "line"' in workspace
+    # The inspector shows each object panel by its own `wants`, so a panel
+    # that has something to say is never hidden behind another one.
+    assert "el.hidden = !panel.wants;" in workspace
 
 
 def test_the_numeric_fields_are_text_inputs():

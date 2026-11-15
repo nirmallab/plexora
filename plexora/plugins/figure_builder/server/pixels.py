@@ -272,7 +272,17 @@ def channel_stats(datasource, channel_key):
         return {"min": 0, "max": 1, "p01": 0, "p999": 1, "dtype": "uint16"}
 
     low, high = np.percentile(sample, [1.0, 99.9])
+    # The contrast bar's histogram, in the shape core's viewer draws
+    # (data_model.channel_stats_of): 50 bins of log intensity over the
+    # pixels above zero, {x: bin centre, y: density}.
+    positive = np.log(sample[sample > 0])
+    histogram = []
+    if positive.size:
+        density, edges = np.histogram(positive, bins=50, density=True)
+        centres = (edges[1:] + edges[:-1]) / 2
+        histogram = [{"x": float(x), "y": float(y)} for x, y in zip(centres, density)]
     return {
+        "histogram": histogram,
         "min": float(sample.min()),
         "max": float(sample.max()),
         # The default window the viewer's auto-level lands on, so a channel

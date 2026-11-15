@@ -93,9 +93,19 @@ class FigureWorkspace {
         //: tray open and the text panel hidden; set here rather than applied,
         //: because applying it reads the document and the document has not
         //: arrived yet.
-        this.sidebar = "panels";
-        //: ...and what to put back when a contextual panel has finished with it.
-        this.pinnedSidebar = "panels";
+        this.sidebar = null;
+        //: Which tab the left column shows: "layers", "assets" or "insert".
+        this.tab = "assets";
+        //: Whether each side column is open. Remembered per browser, like the
+        //: View options: how wide somebody likes their canvas is not a fact
+        //: about the figure.
+        this.columns = { left: true, right: true, ...FigureWorkspace.readColumns() };
+        // A narrow window floats the columns over the canvas, one at a time;
+        // it opens on the inspector, which is the one that follows the work.
+        if (this.columns.left && this.columns.right && this.narrow()) this.columns.left = false;
+        //: Preview: the figure drawn as it exports, with every piece of chrome
+        //: gone. What it saved, so leaving puts the user back where they were.
+        this.preview = null;
         //: The debounce behind the figure's thumbnail, and the revision the
         //: last one was drawn at -- so a save that changed nothing visible
         //: does not re-upload the same picture.
@@ -129,6 +139,18 @@ class FigureWorkspace {
      *  is assigned at creation and this side does not know which one it got. */
     static get UNTITLED() { return /^untitled figure(\s+\d+)?$/i; }
 
+    static get COLUMNS_KEY() { return "plexora.figure_builder.columns"; }
+
+    static readColumns() {
+        try {
+            const stored = JSON.parse(window.localStorage.getItem(FigureWorkspace.COLUMNS_KEY));
+            return stored && typeof stored === "object"
+                ? { left: stored.left !== false, right: stored.right !== false } : {};
+        } catch (error) {
+            return {};   // private-browsing modes throw rather than answering null
+        }
+    }
+
     el(id) {
         return document.getElementById(id);
     }
@@ -136,6 +158,7 @@ class FigureWorkspace {
     setup() {
         if (!this.root) return;
         this.root.dataset.figureId = this.figureId;
+        FigureIcons.hydrate(this.root);
 
         this.canvas = new FigureCanvas({
             state: this.state,
@@ -155,10 +178,13 @@ class FigureWorkspace {
             // centre that does not move, so the bar is not in the way, and the
             // Transform panel's angle counting up as the object turns is the
             // whole point of being able to see it.
-            onGesture: (active, kind) =>
-                this.contextBar?.suppress(active && kind !== "rotate"),
+            onGesture: (active, kind) => {
+                this.contextBar?.suppress(active && kind !== "rotate");
+                this.root?.classList.toggle("is-gesturing", Boolean(active));
+            },
             onRotatePreview: (degrees) => this.contextBar?.previewRotation(degrees),
             onToolFinished: () => this.setTool("select"),
+            onNotice: (message) => this.toast(message),
             // Tray panels have landed. Placing them no longer selects them --
             // see FigureCanvas.placePanels -- so this is what tells the tray
             // that what it was holding has gone. It used to happen by accident:
@@ -171,6 +197,7 @@ class FigureWorkspace {
             },
             onEditText: (annotationId, options) => this.editText(annotationId, options),
             onEditPoints: (annotationId) => this.editPoints(annotationId),
+            onResolution: (panelId) => this.showResolution(panelId),
             // The node editor has entered, left, or changed which nodes are
             // selected inside the shape. The panel's Points section reads all
             // of that off the editor, so it has to be told: selecting a node
@@ -219,6 +246,7 @@ class FigureWorkspace {
 
         this.imagePanel = new FigureImagePanel({
             root: this.el("fb_image_panel"),
+            layout: "inspector",
             canvas: this.canvas,
             state: this.state,
             handlers: {
@@ -232,16 +260,37 @@ class FigureWorkspace {
                 onCopyRendering: (panelId) => this.copyRendering(panelId),
                 onApplyRendering: (panelIds) => this.applyRendering(panelIds),
                 hasRenderClipboard: () => this.hasRenderClipboard(),
+                // Null means "every image on the page", as the Insert tab's
+                // Panel letters does.
+                onRelabel: (panelIds) => this.relabel(panelIds
+                    || FigureSchema.panelsOnPage(this.state.document, this.canvas.pageId)
+                        .map((panel) => panel.panel_id)),
             },
             onClose: () => this.contextSidebar(),
         });
         this.imagePanel.setup();
 
+        //: The left column's first tab, and the top and foot of the right one.
+        this.layers = new FigureLayers({
+            root: this.el("fb_layers"), state: this.state, canvas: this.canvas,
+            api: this.api, figureId: this.figureId, workspace: this,
+        });
+        this.layers.setup();
+        this.inspector = new FigureInspector({
+            root: this.el("fb_inspector"), tailRoot: this.el("fb_inspector_tail"),
+            titleEl: this.el("fb_inspector_title"), subEl: this.el("fb_inspector_sub"),
+            state: this.state, canvas: this.canvas, workspace: this,
+        });
+        this.inspector.setup();
+
         this.contextBar = new FigureContextBar({
             overlayEl: this.el("fb_overlay_layer"),
             canvas: this.canvas,
             state: this.state,
+            compact: true,
             handlers: {
+                onReplace: (panelId) => this.openReplace(panelId, this.contextBar?.el),
+                onLayouts: () => this.openLayouts(),
                 onEditPanel: (panelId) => this.onEditPanel(panelId),
                 onQuickEdit: (panelId) => this.quickEditPanel(panelId),
                 onArrange: (command) => this.arrange(command),
@@ -278,6 +327,7 @@ class FigureWorkspace {
                 onEditText: (annotationId, options) => this.editText(annotationId, options),
                 onEditPoints: (annotationId) => this.editPoints(annotationId),
                 onDeleteFromFigure: (ids) => this.deleteFromFigure(ids),
+                onReplace: (panelId) => this.openReplace(panelId),
                 // Both surfaces run the same registry, so the right-click menu
                 // needs every handler the floating bar's actions name.
                 onRemoveFromPage: () => this.canvas.removeSelection(),
@@ -300,6 +350,7 @@ class FigureWorkspace {
         //: machine, none of them in the document.
         this.viewOptions = new FigureViewOptions({ workspace: this, canvas: this.canvas });
         this.viewOptions.setup();
+        this.syncCanvasUnit();
 
         //: The slide-over that edits a panel's microscopy view in place. Handed
         //: THIS document state -- never a second one; see the class comment.
@@ -332,8 +383,11 @@ class FigureWorkspace {
 
         this.applyBackLink();
         this.bindTopbar();
-        this.bindToolRail();
+        this.bindEditbar();
+        this.bindColumns();
         this.bindTray();
+        this.applyColumns();
+        this.restoreView();
         this.bindCanvasHost();
 
         this.exportUi = new FigureExportUi({
@@ -346,11 +400,34 @@ class FigureWorkspace {
         // the same keystroke.
         this._onKey = (event) => this.keyDown(event);
         window.addEventListener("keydown", this._onKey);
-        this._onResize = () => this.contextBar?.position();
+        // A window made narrower squeezed the canvas, not the columns: their
+        // widths were only clamped on load and while dragging. Re-fitted
+        // here, once per frame, from the widths the user chose (so widening
+        // the window gives them back), and a window that crosses into the
+        // narrow layout keeps one floating column, as it would have opened.
+        this._onResize = () => {
+            this.contextBar?.position();
+            if (this._resizeFrame) return;
+            this._resizeFrame = requestAnimationFrame(() => {
+                this._resizeFrame = 0;
+                if (this.narrow() && this.columns.left && this.columns.right) {
+                    this.columns.left = false;
+                    this.applyColumns();
+                }
+                for (const side of ["left", "right"]) {
+                    this._applyColumnWidth?.(side, this._chosenWidths?.[side], false);
+                }
+            });
+        };
         window.addEventListener("resize", this._onResize);
+        // A reload, or a full navigation away, keeps the place too.
+        this._onLeave = () => this.saveReturn();
+        window.addEventListener("pagehide", this._onLeave);
     }
 
     destroy() {
+        this.saveReturn();
+        window.removeEventListener("pagehide", this._onLeave);
         window.removeEventListener("keydown", this._onKey);
         window.removeEventListener("resize", this._onResize);
         // The canvas is a routed page and the window outlives it: a space-pan
@@ -362,11 +439,18 @@ class FigureWorkspace {
         this._detachDrop?.();
         this._detachDrop = null;
         this.closeMenu();
+        this.closeResolution();
         this.contextMenu?.destroy();
         this.viewOptions?.destroy();
         this.quickEdit?.destroy();
         this.contextBar?.destroy();
         this.canvas?.destroy();
+        this.inspector?.destroy?.();
+        this.imagePanel?.destroy?.();
+        window.clearTimeout(this._thumbnailTimer);
+        if (this._resizeFrame) cancelAnimationFrame(this._resizeFrame);
+        if (this._pendingZoom?.frame) cancelAnimationFrame(this._pendingZoom.frame);
+        this._pendingZoom = null;
     }
 
     // -- wiring ------------------------------------------------------------
@@ -383,14 +467,18 @@ class FigureWorkspace {
             }
         });
 
-        this.el("fb_undo")?.addEventListener("click", () => this.state.undo());
-        this.el("fb_redo")?.addEventListener("click", () => this.state.redo());
+        this.el("fb_undo")?.addEventListener("click", () => this.undo());
+        this.el("fb_redo")?.addEventListener("click", () => this.redo());
 
         this.el("fb_page_select")?.addEventListener("change", (event) => {
-            this.canvas.setPage(event.target.value);
-            this.contextBar?.update([]);
+            this.goToPage(event.target.value);
         });
         this.el("fb_page_menu")?.addEventListener("click", (event) => {
+            this.openMenu(event.currentTarget, this.pageMenuEntries(),
+                          (act) => this.pageAction(act));
+        });
+        // The same page menu, from the "···" in the inspector's head.
+        this.el("fb_inspector_more")?.addEventListener("click", (event) => {
             this.openMenu(event.currentTarget, this.pageMenuEntries(),
                           (act) => this.pageAction(act));
         });
@@ -403,7 +491,9 @@ class FigureWorkspace {
             this.openMenu(event.currentTarget, this.zoomMenuEntries(),
                           (act) => this.zoomAction(act));
         });
-        this.el("fb_zoom_fit")?.addEventListener("click", () => this.zoomToFit());
+        this.el("fb_zoom_fit")?.addEventListener("click", (event) => {
+            this.openMenu(event.currentTarget, this.zoomMenuEntries(), (act) => this.zoomAction(act));
+        });
 
         // Under the page rather than in a menu: adding one is the commonest
         // thing anybody does to a figure that has run out of room, and it is
@@ -457,23 +547,1154 @@ class FigureWorkspace {
         link.setAttribute("aria-label", label);
     }
 
-    bindToolRail() {
-        this.el("fb_tool_rail")?.addEventListener("click", (event) => {
-            const tool = event.target.closest("[data-tool]");
-            if (tool) this.setTool(tool.dataset.tool);
+    /**
+     * The editing row: Add, Layouts, Arrange, Annotate, and the page's size.
+     *
+     * One insertion path with three ways in. Add here, the Insert tab and the
+     * Assets tab all end in the same calls -- `addPanels`, `importFiles`,
+     * `openCaptureBin`, `openBookmarks`, `setTool` -- so there is nothing one of
+     * them can do that the others do differently.
+     */
+    bindEditbar() {
+        this.el("fb_menu_add")?.addEventListener("click", (event) => {
+            this.openMenu(event.currentTarget, this.addMenuEntries(), (act) => this.insert(act));
         });
-        // Split where the controls differ rather than by how they are drawn: a
-        // shape has a fill and is dragged out as a box, a line and an arrow
-        // have two ends and are dragged out along one.
-        this.el("fb_tool_text")?.addEventListener("click", (event) => {
-            this.openTextCard(event.currentTarget);
+        this.el("fb_menu_layouts")?.addEventListener("click", () => this.openLayouts());
+        this.el("fb_menu_arrange")?.addEventListener("click", (event) => {
+            this.openMenu(event.currentTarget, this.arrangeMenuEntries(),
+                          (act) => this.arrangeAction(act));
         });
-        this.el("fb_tool_shapes")?.addEventListener("click", (event) => {
-            this.openShapesCard(event.currentTarget);
+        this.el("fb_menu_annotate")?.addEventListener("click", (event) => {
+            this.openAnnotateCard(event.currentTarget);
         });
-        this.el("fb_tool_lines")?.addEventListener("click", (event) => {
-            this.openLinesCard(event.currentTarget);
+        // The page's size, which is a property of the paper: pressing it lets
+        // go of the selection, and the inspector then describes the page.
+        this.el("fb_page_setup")?.addEventListener("click", () => {
+            this.canvas.select([], false);
+            this.setColumn("right", true);
+            this.el("fb_inspector_scroll")?.scrollTo?.({ top: 0 });
         });
+        this.el("fb_preview")?.addEventListener("click", () => this.togglePreview());
+
+        // The empty page's two buttons. "Add image" goes to the figure's own
+        // assets, which is where captures and imported files are; the other is
+        // the trip to a viewer (`fb_add_image`, bound in bindTopbar).
+        this.el("fb_page_empty")?.addEventListener("click", (event) => {
+            // Assets is already open beside the page, so this one uploads.
+            if (event.target.closest("[data-empty='assets']")) this.el("fb_add_image_input")?.click();
+            const starter = event.target.closest("[data-starter]");
+            if (starter) this.chooseStarter(starter.dataset.starter);
+        });
+        this.renderStarters();
+
+        const insert = this.el("fb_insert_view");
+        if (insert) {
+            insert.innerHTML = this.insertMarkup();
+            insert.addEventListener("click", (event) => {
+                const tile = event.target.closest("[data-insert]");
+                if (tile) this.insert(tile.dataset.insert, tile);
+            });
+        }
+    }
+
+    /** The two side columns: the switches at either end of the editing row,
+     *  and the tabs of the left one. */
+    bindColumns() {
+        this.el("fb_toggle_left")?.addEventListener("click",
+            () => this.setColumn("left", !this.columns.left));
+        this.el("fb_toggle_right")?.addEventListener("click",
+            () => this.setColumn("right", !this.columns.right));
+        const tabs = this.el("fb_left")?.querySelector(".fb-tabs");
+        tabs?.addEventListener("click", (event) => {
+            const tab = event.target.closest("[data-tab]");
+            if (tab) this.showTab(tab.dataset.tab);
+        });
+        // Arrow keys move between the tabs, the tablist pattern.
+        tabs?.addEventListener("keydown", (event) => {
+            const order = ["assets", "layers", "insert"];
+            const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+            if (!step) return;
+            event.preventDefault();
+            const next = order[(order.indexOf(this.tab) + step + order.length) % order.length];
+            this.showTab(next);
+            this.el(`fb_tab_${next}`)?.focus();
+        });
+        this.bindColumnResize();
+    }
+
+    /** Each side column's width: its default, and how far a drag may take it. */
+    static get COLUMN_WIDTHS() {
+        return {
+            left: { def: 320, min: 296, max: 640, prop: "--fb-left-w", id: "fb_left" },
+            right: { def: 340, min: 304, max: 520, prop: "--fb-right-w", id: "fb_right" },
+        };
+    }
+
+    static get COLUMN_WIDTH_KEY() { return "plexora.figure_builder.column_widths"; }
+
+    /**
+     * A handle on the inner edge of each side column: drag to resize, double
+     * click to go back to the default, arrow keys when it has focus. Widths
+     * are kept in localStorage, for every figure. The canvas takes up what is
+     * left by layout alone; only the rulers and the floating bar are told.
+     */
+    bindColumnResize() {
+        const root = this.el("fb_workspace");
+        if (!root) return;
+        const specs = FigureWorkspace.COLUMN_WIDTHS;
+        let saved = {};
+        try {
+            saved = JSON.parse(window.localStorage.getItem(FigureWorkspace.COLUMN_WIDTH_KEY) || "{}") || {};
+        } catch (error) { saved = {}; }
+        this.columnWidths = {};
+
+        const apply = (side, width, persist) => {
+            const spec = specs[side];
+            // The canvas keeps at least 360px between the two columns.
+            const other = side === "left" ? "right" : "left";
+            const otherWidth = this.columns[other] ? (this.columnWidths[other] || specs[other].def) : 0;
+            const room = Math.max(spec.min, window.innerWidth - otherWidth - 360);
+            const clamped = Math.round(Math.max(spec.min, Math.min(spec.max, room, Number(width) || spec.def)));
+            this.columnWidths[side] = clamped;
+            root.style.setProperty(spec.prop, `${clamped}px`);
+            if (persist) {
+                this._chosenWidths[side] = clamped;
+                try {
+                    window.localStorage.setItem(FigureWorkspace.COLUMN_WIDTH_KEY, JSON.stringify(this.columnWidths));
+                } catch (error) { /* private window: the width lasts this visit */ }
+            }
+            this.viewOptions?.drawRulers();
+            this.contextBar?.position();
+        };
+
+        //: What the user dragged each column to, as opposed to what the
+        //: window currently has room for (`this.columnWidths`).
+        this._chosenWidths = { left: saved.left || specs.left.def, right: saved.right || specs.right.def };
+        this._applyColumnWidth = apply;
+        for (const side of ["left", "right"]) {
+            const spec = specs[side];
+            apply(side, saved[side] || spec.def, false);
+            const column = this.el(spec.id);
+            if (!column || column.querySelector(":scope > .fb-col-resize")) continue;
+            const handle = document.createElement("div");
+            handle.className = `fb-col-resize fb-col-resize-${side}`;
+            handle.tabIndex = 0;
+            handle.setAttribute("role", "separator");
+            handle.setAttribute("aria-orientation", "vertical");
+            handle.setAttribute("aria-label", side === "left" ? "Resize the left sidebar" : "Resize the right sidebar");
+            handle.title = "Drag to resize · double-click to reset";
+            column.appendChild(handle);
+
+            handle.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                handle.setPointerCapture(event.pointerId);
+                const startX = event.clientX;
+                const startWidth = this.columnWidths[side];
+                root.classList.add("is-resizing-columns");
+                handle.classList.add("is-dragging");
+                const move = (moveEvent) => {
+                    const dx = moveEvent.clientX - startX;
+                    apply(side, startWidth + (side === "left" ? dx : -dx), false);
+                };
+                const up = () => {
+                    handle.removeEventListener("pointermove", move);
+                    handle.removeEventListener("pointerup", up);
+                    handle.removeEventListener("pointercancel", up);
+                    root.classList.remove("is-resizing-columns");
+                    handle.classList.remove("is-dragging");
+                    apply(side, this.columnWidths[side], true);
+                };
+                handle.addEventListener("pointermove", move);
+                handle.addEventListener("pointerup", up);
+                handle.addEventListener("pointercancel", up);
+            });
+            handle.addEventListener("dblclick", () => apply(side, spec.def, true));
+            handle.addEventListener("keydown", (event) => {
+                const step = { ArrowLeft: -16, ArrowRight: 16 }[event.key];
+                if (!step) return;
+                event.preventDefault();
+                apply(side, this.columnWidths[side] + (side === "left" ? step : -step), true);
+            });
+        }
+    }
+
+    /** Open or close one side column. The canvas takes the width back by
+     *  layout alone -- nothing is redrawn but the rulers, which measure it. */
+    setColumn(side, open) {
+        this.columns[side] = Boolean(open);
+        try {
+            window.localStorage.setItem(FigureWorkspace.COLUMNS_KEY, JSON.stringify(this.columns));
+        } catch (error) { /* see readColumns */ }
+        // Narrow windows show one column at a time, over the canvas.
+        if (open && this.narrow()) this.columns[side === "left" ? "right" : "left"] = false;
+        this.applyColumns();
+    }
+
+    /** The narrow layout: the same breakpoint as the stylesheet's
+     *  `max-width: 1099px`, asked the same way so the two never disagree. */
+    narrow() {
+        return typeof window !== "undefined"
+            && (window.matchMedia ? window.matchMedia("(max-width: 1099px)").matches : window.innerWidth < 1100);
+    }
+
+    applyColumns() {
+        const root = this.el("fb_workspace");
+        root?.classList.toggle("has-left", this.columns.left);
+        root?.classList.toggle("has-right", this.columns.right);
+        for (const [side, id] of [["left", "fb_toggle_left"], ["right", "fb_toggle_right"]]) {
+            const button = this.el(id);
+            if (!button) continue;
+            button.classList.toggle("is-on", this.columns[side]);
+            button.setAttribute("aria-pressed", String(this.columns[side]));
+        }
+        const left = this.el("fb_left");
+        if (left) left.hidden = !this.columns.left;
+        this.applyInspector();
+        this.viewOptions?.drawRulers();
+        this.contextBar?.position();
+    }
+
+    /**
+     * Which tab, which Assets list and whether "Previously used" is on, kept
+     * per figure for this browser tab, so a reload or Back lands where the
+     * user was rather than on Layers. sessionStorage: a new tab starts fresh.
+     */
+    viewKey() {
+        return `plexora:figure-builder-view:${this.figureId}`;
+    }
+
+    /**
+     * Where the user was on the canvas -- the page, what was selected, the
+     * zoom, and where each scrolling part was -- kept for this browser tab
+     * when the figure is left (for the viewer, by Back, by a reload), and put
+     * back when it is opened again. The tab, the Assets list and the
+     * inspector's open sections are kept elsewhere (saveView, localStorage).
+     */
+    returnKey() {
+        return `plexora:figure-builder-return:${this.figureId}`;
+    }
+
+    saveReturn() {
+        const scroll = this.el("fb_canvas_scroll");
+        if (!this.canvas || !scroll || !scroll.isConnected) return;
+        const top = (id) => this.el(id)?.scrollTop || 0;
+        try {
+            window.sessionStorage.setItem(this.returnKey(), JSON.stringify({
+                page: this.canvas.pageId,
+                selection: Array.from(this.canvas.selection),
+                scale: this.canvas.scale,
+                left: scroll.scrollLeft, top: scroll.scrollTop,
+                assets: top("fb_assets_pane"), layers: top("fb_layers_view"),
+                inspector: top("fb_inspector_scroll"),
+                at: Date.now(),
+            }));
+        } catch (error) {
+            /* Private-browsing modes throw; the figure opens fitted. */
+        }
+    }
+
+    readReturn() {
+        try {
+            const saved = JSON.parse(window.sessionStorage.getItem(this.returnKey()) || "null");
+            return saved && typeof saved === "object" ? saved : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    applyReturn(saved) {
+        if (!saved || !this.canvas) return;
+        if (saved.scale > 0) {
+            this.canvas.setScale(saved.scale);
+            this.afterZoom();
+        }
+        const scroll = this.el("fb_canvas_scroll");
+        if (scroll) {
+            scroll.scrollLeft = saved.left || 0;
+            scroll.scrollTop = saved.top || 0;
+        }
+        const ids = (saved.selection || []).filter((id) => this.canvas.objectById(id));
+        if (ids.length) this.canvas.select(ids, false, true);
+        // The sidebars are drawn by the selection above; their scroll waits
+        // one frame for that.
+        window.requestAnimationFrame(() => {
+            for (const [id, value] of [["fb_assets_pane", saved.assets], ["fb_layers_view", saved.layers],
+                                       ["fb_inspector_scroll", saved.inspector]]) {
+                const el = this.el(id);
+                if (el && value) el.scrollTop = value;
+            }
+            this.viewOptions?.drawRulers();
+            this.contextBar?.position();
+        });
+    }
+
+    saveView() {
+        try {
+            window.sessionStorage.setItem(this.viewKey(), JSON.stringify({
+                tab: this.tab, pane: this.assetsPane || "captures", used: this.usedPanes || {},
+            }));
+        } catch (error) {
+            /* Private-browsing modes throw; the page opens on Layers. */
+        }
+    }
+
+    restoreView() {
+        let saved = null;
+        try {
+            saved = JSON.parse(window.sessionStorage.getItem(this.viewKey()) || "null");
+        } catch (error) {
+            saved = null;
+        }
+        if (saved && typeof saved === "object") {
+            this.usedPanes = (saved.used && typeof saved.used === "object") ? saved.used : {};
+            if (["captures", "bookmarks", "uploads"].includes(saved.pane)) this.assetsPane = saved.pane;
+            if (["layers", "assets", "insert"].includes(saved.tab)) this.tab = saved.tab;
+        }
+        // Shown through showTab even for the default (Assets), so its list is
+        // mounted and read. A shut column stays shut.
+        if (this.columns.left) this.showTab(this.tab);
+    }
+
+    /** Show one of the left column's tabs, opening the column if it was shut. */
+    /** How long a fetched Assets collection counts as current. */
+    static get ASSETS_FRESH_MS() { return 15000; }
+
+    showTab(name) {
+        this.tab = name;
+        this.saveView();
+        if (!this.columns.left) this.setColumn("left", true);
+        const views = { layers: "fb_layers_view", assets: "fb_tray_panel", insert: "fb_insert_view" };
+        for (const [tab, id] of Object.entries(views)) {
+            const view = this.el(id);
+            if (view) view.hidden = tab !== name;
+            const button = this.el(`fb_tab_${tab}`);
+            if (!button) continue;
+            button.classList.toggle("is-active", tab === name);
+            button.setAttribute("aria-selected", String(tab === name));
+            button.tabIndex = tab === name ? 0 : -1;
+        }
+        if (name === "assets") this.showAssets(this.assetsPane || "captures");
+        if (name === "layers") this.layers?.render();
+    }
+
+    /**
+     * One of the Assets tab's three: Captures, Bookmarks or Uploads.
+     *
+     * Each is one grid (FigureCaptureBinGrid). In it, first, this figure's
+     * images of that kind that are off the page, tagged "In figure" -- an
+     * image taken off the page goes back under the tab it was added from --
+     * then, for Captures and Bookmarks, the collection outside the figure:
+     * the captures not in any figure yet (bookmarks left out: they have
+     * their own tab), and the views bookmarked in the viewer. Every card can
+     * be dragged onto the page. One search box and one filter narrow it all.
+     */
+    showAssets(name) {
+        if (!["captures", "bookmarks", "uploads"].includes(name)) name = "captures";
+        this.assetsPane = name;
+        this.saveView();
+        const parts = { fb_assets_bin: "captures", fb_assets_viewer: "captures",
+                        fb_assets_bookmarks: "bookmarks", fb_assets_bookmark_go: "bookmarks",
+                        fb_assets_uploads: "uploads", fb_assets_upload: "uploads" };
+        for (const [id, pane] of Object.entries(parts)) {
+            const el = this.el(id);
+            if (el) el.hidden = pane !== name;
+        }
+        this.el("fb_tray_panel")?.querySelectorAll("[data-assets]").forEach((button) => {
+            const on = button.dataset.assets === name;
+            button.classList.toggle("is-on", on);
+            button.setAttribute("aria-pressed", String(on));
+        });
+        const search = this.el("fb_tray_search");
+        if (search) {
+            search.placeholder = `Search ${name}`;
+            search.title = name === "uploads" ? "Search by name or file"
+                : "Search by name, project, dataset or channel";
+        }
+        const grids = this.assetGrids || (this.assetGrids = {});
+        if (grids[name]) {
+            grids[name].setQuery(this.traySearch);
+            // The collection can change from the viewer, so it is asked for
+            // again -- but not on every flick between the three tabs.
+            const now = Date.now();
+            if (!(now - (grids[name]._askedAt || 0) < FigureWorkspace.ASSETS_FRESH_MS)) {
+                grids[name]._askedAt = now;
+                grids[name].refresh();
+            }
+            this.renderTray();
+            return;
+        }
+        const host = this.el({ captures: "fb_assets_bin", bookmarks: "fb_assets_bookmarks",
+                               uploads: "fb_assets_uploads" }[name]);
+        if (!host || typeof FigureCaptureBinGrid === "undefined") return;
+        const shared = {
+            api: this.api, search: false, quietWhenEmpty: true, draggable: true, selectable: true,
+            addLabel: "Add to page",
+            searchText: (capture) => this.captureHaystack(capture),
+            onLoaded: (grid) => {
+                // "Previously used" on or off, remembered per list.
+                if (grid && grid.usedToggle) {
+                    this.usedPanes = { ...(this.usedPanes || {}), [name]: grid.showUsed };
+                    this.saveView();
+                }
+                this.updateFilterOptions();
+                this.fitSourceCard();
+            },
+            onAddPanels: (ids) => this.placeFromTray(ids),
+            onRemovePanels: (ids) => this.deleteFromFigure(ids),
+            onGoto: (id) => this.gotoPanel(id),
+            onAdd: async (ids) => {
+                await this.adoptCaptures(ids, { place: true });
+                grids[name].refresh();
+            },
+        };
+        grids[name] = name === "captures"
+            ? new FigureCaptureBinGrid(host, { ...shared, excludeBookmarked: true })
+            : name === "bookmarks"
+                ? new FigureCaptureBinGrid(host, {
+                    ...shared, bookmarks: true,
+                    onGo: (capture) => this.api.openViewAt(capture.datasource, capture.capture_id),
+                    onAddOne: (capture) => this.adoptCaptures([capture.capture_id], { place: true }),
+                })
+                : new FigureCaptureBinGrid(host, {
+                    ...shared, collection: false, noun: "upload", usedToggle: false });
+        grids[name].setQuery(this.traySearch);
+        grids[name].setPredicate(this.assetPredicate());
+        if (grids[name].usedToggle && (this.usedPanes || {})[name]) grids[name].showUsed = true;
+        grids[name].setup();
+        this.renderTray();
+    }
+
+    /** Select one of the figure's images where it is on the page. */
+    gotoPanel(panelId) {
+        const panel = this.state.panel(panelId);
+        if (!panel || !panel.placement) return;
+        if (panel.placement.page_id !== this.canvas.pageId) this.goToPage(panel.placement.page_id);
+        this.canvas.select([panel.panel_id], false, true);
+    }
+
+    // -- the Assets filter ------------------------------------------------
+
+    /** The filter beside the search, and the project list it names images
+     *  by (core's /projects: display name, dataset, location per key). */
+    setupAssetFilter() {
+        if (typeof FigureAssetFilter === "undefined") return;
+        this.assetFilter = new FigureAssetFilter({
+            button: this.el("fb_assets_filter"),
+            chips: this.el("fb_assets_chips"),
+            root: this.root,
+            onChange: () => this.applyAssetFilter(),
+        });
+        this.projectCards = new Map();
+        this.api.listProjects?.().then((cards) => {
+            if (!cards) return;
+            this.projectCards = new Map(cards.map((card) => [card.name, card]));
+            this.applyAssetFilter();
+        });
+    }
+
+    capturesFacets(capture) {
+        return FigureAssetFilter.facetsOf(capture, this.projectCards);
+    }
+
+    panelFacets(panel) {
+        return FigureAssetFilter.facetsOf({
+            source: this.state.source(panel.source_id), scene: panel.scene,
+            created_at: panel.created_at,
+        }, this.projectCards);
+    }
+
+    /** The filter as a test on one bin capture, or null when it is off. */
+    assetPredicate() {
+        const filter = this.assetFilter;
+        if (!filter || !filter.active) return null;
+        return (capture) => filter.matches(this.capturesFacets(capture));
+    }
+
+    /** The search reads a capture's project and dataset names too. */
+    captureHaystack(capture) {
+        const facets = typeof FigureAssetFilter === "undefined" ? null : this.capturesFacets(capture);
+        return [FigureSchema.captureSearchText(capture),
+                facets && facets.project, facets && facets.dataset].filter(Boolean).join(" ");
+    }
+
+    applyAssetFilter() {
+        const predicate = this.assetPredicate();
+        for (const grid of Object.values(this.assetGrids || {})) grid.setPredicate(predicate);
+        this.renderTray();
+    }
+
+    /** The filter's options: what the tab now showing could list -- this
+     *  figure's images of its kind, on the page or off, and its collection. */
+    updateFilterOptions() {
+        if (!this.assetFilter) return;
+        const pane = this.assetsPane || "captures";
+        const panels = Object.values(this.state.document?.panels || {})
+            .filter((panel) => this.inAssetsPane(panel));
+        const grid = (this.assetGrids || {})[pane];
+        const captures = grid ? grid.listed() : [];
+        this.assetFilter.setItems(panels.map((panel) => this.panelFacets(panel))
+            .concat(captures.map((capture) => this.capturesFacets(capture))));
+    }
+
+    // -- inserting ---------------------------------------------------------
+
+    addMenuEntries() {
+        return [
+            { heading: "Images" },
+            { act: "viewer", icon: "camera", label: "From a viewer…" },
+            { act: "captures", icon: "inbox", label: "Captures…" },
+            { act: "bookmarks", icon: "bookmark", label: "Bookmarks…" },
+            { act: "file", icon: "file-image", label: "Upload image…" },
+            { separator: true },
+            { heading: "Page" },
+            { act: "page", icon: "plus", label: "New page" },
+            { act: "duplicate_page", icon: "clone", label: "Duplicate this page" },
+        ];
+    }
+
+    /** Every insertion, by name -- the Add menu, the Insert tab and the empty
+     *  page all land here. `anchor` is the control that asked, for the cards
+     *  that open beside it. */
+    insert(act, anchor) {
+        const run = {
+            assets: () => this.showTab("assets"),
+            viewer: () => this.addPanels(),
+            captures: () => this.openCaptureBin(),
+            bookmarks: () => this.openBookmarks(),
+            file: () => this.el("fb_add_image_input")?.click(),
+            page: () => this.addPage(),
+            duplicate_page: () => this.duplicatePage(),
+            text: () => this.openTextCard(anchor || this.el("fb_menu_annotate")),
+            shapes: () => this.openShapesCard(anchor || this.el("fb_menu_annotate")),
+            lines: () => this.openLinesCard(anchor || this.el("fb_menu_annotate")),
+            rect: () => this.setTool("shape:rect"),
+            ellipse: () => this.setTool("shape:ellipse"),
+            line: () => this.setTool("line:line"),
+            arrow: () => this.setTool("line:arrow"),
+            letters: () => this.relabelSelectionOrPage(),
+            scalebar: () => this.scaleBarsOn(),
+            channels: () => this.channelCaptions(),
+            colorbar: () => this.colorBarsOn(),
+        }[act];
+        run?.();
+    }
+
+    /** The Insert tab: everything that can be put on the page, by kind. */
+    insertMarkup() {
+        const tile = (act, icon, label, title) => `<button type="button" class="fb-insert-tile"
+                data-insert="${act}" title="${FigureSchema.escapeHtml(title || label)}">
+                ${FigureIcons.fa(icon)}
+                <span>${FigureSchema.escapeHtml(label)}</span></button>`;
+        const group = (title, tiles, note) => `<section class="fb-insert-group">
+                <h3 class="fb-insert-title">${title}</h3>
+                <div class="fb-insert-grid">${tiles.join("")}</div>
+                ${note ? `<p class="fb-insert-note">${note}</p>` : ""}</section>`;
+        return group("Images", [
+            tile("viewer", "camera", "From a viewer", "Open a project and capture fields into this figure"),
+            tile("captures", "inbox", "Captures", "Captures not yet in any figure"),
+            tile("bookmarks", "bookmark", "Bookmarks", "Views saved in the viewer"),
+            tile("file", "file-image", "Image file", "A PNG, JPEG or TIFF from your computer"),
+        ]) + group("Annotations", [
+            tile("text", "font", "Text"),
+            tile("rect", "square", "Rectangle"),
+            tile("ellipse", "circle", "Ellipse"),
+            tile("line", "minus", "Line"),
+            tile("arrow", "arrow-right-long", "Arrow"),
+            tile("shapes", "shapes", "More shapes"),
+        ]) + group("Scientific", [
+            tile("letters", "font", "Panel letters", "Letter the selected images A, B, C… in reading order"),
+            tile("scalebar", "ruler-horizontal", "Scale bars", "Turn on scale bars on the selected images"),
+            tile("channels", "palette", "Channel labels", "Label the selected images with their channels, in their colors"),
+            tile("colorbar", "swatchbook", "Color bars", "An intensity ramp per channel on the selected images"),
+        ], "Scale bars and channel names act on the selected images and read their sources. "
+           + "An image without a pixel size gets a bar in pixels, never an assumed length.");
+    }
+
+    /**
+     * The Annotate card: the text styles, the shapes and the lines in one
+     * card, then the scientific furniture. The same three cards the rail used
+     * to open one at a time, stacked -- each part is generated from the same
+     * definitions, so this cannot offer something the others do not.
+     */
+    openAnnotateCard(anchor) {
+        const text = FigureRichText.PRESETS.map((preset) => ({
+            act: `text:${preset.id}`, icon: "font", label: preset.label, hint: `${preset.size_pt} pt` }));
+        this.openMenu(anchor, [
+            { heading: "Text" },
+            ...text,
+            { separator: true },
+            { heading: "Shapes and lines" },
+            { act: "shape:rect", icon: "square", label: "Rectangle" },
+            { act: "shape:ellipse", icon: "circle", label: "Ellipse" },
+            { act: "line:line", icon: "minus", label: "Line" },
+            { act: "line:arrow", icon: "arrow-right-long", label: "Arrow" },
+            { act: "insert:shapes", icon: "shapes", label: "More shapes…" },
+            { act: "insert:lines", icon: "ellipsis", label: "More lines…" },
+            { separator: true },
+            { heading: "Scientific" },
+            { act: "insert:letters", icon: "font", label: "Panel labels A, B, C" },
+            { act: "insert:scalebar", icon: "ruler-horizontal", label: "Scale bars" },
+            { act: "insert:channels", icon: "palette", label: "Channel labels" },
+            { act: "insert:colorbar", icon: "swatchbook", label: "Color bars" },
+        ], (act) => {
+            if (act.startsWith("insert:")) this.insert(act.slice(7), anchor);
+            else this.setTool(act);
+        });
+    }
+
+    arrangeMenuEntries() {
+        const sel = FigureSelection.describe(Array.from(this.canvas.selection), this.state, this.canvas);
+        const two = sel.arrangeable > 1;
+        const any = sel.count > 0;
+        return [
+            { heading: "Align" },
+            { act: "left", icon: "align-left", label: "Left", disabled: !two },
+            { act: "center", icon: "align-center", label: "Centers", disabled: !two },
+            { act: "right", icon: "align-right", label: "Right", disabled: !two },
+            { act: "top", icon: "arrow-up", label: "Top", disabled: !two },
+            { act: "middle", icon: "arrows-up-down", label: "Middles", disabled: !two },
+            { act: "bottom", icon: "arrow-down", label: "Bottom", disabled: !two },
+            { separator: true },
+            { act: "distribute_h", icon: "arrows-left-right", label: "Space evenly across", disabled: sel.arrangeable < 3 },
+            { act: "distribute_v", icon: "arrows-up-down", label: "Space evenly down", disabled: sel.arrangeable < 3 },
+            { act: "same_size", icon: "expand", label: "Match size to the first", disabled: !two },
+            { separator: true },
+            { act: "front", icon: "angles-up", label: "Bring to front", hint: "⌘⇧]", disabled: !any },
+            { act: "forward", icon: "angle-up", label: "Bring forward", hint: "⌘]", disabled: !any },
+            { act: "backward", icon: "angle-down", label: "Send backward", hint: "⌘[", disabled: !any },
+            { act: "back", icon: "angles-down", label: "Send to back", hint: "⌘⇧[", disabled: !any },
+            { separator: true },
+            sel.grouped
+                ? { act: "group", icon: "object-ungroup", label: "Ungroup", hint: "⇧⌘G" }
+                : { act: "group", icon: "object-group", label: "Group", hint: "⌘G", disabled: sel.count < 2 },
+            { separator: true },
+            { act: "fit_content", icon: "expand", label: "Fit content to page" },
+            { act: "center_content", icon: "arrows-left-right", label: "Center content on page" },
+        ];
+    }
+
+    arrangeAction(act) {
+        if (["front", "forward", "backward", "back"].includes(act)) this.canvas.reorderZ(act);
+        else if (act === "group") {
+            const sel = FigureSelection.describe(Array.from(this.canvas.selection), this.state, this.canvas);
+            if (sel.grouped) this.canvas.ungroupSelection();
+            else this.canvas.groupSelection();
+        } else if (act === "fit_content") this.canvas.fitContentToPage();
+        else if (act === "center_content") this.canvas.centerContent();
+        else this.arrange(act);
+    }
+
+    // -- layouts -----------------------------------------------------------
+
+    /** The placed images in the selection, in selection order. */
+    selectedImageIds() {
+        return Array.from(this.canvas.selection)
+            .filter((id) => this.state.panel(id)?.placement && this.canvas.isEditable(id));
+    }
+
+    /**
+     * The Layouts popover: every preset as a picture, the two gaps, letters
+     * and fit. Presets the selection cannot fill are shown and dimmed, with the
+     * reason in the tooltip, so the list does not change shape under the
+     * pointer as the selection changes.
+     */
+    openLayouts() {
+        const anchor = this.el("fb_menu_layouts");
+        if (!anchor) return;
+        const ids = this.selectedImageIds();
+        const count = ids.length;
+        const gutter = this.state.document.settings.style.gutter_mm;
+        const prefs = this.layoutPrefs || (this.layoutPrefs = { label: false, fit: "fit" });
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const group = this.canvas.groupOfExactly(ids);
+        const tiles = FigureLayouts.PRESETS.map((preset) => {
+            const ok = FigureLayouts.fits(preset, count);
+            const on = group?.layout?.preset === preset.id;
+            const tip = ok ? `${preset.label} layout`
+                : (count < 2 ? "Select two or more images first"
+                    : `Holds ${preset.n} images; ${count} are selected`);
+            return `<button type="button" class="fb-layout-tile${on ? " is-on" : ""}"
+                        data-act="layout:${preset.id}" ${ok ? "" : "disabled"}
+                        title="${escape(tip)}">${FigureLayouts.diagram(preset)}
+                        <span>${escape(preset.label)}</span></button>`;
+        }).join("");
+        const g = group?.layout;
+        this.mountMenu(anchor, `
+            <div class="fb-insp-section-head"><span>Layouts</span>
+                <span class="fb-insp-aside">${count >= 2 ? `${count} images selected` : "Select two or more images"}</span></div>
+            <div class="fb-layout-tiles fb-layout-tiles-4">${tiles}</div>
+            <div class="fb-insp-grid2">
+                <label class="fb-insp-field"><span class="fb-insp-field-label">Gap across</span>
+                    <input type="text" inputmode="decimal" class="fb-insp-input" data-layout-gap="x"
+                           value="${escape(String(Number((g ? g.gap_x_mm : gutter).toFixed(2))))}"
+                           aria-label="Horizontal gap"><span class="fb-insp-suffix">mm</span></label>
+                <label class="fb-insp-field"><span class="fb-insp-field-label">Gap down</span>
+                    <input type="text" inputmode="decimal" class="fb-insp-input" data-layout-gap="y"
+                           value="${escape(String(Number((g ? g.gap_y_mm : gutter).toFixed(2))))}"
+                           aria-label="Vertical gap"><span class="fb-insp-suffix">mm</span></label>
+            </div>`,
+            (act) => {
+                if (!act.startsWith("layout:")) return;
+                const menu = this._lastLayoutsMenu;
+                const gap = (axis) => {
+                    const value = parseFloat(menu?.querySelector(`[data-layout-gap="${axis}"]`)?.value);
+                    return Number.isFinite(value) && value >= 0 ? Math.min(50, value) : gutter;
+                };
+                // Lettering and fit are no longer asked here: panel labels are
+                // switched in the Page view, and a layout keeps the fit its
+                // group already has (fit, never crop, for a new one).
+                prefs.fit = g ? g.fit : "fit";
+                this.layoutSelection(act.slice(7), { gap_x_mm: gap("x"), gap_y_mm: gap("y") });
+            }, "fb-layouts-card");
+        this._lastLayoutsMenu = this.menu;
+        // The switches and fields are not actions: a press on them must not
+        // close the card, which every [data-act] row does.
+        this.menu?.querySelectorAll("input").forEach((input) => {
+            input.addEventListener("click", (event) => event.stopPropagation());
+            // On a layout that exists, a gap typed here applies at once.
+            input.addEventListener("change", () => {
+                const value = parseFloat(String(input.value).replace(",", "."));
+                if (!group?.layout || !(value >= 0)) return;
+                // The server keeps a gap within 0-50 mm (normalize_group_layout).
+                this.canvas.relayout(group.group_id,
+                    { [input.dataset.layoutGap === "x" ? "gap_x_mm" : "gap_y_mm"]: Math.min(50, value) });
+            });
+        });
+    }
+
+    /**
+     * "Start from a layout": remember the layout chosen on an empty page, and
+     * lay the page's images out in it as soon as there are enough of them to
+     * fill it -- however they arrive, from Assets, a file or a viewer.
+     * Pressing the chosen one again lets go of it.
+     */
+    chooseStarter(presetId) {
+        this.pendingLayout = this.pendingLayout === presetId ? null : presetId;
+        this.renderStarters();
+        const preset = FigureLayouts.byId(presetId);
+        if (this.pendingLayout && preset) {
+            this.toast(`Add ${preset.n} images and they will be laid out ${preset.label}.`,
+                       { label: "Add images", act: () => this.showTab("assets") });
+        }
+    }
+
+    renderStarters() {
+        const host = this.el("fb_page_starters");
+        if (!host) return;
+        host.innerHTML = ["2x2", "3x2", "top3", "left2"].map((id) => {
+            const preset = FigureLayouts.byId(id);
+            const on = this.pendingLayout === id;
+            return `<button type="button" class="fb-layout-tile${on ? " is-on" : ""}" data-starter="${id}"
+                        aria-pressed="${on}" title="${FigureSchema.escapeHtml(preset.label)}: fills as images are added">
+                    ${FigureLayouts.diagram(preset)}<span>${FigureSchema.escapeHtml(preset.label)}</span></button>`;
+        }).join("");
+    }
+
+    /** Apply a remembered starter layout once the page can fill it. */
+    fillStarter() {
+        const preset = this.pendingLayout && FigureLayouts.byId(this.pendingLayout);
+        if (!preset || this._fillingStarter) return;
+        const ids = FigureSchema.panelsOnPage(this.state.document, this.canvas.pageId)
+            .filter((panel) => this.canvas.isEditable(panel.panel_id)).map((panel) => panel.panel_id);
+        if (ids.length < preset.n) return;
+        this.pendingLayout = null;
+        this.renderStarters();
+        this._fillingStarter = true;
+        // After this render, not inside it: the layout is a commit of its own.
+        window.setTimeout(() => {
+            this._fillingStarter = false;
+            this.canvas.select(ids.slice(0, preset.n), false, true);
+            this.layoutSelection(preset.id);
+        }, 0);
+    }
+
+    /** Lay the selected images out in `presetId`. */
+    layoutSelection(presetId, gaps) {
+        const ids = this.selectedImageIds();
+        const prefs = this.layoutPrefs || (this.layoutPrefs = { label: false, fit: "fit" });
+        const gutter = this.state.document.settings.style.gutter_mm;
+        const groupId = this.canvas.applyLayout(ids, {
+            preset: presetId,
+            gap_x_mm: gaps ? gaps.gap_x_mm : gutter,
+            gap_y_mm: gaps ? gaps.gap_y_mm : gutter,
+            fit: prefs.fit,
+        }, { label: prefs.label });
+        if (groupId) this.canvas.select(ids, false, true);
+    }
+
+    /** "Lay out all images": select every image on the page, then offer the
+     *  layouts for them. */
+    layoutAllImages() {
+        const ids = FigureSchema.panelsOnPage(this.state.document, this.canvas.pageId)
+            .filter((panel) => this.canvas.isEditable(panel.panel_id))
+            .map((panel) => panel.panel_id);
+        if (ids.length < 2) {
+            this.toast("A layout needs two or more images on this page.");
+            return;
+        }
+        this.canvas.select(ids, false, true);
+        this.openLayouts();
+    }
+
+    /** The tray's "Add as layout": place the selected assets, then lay them
+     *  out in the first preset that holds them all. */
+    placeTrayAsLayout() {
+        const ids = Array.from(this.traySelection).filter((id) => this.state.panel(id));
+        if (ids.length < 2) return;
+        this.placeFromTray(ids);
+        const preset = FigureLayouts.suggested(ids.length)[0]
+            || FigureLayouts.PRESETS.find((each) => FigureLayouts.fits(each, ids.length));
+        if (!preset) return;
+        this.canvas.select(ids, false, true);
+        this.layoutSelection(preset.id);
+    }
+
+    // -- the scientific furniture ------------------------------------------
+
+    /** Letter panels A, B, C… in reading order: the selected images, or every
+     *  image on the page when none is selected. Typed letters become automatic
+     *  again, which is the point of the command. */
+    relabelSelectionOrPage() {
+        const ids = this.selectedImageIds();
+        this.relabel(ids.length ? ids : FigureSchema.panelsOnPage(this.state.document, this.canvas.pageId)
+            .map((panel) => panel.panel_id));
+    }
+
+    relabel(panelIds) {
+        this.updatePanels(panelIds.map((id) => this.state.panel(id)).filter(Boolean)
+            .map((panel) => ({ panel_id: panel.panel_id,
+                               changes: { label: { ...panel.label, visible: true, auto: true, text: "" } } })));
+    }
+
+    /** Scale bars on for the selected images. Nothing about the length is
+     *  decided here: a calibrated image measures in microns, an uncalibrated
+     *  one in pixels (`compose.scale_bar`). */
+    scaleBarsOn() {
+        const ids = this.selectedImageIds();
+        if (!ids.length) {
+            this.toast("Select the images to put scale bars on.");
+            return;
+        }
+        this.updatePanels(ids.map((id) => this.state.panel(id))
+            .map((panel) => ({ panel_id: panel.panel_id,
+                               changes: { scalebar: { ...panel.scalebar, visible: true } } })));
+    }
+
+    /** Colour bars on for the selected images: one intensity ramp per
+     *  visible channel, in raw units, drawn from the panel's own windows. */
+    colorBarsOn() {
+        const ids = this.selectedImageIds();
+        if (!ids.length) {
+            this.toast("Select the images to put color bars on.");
+            return;
+        }
+        this.updatePanels(ids.map((id) => this.state.panel(id))
+            .map((panel) => ({ panel_id: panel.panel_id,
+                               changes: { colorbar: { ...panel.colorbar, visible: true } } })));
+    }
+
+    /** One caption per visible channel, in the channel's colour -- the image
+     *  panel's "Channels" preset, applied from here. */
+    channelCaptions() {
+        const ids = this.selectedImageIds();
+        if (!ids.length) {
+            this.toast("Select the images to name the channels on.");
+            return;
+        }
+        // The image panel's own preset, so the words and colours are exactly
+        // the ones its "Channels" row would write.
+        const updates = ids.map((id) => this.state.panel(id)).map((panel) => ({
+            panel_id: panel.panel_id,
+            added: this.imagePanel.presetEntries(panel, { preset: "channels" }),
+            labels: panel.labels || [],
+        })).filter((entry) => entry.added.length)
+            .map((entry) => ({ panel_id: entry.panel_id,
+                               changes: { labels: [...entry.labels, ...entry.added] } }));
+        if (!updates.length) {
+            this.toast("The selected images have no channels to name.");
+            return;
+        }
+        this.updatePanels(updates);
+    }
+
+    // -- preview -----------------------------------------------------------
+
+    /**
+     * The figure as it exports: no columns, no handles, no guides, no badges.
+     *
+     * The selection, the zoom and the scroll are kept and given back, so
+     * leaving is going back to work rather than starting over. Drawn by the
+     * same renderer as editing -- everything editing adds is chrome the
+     * stylesheet hides under `.is-preview`, so the two cannot drift apart.
+     */
+    togglePreview(on) {
+        const want = on === undefined ? !this.preview : Boolean(on);
+        if (want === Boolean(this.preview)) return;
+        const root = this.el("fb_workspace");
+        const scroll = this.el("fb_canvas_scroll");
+        if (want) {
+            this.closeMenu();
+            this.contextBar?.closePopover();
+            this.closeResolution();
+            if (this.tool !== "select") this.setTool("select");
+            this.preview = {
+                selection: Array.from(this.canvas.selection),
+                scale: this.canvas.scale,
+                left: scroll?.scrollLeft || 0, top: scroll?.scrollTop || 0,
+            };
+            this.canvas.select([], false);
+            root?.classList.add("is-preview");
+            const spec = this.el("fb_preview_spec");
+            if (spec) {
+                const pages = this.state.pages;
+                const at = pages.findIndex((page) => page.page_id === this.canvas.pageId);
+                const format = (this.el("fb_export_format")?.value || "pdf").toUpperCase();
+                spec.textContent = `${format} · ${this.state.document.settings.dpi_default} DPI`
+                    + ` · page ${at + 1} of ${pages.length}`;
+            }
+            this.zoomToFit();
+        } else {
+            const saved = this.preview;
+            this.preview = null;
+            root?.classList.remove("is-preview");
+            this.canvas.setScale(saved.scale);
+            this.afterZoom();
+            if (scroll) {
+                scroll.scrollLeft = saved.left;
+                scroll.scrollTop = saved.top;
+            }
+            this.canvas.select(saved.selection.filter((id) => this.canvas.objectById(id)), false, true);
+        }
+        const button = this.el("fb_preview");
+        if (button) {
+            button.setAttribute("aria-pressed", String(want));
+            button.classList.toggle("is-on", want);
+            const word = button.querySelector(".fb-preview-word");
+            if (word) word.textContent = want ? "Back to editing" : "Preview";
+        }
+    }
+
+    // -- the resolution warning --------------------------------------------
+
+    /**
+     * What a panel's low-resolution badge means, and what can be done.
+     *
+     * Numbers first -- the source's pixels, the printed size, the result in
+     * pixels per inch against the export setting -- because "low resolution"
+     * on its own is a verdict nobody can check. Then the three remedies that
+     * actually add detail or stop asking for it; never "upsample", which
+     * cannot recover anything the source does not hold.
+     */
+    showResolution(panelId) {
+        const panel = this.state.panel(panelId);
+        const quality = panel && FigureCanvas.panelQuality(panel, this.state.document);
+        const host = this.el("fb_overlay_layer");
+        if (!quality || !host) return;
+        this.closeResolution();
+        if (!this.canvas.selection.has(panelId) || this.canvas.selection.size !== 1) {
+            this.canvas.select([panelId], false, true);
+        }
+        const unit = this.inspector?.unit || { per: 1, label: "mm" };
+        const show = (mm) => String(Number((mm / unit.per).toFixed(unit.label === "in" ? 2 : 1)));
+        const place = panel.placement;
+        const card = document.createElement("div");
+        card.className = "fb-resolution";
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-label", "Low effective resolution");
+        const shrinkTo = Math.min(quality.fit_w_mm, place.w_mm);
+        card.innerHTML = `
+            <div class="fb-resolution-head">
+                ${FigureIcons.fa("triangle-exclamation")}
+                <strong>Low effective resolution</strong>
+                <button type="button" class="fb-icon-button" data-res="close" aria-label="Close">
+                    ${FigureIcons.fa("xmark")}</button>
+            </div>
+            <dl class="fb-resolution-facts">
+                <dt>Source</dt><dd>${quality.source_w} × ${quality.source_h} px${quality.cropped
+                    ? ` <span>(of ${quality.frame_w} × ${quality.frame_h})</span>` : ""}</dd>
+                <dt>Size on page</dt><dd>${show(place.w_mm)} × ${show(place.h_mm)} ${unit.label}</dd>
+                <dt>Effective resolution</dt><dd class="is-strong">${quality.ppi} ppi</dd>
+                <dt>Export setting</dt><dd>${quality.dpi} DPI</dd>
+            </dl>
+            <p>At this size the panel holds fewer pixels than the export prints. It will export,
+                but enlarging cannot add detail the source does not have.</p>
+            <div class="fb-resolution-actions">
+                <button type="button" class="fb-button" data-res="shrink">
+                    Shrink to ${show(shrinkTo)} ${unit.label} wide (${quality.dpi} ppi)</button>
+                <button type="button" class="fb-button" data-res="replace">Replace with another image…</button>
+                <button type="button" class="fb-button" data-res="source"
+                    ${this.state.source(panel.source_id)?.kind === "imported_asset" ? "disabled" : ""}>
+                    Open the source to capture it larger</button>
+            </div>
+            <p class="fb-resolution-note">The threshold is three quarters of the export DPI, which
+                is set under Figure style with nothing selected.</p>`;
+        host.appendChild(card);
+        this.resolutionCard = card;
+        // The floating bar is about the same panel and would sit on top of
+        // the card that explains it.
+        this.contextBar?.suppress(true);
+        // Beside the panel, kept inside the canvas.
+        const el = this.canvas.surfaceEl.querySelector(`[data-panel-id="${FigureSchema.cssEscape(panelId)}"]`);
+        const box = el?.getBoundingClientRect();
+        const frame = host.getBoundingClientRect();
+        if (box) {
+            const width = card.offsetWidth || 300;
+            const height = card.offsetHeight || 280;
+            let left = box.right - frame.left + 8;
+            if (left + width > frame.width - 8) left = Math.max(8, box.left - frame.left - width - 8);
+            const top = Math.max(8, Math.min(frame.height - height - 8, box.top - frame.top));
+            card.style.left = `${left}px`;
+            card.style.top = `${top}px`;
+        }
+        card.addEventListener("click", (event) => {
+            const act = event.target.closest("[data-res]")?.dataset.res;
+            if (!act) return;
+            if (act === "shrink") {
+                const k = shrinkTo / place.w_mm;
+                this.canvas.setBox(panelId, { w_mm: place.w_mm * k, h_mm: place.h_mm * k });
+            } else if (act === "replace") {
+                this.openReplace(panelId, event.target.closest("[data-res]"));
+                return;
+            } else if (act === "source") {
+                this.onEditPanel(panelId);
+            }
+            this.closeResolution();
+        });
+        this._onResolutionDismiss = (event) => {
+            if (card.contains(event.target) || event.target.closest?.("[data-lowres]")) return;
+            this.closeResolution();
+        };
+        document.addEventListener("pointerdown", this._onResolutionDismiss, true);
+        card.querySelector("[data-res='shrink']")?.focus();
+    }
+
+    closeResolution() {
+        if (this._onResolutionDismiss) {
+            document.removeEventListener("pointerdown", this._onResolutionDismiss, true);
+            this._onResolutionDismiss = null;
+        }
+        if (this.resolutionCard) this.contextBar?.suppress(false);
+        this.resolutionCard?.remove();
+        this.resolutionCard = null;
+    }
+
+    // -- replacing a panel's image -----------------------------------------
+
+    /**
+     * Put another of the figure's images in this panel's place.
+     *
+     * The PLACE is kept -- position, size, stacking, letter, scale-bar and
+     * caption settings, layout and group membership -- and the IMAGE changes.
+     * The panel that was there goes back to the figure's assets rather than
+     * being deleted: it may be the only record of a view. One commit.
+     *
+     * The choice is from the images in this figure that are not on a page;
+     * a capture from a viewer or a file arrives there first.
+     */
+    openReplace(panelId, anchor) {
+        const candidates = FigureSchema.panelsInTray(this.state.document);
+        const at = anchor || this.el("fb_menu_add");
+        if (!candidates.length) {
+            this.toast("There is no other image in this figure to use. Capture one or add an image file first.",
+                       { label: "Show assets", act: () => this.showTab("assets") });
+            return;
+        }
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const tiles = candidates.slice(0, 24).map((panel) => {
+            const source = this.state.source(panel.source_id);
+            const name = FigureSchema.panelCaption(panel)
+                || (source && (source.display_name || source.datasource)) || "Image";
+            return `<button type="button" class="fb-replace-tile" data-act="${escape(panel.panel_id)}"
+                        title="${escape(name)}">
+                <img alt="" src="${escape(this.canvas.panelImageUrl(panel, source))}">
+                <span>${escape(name)}</span></button>`;
+        }).join("");
+        this.mountMenu(at, `<div class="fb-insp-section-head"><span>Replace with</span>
+                <span class="fb-insp-aside">Images in this figure, not on a page</span></div>
+            <div class="fb-replace-grid">${tiles}</div>`,
+            (replacement) => this.replacePanel(panelId, replacement), "fb-replace-card");
+    }
+
+    replacePanel(oldId, newId) {
+        const old = this.state.panel(oldId);
+        const next = this.state.panel(newId);
+        if (!old || !next || !old.placement || next.placement) return;
+        this.closeResolution();
+        const placement = { ...old.placement };
+        const furniture = {
+            label: { ...old.label },
+            scalebar: { ...next.scalebar, ...FigureWorkspace.barLook(old.scalebar) },
+        };
+        const operations = [
+            { op: "move_panels", moves: [{ panel_id: oldId, placement: null },
+                                         { panel_id: newId, placement: placement }] },
+            { op: "update_panel", panel_id: newId, changes: furniture },
+        ];
+        const group = this.canvas.groupFor(oldId);
+        let newGroup = null;
+        if (group) {
+            newGroup = { ...group, member_ids: group.member_ids.map((id) => (id === oldId ? newId : id)) };
+            operations.push({ op: "ungroup_items", group_id: group.group_id },
+                            { op: "group_items", group: newGroup });
+        }
+        this.state.commit(operations, (draft) => {
+            draft.panels[oldId].placement = null;
+            draft.panels[newId].placement = placement;
+            Object.assign(draft.panels[newId], furniture);
+            if (newGroup) draft.groups[newGroup.group_id] = newGroup;
+        });
+        this.canvas.select([newId], false, true);
+    }
+
+    /** How a scale bar LOOKS -- what carries over to the image that replaces
+     *  a panel's. The length and unit stay the new image's own, because they
+     *  depend on its calibration. */
+    static barLook(bar) {
+        const out = {};
+        for (const key of ["visible", "position", "color", "thickness_mm", "margin_mm",
+                           "label", "label_size_pt"]) {
+            if (bar && key in bar) out[key] = bar[key];
+        }
+        return out;
+    }
+
+    /** Show another page. The selection belongs to the page it was made on,
+     *  so it is let go; everything that describes "this page" is redrawn. */
+    goToPage(pageId) {
+        this.closeResolution();
+        this.canvas.selection.clear();
+        this.canvas.setPage(pageId);
+        this.selectionChanged([]);
+        this.render();
+    }
+
+    /** A change to the current page's size, orientation or margins. */
+    updatePage(changes) {
+        const pageId = this.canvas.pageId;
+        if (!pageId) return;
+        this.state.commit([{ op: "update_page", page_id: pageId, changes: changes }],
+            (draft) => {
+                const page = draft.pages.find((entry) => entry.page_id === pageId);
+                if (page) Object.assign(page, changes);
+            });
+        // A page of a new size is fitted again, or the sheet is left half off
+        // the window (or a postage stamp in the middle of it).
+        window.requestAnimationFrame?.(() => this.zoomToFit());
+        // Nothing is moved to suit the new size -- that would rearrange a
+        // figure behind the user's back -- but anything left hanging off the
+        // sheet is pointed out, with the one-press remedy.
+        const page = this.canvas.page;
+        const off = page && this.canvas.pageItems().some((item) => {
+            const box = FigureCanvas.unionBox([item.box]);
+            return box.x_mm < -0.01 || box.y_mm < -0.01
+                || box.x_mm + box.w_mm > page.size_mm.w + 0.01
+                || box.y_mm + box.h_mm > page.size_mm.h + 0.01;
+        });
+        if (off) {
+            this.toast("Some of the figure is now off the page.",
+                       { label: "Fit content to page", act: () => this.canvas.fitContentToPage() });
+        }
     }
 
     /**
@@ -488,7 +1709,14 @@ class FigureWorkspace {
 
         strip.addEventListener("pointerdown", (event) => {
             const item = event.target.closest(".fb-tray-item");
-            if (item) this.trayPointerDown(item.dataset.panelId, event);
+            if (item && !item.dataset.gotoPanel) this.trayPointerDown(item.dataset.panelId, event);
+        });
+        strip.addEventListener("click", (event) => {
+            const item = event.target.closest("[data-goto-panel]");
+            const panel = item && this.state.panel(item.dataset.gotoPanel);
+            if (!panel || !panel.placement) return;
+            if (panel.placement.page_id !== this.canvas.pageId) this.goToPage(panel.placement.page_id);
+            this.canvas.select([panel.panel_id], false, true);
         });
         strip.addEventListener("dragstart", (event) => {
             const item = event.target.closest(".fb-tray-item");
@@ -521,6 +1749,28 @@ class FigureWorkspace {
                 onOver: (target, over) => target.classList.toggle("is-drop-target", over),
                 onDrop: (_target, ids, point) => this.canvas?.placeTrayPanelsAt(ids, point),
             });
+            // The Assets grids: the figure's own images and captures alike.
+            const pane = this.el("fb_assets_pane");
+            if (pane) {
+                window.PlexoraPointerDrag.attach(pane, {
+                    source: "[data-drag]",
+                    payload: (card) => (this.assetGrids || {})[this.assetsPane || "captures"]
+                        ?.payloadFor(card) || null,
+                    label: (data) => {
+                        const n = data.panels.length + data.captures.length;
+                        return n === 1 ? "1 image" : `${n} images`;
+                    },
+                    targetAt: (under) => {
+                        const surface = this.canvas?.surfaceEl;
+                        return surface && surface.contains(under) ? surface : null;
+                    },
+                    onOver: (target, over) => target.classList.toggle("is-drop-target", over),
+                    onDrop: (_target, data, point) => {
+                        if (data.panels.length) this.canvas?.placeTrayPanelsAt(data.panels, point);
+                        if (data.captures.length) this.placeCapturesAt(data.captures, point);
+                    },
+                });
+            }
         }
 
         // Filters as the characters arrive; nothing is submitted. Esc and the ×
@@ -529,9 +1779,9 @@ class FigureWorkspace {
         // recognised by are behind a hover now.
         const search = this.el("fb_tray_search");
         search?.addEventListener("input", (event) => {
-            this.traySearch = event.target.value || "";
-            this.renderTray();
+            this.setTraySearch(event.target.value || "");
         });
+        this.setupAssetFilter();
         search?.addEventListener("keydown", (event) => {
             if (event.key !== "Escape" || !this.traySearch) return;
             // Kept off the window: Escape out here also clears the canvas
@@ -544,14 +1794,22 @@ class FigureWorkspace {
             search?.focus();
         });
 
-        // Two ways in and out of the same card: the rail item that opens it,
-        // and the card's own X. Both go through one method so the rail button
-        // and the aria state cannot disagree.
-        this.el("fb_tool_panels")?.addEventListener("click", () => this.showTray());
-        this.el("fb_tray_close")?.addEventListener("click", () => this.showTray(false));
+        // Which source the tab shows. The captures bin and the bookmarks are
+        // mounted the first time they are asked for and refreshed every time
+        // after, so a capture taken in another tab shows up on the next look.
+        this.el("fb_tray_panel")?.addEventListener("click", (event) => {
+            const pick = event.target.closest("[data-assets]");
+            if (pick) this.showAssets(pick.dataset.assets);
+        });
+
+        // The batch row, shown while two or more assets are selected.
+        this.el("fb_tray_place")?.addEventListener("click",
+            () => this.placeFromTray(Array.from(this.traySelection)));
+        this.el("fb_tray_layout")?.addEventListener("click", () => this.placeTrayAsLayout());
 
         // Where the next panels come from: one press, one page load, no list.
         this.el("fb_tray_add")?.addEventListener("click", () => this.addPanels());
+        this.el("fb_tray_bookmark_go")?.addEventListener("click", () => this.bookmarkInViewer());
         this.el("fb_tray_file")?.addEventListener("click",
             () => this.el("fb_add_image_input")?.click());
         // The third way, and the only one that needs no trip: captures already
@@ -572,147 +1830,83 @@ class FigureWorkspace {
         });
     }
 
-    // -- the strip beside the rail ------------------------------------------
+    // -- the inspector column -------------------------------------------------
 
     /**
-     * One secondary sidebar at a time.
-     *
-     * The tray and the text panel occupy the SAME strip beside the rail, and
-     * they used to hide and show themselves independently: selecting a caption
-     * while the tray was open drew the text panel underneath it, where it was
-     * invisible and still took every click that landed on the overlap. Two
-     * panels each answering "am I open?" for themselves is two answers to a
-     * question that has room for one.
-     *
-     * So the strip has an owner, and it is here. `name` is the panel that
-     * should be in it, or null for none.
-     *
-     * The tray is opened BY HAND and the text panel appears with the selection,
-     * which is why the tray is remembered as `pinned` and the text panel is
-     * not: a contextual panel borrows the strip while it has something to say
-     * and gives it back afterwards, rather than leaving the user to go and
-     * reopen the drawer they never closed.
+     * Kept for the four object panels' `onClose` and for Quick Edit, which
+     * call it when what they show may have changed. There is no strip to
+     * arbitrate any more: the inspector shows every panel that has something
+     * to say, under the block that describes the selection.
      */
     showSidebar(name) {
         this.sidebar = name || null;
-        // A CONTEXTUAL panel never becomes the pinned one: the strip goes back
-        // to whatever the user last chose for themselves once the selection
-        // that summoned it has gone.
-        if (name !== "text" && name !== "shape" && name !== "line"
-                && name !== "image") {
-            this.pinnedSidebar = this.sidebar;
-        }
-        this.applySidebar();
+        this.applyInspector();
     }
 
-    /**
-     * Settle which contextual panel has the strip, or hand it back.
-     *
-     * ARBITRATION, not a switch. Each panel says only whether it has anything
-     * to show (`wants`); this decides, because there is one strip and only one
-     * of them can be in it -- two panels each showing and hiding themselves is
-     * how they ended up stacked on top of each other. Text, then shape, then
-     * line, then image: the first three are mutually exclusive in practice (a
-     * selection is one kind or another) and a fixed order is one fewer thing to
-     * reason about than a most-recently-asked rule.
-     *
-     * Image comes LAST because it is the only one that overlaps with the
-     * others: selecting a caption and a panel together is a real thing to do,
-     * and the caption's panel has controls that apply to exactly what was
-     * selected while this one mostly does not.
-     */
     contextSidebar() {
-        // Quick Edit takes the strip with it. It is a 420px dark slide-over
-        // whose subject is one panel's image, and a contextual sidebar is a
-        // 300px light card describing the same panel's furniture -- open
-        // together they were two panels about one object, in two colour schemes,
-        // one of them lying over the artwork the other is for.
-        //
-        // The guard is here rather than at the open, because the selection pump
-        // calls this on every change: without it, clicking another panel while
-        // a session is live would reopen the strip underneath the slide-over.
-        if (this.quickEdit?.session) return this.showSidebar(null);
-        if (this.textPanel?.wants) return this.showSidebar("text");
-        if (this.shapePanel?.wants) return this.showSidebar("shape");
-        if (this.linePanel?.wants) return this.showSidebar("line");
-        if (this.imagePanel?.wants) return this.showSidebar("image");
-        return this.showSidebar(this.pinnedSidebar);
+        this.applyInspector();
     }
 
     /**
-     * Draw the strip, and tell the canvas how much room it has taken.
+     * Which of the four object panels are in the inspector, and whether the
+     * inspector is there at all.
      *
-     * `--fb-sidebar-w` is the second half of a promise this file's own top
-     * comment has been making since the workspace was built: "the canvas is
-     * padded rather than overlapped... the padding is a variable, so opening the
-     * tray slides the page clear of it". The padding cleared the RAIL and
-     * nothing else, so the tray and every contextual panel lay over three
-     * hundred pixels of the sheet -- including, in the image panel's case, over
-     * the very panel it was describing.
-     *
-     * The cost is that the page moves when a drawer opens, which is what the old
-     * code said it was avoiding. That cost is real and it is smaller: a sheet
-     * that slides 300px in 180ms is a movement the eye follows, where a card
-     * lying over the thing being judged is a card that has to be closed before
-     * any judgement can be made.
+     * Each panel says whether it has anything to show (`wants`); the panels'
+     * own close buttons are hidden in this column, so `reveal()` first undoes
+     * a dismissal a previous version of the page could have stored. Quick Edit
+     * takes the column while it is open: it is a dark slide-over about one
+     * panel's image, and the inspector beside it would be a second description
+     * of the same panel in another colour scheme.
      */
-    applySidebar() {
+    applyInspector() {
+        const quick = Boolean(this.quickEdit?.session);
+        const root = this.el("fb_workspace");
+        root?.classList.toggle("is-quickediting", quick);
+        const right = this.el("fb_right");
+        // NOT hidden while Quick Edit is open: the card floats over this
+        // column, and taking the column out of the row widened the canvas
+        // under it, which re-centred the page -- the figure moved every time
+        // Quick Edit opened or closed. `is-quickediting` only makes it inert.
+        if (right) {
+            right.hidden = !this.columns.right;
+            right.inert = quick;
+        }
         for (const [name, id] of Object.entries(FigureWorkspace.SIDEBARS)) {
             const el = this.el(id);
-            if (el) el.hidden = this.sidebar !== name;
+            const panel = { text: this.textPanel, shape: this.shapePanel,
+                            line: this.linePanel, image: this.imagePanel }[name];
+            if (!el || !panel) continue;
+            panel.reveal?.();
+            el.hidden = !panel.wants;
         }
-        const root = this.el("fb_workspace");
-        if (root) {
-            const width = FigureWorkspace.SIDEBAR_WIDTHS[this.sidebar] || 0;
-            root.style.setProperty("--fb-sidebar-w", `${width}px`);
-        }
-        // The rulers are drawn into fixed-size canvases from the scroll
-        // surface's own geometry, so a padding change moves every tick on them.
-        this.viewOptions?.drawRulers();
-        // The tray's badge only shows while its card is shut, so it depends on
-        // what was just decided.
-        this.renderTray();
         this.renderRail();
     }
 
-    /** Which element each secondary sidebar is. The single place they are named
-     *  together, so adding another is one line rather than a search. */
+    /** The four object panels, by name, and the element each one draws into. */
     static get SIDEBARS() {
-        return { panels: "fb_tray_panel", text: "fb_text_panel",
-                 shape: "fb_shape_panel", line: "fb_line_panel",
-                 image: "fb_image_panel" };
-    }
-
-    /** How much of the desk each of them covers, in the same place they are
-     *  named -- the stylesheet knows the widths too, and two copies of a number
-     *  the page slides by is a number that drifts. */
-    static get SIDEBAR_WIDTHS() {
-        return { panels: 312, text: 300, shape: 300, line: 300, image: 300 };
+        return { text: "fb_text_panel", shape: "fb_shape_panel",
+                 line: "fb_line_panel", image: "fb_image_panel" };
     }
 
     /** The unit the page is measured in, changed from wherever names it. */
     setUnits(unit) {
         this.viewOptions?.setUnit(unit);
+        this.syncCanvasUnit();
+        this.canvas.render();
+        this.inspector?.render();
     }
 
-    /**
-     * Open or close the panel tray.
-     *
-     * Not remembered between sessions. The tray is where captured panels
-     * arrive, and a figure page that opened with it shut would look, on the day
-     * it is reopened, like a figure that had lost them.
-     *
-     * With no argument this toggles, so the rail button is a switch rather than
-     * a one-way door -- clicking the lit item is how anybody expects to put it
-     * out.
-     *
-     * Nothing else moves. The card lies over the desk beside the sheet and the
-     * canvas keeps its position: the tray used to push the page sideways, which
-     * meant looking at your panels moved the thing you were composing.
-     */
+    /** The canvas writes sizes (under a selection) in the figure's unit. */
+    syncCanvasUnit() {
+        const name = this.viewOptions?.prefs.units || "mm";
+        const spec = FigureViewOptions.UNITS[name] || FigureViewOptions.UNITS.mm;
+        this.canvas.unit = { per: spec.per, label: spec.label };
+    }
+
+    /** Open the left column on the figure's assets. `open === false` goes back
+     *  to Layers, which is what "closing the tray" means now. */
     showTray(open) {
-        const want = open === undefined ? this.sidebar !== "panels" : !!open;
-        this.showSidebar(want ? "panels" : null);
+        this.showTab(open === false ? "layers" : "assets");
     }
 
     /**
@@ -737,6 +1931,36 @@ class FigureWorkspace {
      * fills -- which is where somebody who has just made one is looking.
      */
     addPanels() {
+        // The viewer it leads to opens Figure Builder (figureArrival.js), and
+        // not the bookmarks tray, whatever an earlier trip left on.
+        this.leaveArrival({ figureBuilder: true, bookmarks: false });
+        this.rememberDestination();
+        PlexoraRouter.go(this.api.url("open_project"));
+    }
+
+    /** What the next viewer opens: Figure Builder's capture tool (a note
+     *  figureArrival.js takes once), and core's bookmarks tray (its own key,
+     *  client/src/js/views/bookmarkTray.js, read when a viewer starts). */
+    leaveArrival({ figureBuilder, bookmarks }) {
+        try {
+            if (figureBuilder) window.sessionStorage.setItem("plexora.figure_builder.openOnArrival", "1");
+            else window.sessionStorage.removeItem("plexora.figure_builder.openOnArrival");
+            window.sessionStorage.setItem("plexora.bookmarkTray.open", bookmarks ? "1" : "0");
+        } catch (error) {
+            /* Private-browsing modes throw; the trip is still worth making. */
+        }
+    }
+
+    /**
+     * The same trip, to bookmark views instead: the viewer's bookmarks tray
+     * opens by itself when the image does. The key is core's
+     * (client/src/js/views/bookmarkTray.js, OPEN_KEY): the tray reads it,
+     * per tab, when a viewer page starts.
+     */
+    bookmarkInViewer() {
+        // The bookmarks tray only. The tray keeps its own key open after
+        // this; the next "Capture from a viewer" turns it back off.
+        this.leaveArrival({ figureBuilder: false, bookmarks: true });
         this.rememberDestination();
         PlexoraRouter.go(this.api.url("open_project"));
     }
@@ -789,7 +2013,7 @@ class FigureWorkspace {
      * or deleted them in between, and a silent no-op is the right answer to
      * "add these" when there is nothing left to add.
      */
-    async adoptCaptures(captureIds, { place = false } = {}) {
+    async adoptCaptures(captureIds, { place = false, at = null } = {}) {
         const bin = new FigureCaptureBin({ api: this.api });
         const rows = await bin.list();
         if (!rows) {
@@ -802,7 +2026,7 @@ class FigureWorkspace {
 
         const onPage = place && this.canvas?.page;
         const result = await FigureCaptureBin.adoptInto(this.state, this.api, entries,
-            onPage ? { place: (panels) => this.placementsFor(panels) } : {});
+            onPage ? { place: (panels) => this.placementsFor(panels, at) } : {});
         if (onPage) {
             if (result.panelIds.length) {
                 this.toast(`${FigureSchema.countPhrase(result.panelIds.length, "view")} added to the figure.`);
@@ -816,7 +2040,8 @@ class FigureWorkspace {
             // decision from capture, so nothing is placed on the page. The
             // strip is opened because a panel that arrived into a closed drawer
             // is a panel the user has no reason to believe arrived.
-            this.showSidebar("panels");
+            this.assetsPane = entries.every((row) => row.bookmarked) ? "bookmarks" : "captures";
+            this.showTab("assets");
             this.renderTray();
         }
         // ONE toast, because `toast` shows one at a time -- a second call would
@@ -835,7 +2060,7 @@ class FigureWorkspace {
 
     /** Where new panels go on the page: free places, the size a tray panel
      *  is placed at (FigureCanvas.traySizes), above everything there. */
-    placementsFor(panels) {
+    placementsFor(panels, atPoint = null) {
         const page = this.canvas?.page;
         if (!page) return null;
         const width = Math.min(60, page.size_mm.w / 3);
@@ -845,9 +2070,15 @@ class FigureWorkspace {
             const aspect = (frame && frame.w) ? frame.h / frame.w : 1;
             return { w_mm: width, h_mm: width * (aspect || 1) };
         });
+        // Dropped: the first lands centred under the pointer, the rest flow
+        // from there, as a drop of the figure's own images does.
+        const origin = atPoint && sizes.length ? {
+            x_mm: Math.max(page.margins_mm.left, atPoint.x - width / 2),
+            y_mm: Math.max(page.margins_mm.top, atPoint.y - sizes[0].h_mm / 2),
+        } : null;
         const boxes = FigureCanvas.freePlacements(
             sizes, page, this.canvas.occupiedBoxes(),
-            this.state.document.settings.style.gutter_mm, null);
+            this.state.document.settings.style.gutter_mm, origin);
         let z = this.canvas.nextZ();
         return boxes.map((box) => ({ page_id: page.page_id, ...box, z: z++ }));
     }
@@ -866,7 +2097,7 @@ class FigureWorkspace {
                 <h2>Bookmarks</h2>
                 <button class="fb-picker-close" type="button" data-role="close"
                         title="Close" aria-label="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                    ${FigureIcons.fa("xmark")}
                 </button>
             </div>
             <div data-role="host"></div>`;
@@ -914,7 +2145,7 @@ class FigureWorkspace {
                 <h2>Captures</h2>
                 <button class="fb-picker-close" type="button" data-role="close"
                         title="Close" aria-label="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                    ${FigureIcons.fa("xmark")}
                 </button>
             </div>
             <div data-role="host"></div>`;
@@ -927,6 +2158,8 @@ class FigureWorkspace {
         const grid = new FigureCaptureBinGrid(dialog.querySelector('[data-role="host"]'), {
             api: this.api,
             addLabel: "Add to this figure",
+            // The bookmarks have their own dialog and their own tab.
+            excludeBookmarked: true,
             onAdd: (ids) => {
                 // Closed first: the adoption takes a moment and the panels
                 // appear in the tray behind, which a modal would be covering.
@@ -1004,9 +2237,13 @@ class FigureWorkspace {
         const scroll = this.el("fb_canvas_scroll");
         if (!scroll) return;
         scroll.addEventListener("dragover", (event) => {
-            if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+            const types = event.dataTransfer?.types || [];
+            if (types.includes("Files") || types.includes("text/x-plexora-capture")) event.preventDefault();
         });
-        scroll.addEventListener("drop", (event) => this.dropFiles(event));
+        scroll.addEventListener("drop", (event) => {
+            this.dropCaptures(event);
+            this.dropFiles(event);
+        });
         // In the desktop app a file dropped from Explorer or Finder arrives as
         // a PATH from the shell rather than as a DOM drop (desktopBridge.js).
         // The page is a drop zone in core's registry (browsePicker.js), so it
@@ -1049,8 +2286,21 @@ class FigureWorkspace {
             if (!event.ctrlKey && !event.metaKey) return;
             event.preventDefault();
             // Exponential, so a fast scroll and several slow ones of the same
-            // total distance land in the same place.
-            this.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0035));
+            // total distance land in the same place -- which is also what lets
+            // the factors of one frame's events be multiplied together and
+            // applied once. A trackpad sends well over 60 of these a second,
+            // and each zoom re-renders the sheet and the rulers.
+            const pending = this._pendingZoom || (this._pendingZoom = { factor: 1 });
+            pending.factor *= Math.exp(-event.deltaY * 0.0035);
+            pending.x = event.clientX;
+            pending.y = event.clientY;
+            if (!pending.frame) {
+                pending.frame = requestAnimationFrame(() => {
+                    const zoom = this._pendingZoom;
+                    this._pendingZoom = null;
+                    if (zoom && this.canvas) this.zoomAt(zoom.x, zoom.y, zoom.factor);
+                });
+            }
         }, { passive: false });
 
         this.bindSpacePan(scroll);
@@ -1133,34 +2383,16 @@ class FigureWorkspace {
         this.renderRail();
     }
 
+    /** Light Annotate while one of its drawing tools is armed: the button is
+     *  the way back to the card, and the lit state says the next press on the
+     *  page draws rather than selects. */
     renderRail() {
-        const rail = this.el("fb_tool_rail");
-        rail?.querySelectorAll("[data-tool]").forEach((button) => {
-            const on = button.dataset.tool === this.tool;
-            button.classList.toggle("is-active", on);
-            button.setAttribute("aria-pressed", String(on));
-        });
-        // The two menu buttons have no data-tool of their own -- each stands
-        // for a pair -- so each is lit whenever either of its pair is armed.
-        for (const [id, armed] of [
-            ["fb_tool_text", (tool) => FigureCanvas.textTool(tool) !== null],
-            ["fb_tool_shapes", (tool) => tool.startsWith("shape:")],
-            ["fb_tool_lines", (tool) => FigureCanvas.lineTool(tool) !== null]]) {
-            const button = this.el(id);
-            if (!button) continue;
-            const on = armed(this.tool || "");
-            button.classList.toggle("is-active", on);
-            button.setAttribute("aria-pressed", String(on));
-        }
-        // The tray's rail item is a switch, not a tool: it is lit while its
-        // card is open, and the card is the authority on that -- keeping a
-        // second copy of "is the tray open" in a field is how the button and
-        // the panel end up disagreeing after an undo or a reload.
-        const tray = this.el("fb_tray_panel");
-        const trayButton = this.el("fb_tool_panels");
-        if (tray && trayButton) {
-            trayButton.classList.toggle("is-active", !tray.hidden);
-            trayButton.setAttribute("aria-expanded", String(!tray.hidden));
+        const tool = this.tool || "select";
+        const armed = tool !== "select";
+        const button = this.el("fb_menu_annotate");
+        if (button) {
+            button.classList.toggle("is-active", armed);
+            button.setAttribute("aria-pressed", String(armed));
         }
     }
 
@@ -1289,14 +2521,24 @@ class FigureWorkspace {
         // A checkable entry keeps the tick's WIDTH whether it is ticked or not,
         // so the labels line up and the menu does not shuffle sideways as
         // things are turned on.
-        this.mountMenu(anchor, entries.map((entry) => entry.separator
-            ? '<span class="fb-menu-separator"></span>'
-            : `<button type="button" class="fb-menu-item" data-act="${entry.act}"
+        // Entries may also carry an `icon` (a Font Awesome name, drawn in the
+        // menus' icon gutter), a `hint` (ranged right and muted, like a key),
+        // or be a `heading` that names the rows under it.
+        const iconned = entries.some((entry) => entry.icon);
+        this.mountMenu(anchor, entries.map((entry) => {
+            if (entry.separator) return '<span class="fb-menu-separator"></span>';
+            if (entry.heading) {
+                return `<div class="fb-menu-heading">${FigureSchema.escapeHtml(entry.heading)}</div>`;
+            }
+            return `<button type="button" class="fb-menu-item" data-act="${entry.act}"
                        ${entry.disabled ? "disabled" : ""}>
                    ${"checked" in entry
                        ? `<span class="fb-menu-tick">${entry.checked ? "✓" : ""}</span>`
-                       : ""}${FigureSchema.escapeHtml(entry.label)}</button>`).join(""),
-            onPick);
+                       : ""}${iconned ? `<span class="fb-menu-icon" aria-hidden="true">${entry.icon
+                           ? FigureIcons.fa(entry.icon) : ""}</span>` : ""}<span
+                       class="fb-menu-text">${FigureSchema.escapeHtml(entry.label)}</span>${entry.hint
+                       ? `<span class="fb-menu-key">${FigureSchema.escapeHtml(String(entry.hint))}</span>` : ""}</button>`;
+        }).join(""), onPick);
     }
 
     /**
@@ -1477,7 +2719,13 @@ class FigureWorkspace {
     }
 
     pageMenuEntries() {
+        const pages = this.state.pages.map((page, index) => ({
+            act: `go:${page.page_id}`, label: `${page.name || `Page ${index + 1}`}`,
+            checked: page.page_id === this.canvas.pageId,
+        }));
         return [
+            ...pages,
+            { separator: true },
             { act: "add", label: "Add a page" },
             { act: "duplicate", label: "Duplicate this page" },
             { act: "remove", label: "Delete this page",
@@ -1495,7 +2743,8 @@ class FigureWorkspace {
     }
 
     pageAction(act) {
-        if (act === "add") this.addPage();
+        if (act.startsWith("go:")) this.goToPage(act.slice(3));
+        else if (act === "add") this.addPage();
         else if (act === "duplicate") this.duplicatePage();
         else if (act === "remove") this.removePage();
         else if (act === "background") this.openPageBackground();
@@ -1558,22 +2807,23 @@ class FigureWorkspace {
             this.commitPageBackground(act);
             return;
         }
-        // The OS colour picker, through an input nothing ever sees. Building a
-        // colour wheel here would be a worse one that also has to be
-        // maintained.
-        const picker = document.createElement("input");
-        picker.type = "color";
-        picker.value = this.canvas.page?.background || "#ffffff";
-        picker.style.position = "fixed";
-        picker.style.opacity = "0";
-        picker.style.pointerEvents = "none";
-        document.body.appendChild(picker);
-        picker.addEventListener("change", () => {
-            this.commitPageBackground(picker.value);
-            picker.remove();
+        this.openPageColor(document.querySelector('[data-swatch="page_background"]'));
+    }
+
+    /**
+     * The app's own colour palette (FigureColorField, the channel list's
+     * picker) for the page background, against the swatch in the Page view,
+     * or against the page menu when the right column is shut.
+     */
+    openPageColor(button) {
+        const anchor = (button && button.isConnected ? button : null) || this.el("fb_page_menu");
+        if (!anchor) return;
+        if (!anchor.dataset.swatch) anchor.dataset.swatch = "page_background";
+        const current = this.canvas.page?.background;
+        FigureColorField.open(anchor, {
+            value: current && current !== FigureCanvas.TRANSPARENT ? current : "#ffffff",
+            onPick: (hex) => this.commitPageBackground(hex),
         });
-        picker.addEventListener("blur", () => picker.remove());
-        picker.click();
     }
 
     commitPageBackground(background) {
@@ -1616,13 +2866,14 @@ class FigureWorkspace {
             mutate: (draft) => { draft.pages.push(page); },
         });
         (done || Promise.resolve(false)).then((stored) => {
-            if (stored !== false) this.canvas.setPage(page.page_id);
+            if (stored !== false) this.goToPage(page.page_id);
         });
     }
 
     zoomMenuEntries() {
         return [
             { act: "fit", label: "Fit page  ⌘0" },
+            { act: "width", label: "Fit width" },
             { act: "selection", label: "Fit selection",
               disabled: !this.canvas.selection.size },
             { act: "100", label: "100%  ⌘1" },
@@ -1631,6 +2882,7 @@ class FigureWorkspace {
 
     zoomAction(act) {
         if (act === "fit") this.zoomToFit();
+        else if (act === "width") this.zoomToWidth();
         else if (act === "selection") this.zoomToSelection();
         else if (act === "100") this.setScale(FigureWorkspace.PX_PER_MM);
     }
@@ -1642,12 +2894,54 @@ class FigureWorkspace {
         // up, Escape reached this handler as well as the dialog and disarmed
         // the drawing tool behind it.
         if (FigureConfirm.modalOpen) return;
-        const typing = document.activeElement
-            && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+        // A slider, checkbox or button that has focus is not being typed in:
+        // after dragging Quick Edit's contrast slider the focus is on its range
+        // input, and Ctrl+Z has to reach the undo below.
+        const active = document.activeElement;
+        const typing = active && (["TEXTAREA", "SELECT"].includes(active.tagName)
+            || (active.tagName === "INPUT"
+                && !["range", "checkbox", "radio", "button", "color"].includes(active.type)));
         if (typing) return;
 
+        // While Quick Edit is open its own changes are what undo steps
+        // through (FigureQuickEdit.undo); the figure's history waits until it
+        // closes, so Ctrl+Z never changes something hidden behind the card.
+        if (this.quickEdit?.session && (event.metaKey || event.ctrlKey)
+                && (event.key === "z" || event.key === "Z" || event.key === "y" || event.key === "Y")) {
+            event.preventDefault();
+            if (event.key === "y" || event.key === "Y" || event.shiftKey) this.quickEdit.redo();
+            else this.quickEdit.undo();
+            return;
+        }
+
+        if (event.key === "Escape" && this.preview) {
+            this.togglePreview(false);
+            return;
+        }
+        // Escape closes Quick Edit -- after anything open inside it (its
+        // colour picker, its channel menu, the histogram) has had the key.
+        if (event.key === "Escape" && this.quickEdit?.session && !FigureConfirm.modalOpen) {
+            const popover = Array.from(document.querySelectorAll(".fb-qe-pop, .fb-qe-histogram"))
+                .some((element) => element.isConnected && element.offsetParent !== null
+                      && getComputedStyle(element).visibility !== "hidden");
+            if (!popover) {
+                event.preventDefault();
+                this.quickEdit.requestClose();
+                return;
+            }
+        }
+        // A bare P, and only when nothing is being typed: the caption editor is
+        // a contenteditable DIV, which the tag guard above does not catch.
+        if ((event.key === "p" || event.key === "P") && !event.metaKey && !event.ctrlKey
+                && !event.altKey && !document.activeElement?.isContentEditable
+                && !this.canvas?.pointEditor?.active && !this.quickEdit?.session) {
+            event.preventDefault();
+            this.togglePreview();
+            return;
+        }
         if (event.key === "Escape") {
             this.closeMenu();
+            this.closeResolution();
             this.contextBar?.closePopover();
             // Both keydown listeners are on the window, so Escape reaches this
             // one AND the canvas's. Edit Points and a half-drawn polygon are
@@ -1677,13 +2971,32 @@ class FigureWorkspace {
             zoom();
             return;
         }
-        if (event.key === "z" && !event.shiftKey) {
+        // Lower-cased: with Shift held most platforms report "Z", which used
+        // to make Ctrl+Shift+Z do nothing outside macOS.
+        const key = String(event.key).toLowerCase();
+        if (key === "z" && !event.shiftKey) {
             event.preventDefault();
-            this.state.undo();
-        } else if ((event.key === "z" && event.shiftKey) || event.key === "y") {
+            this.undo();
+        } else if ((key === "z" && event.shiftKey) || key === "y") {
             event.preventDefault();
-            this.state.redo();
+            this.redo();
         }
+    }
+
+    /** The figure's undo, from the keyboard or the toolbar. Not while an
+     *  object is being dragged -- the release would write the drag over the
+     *  undone state, losing the undo and the redo with it -- and not while
+     *  Quick Edit is open, whose own changes are what undo steps through. */
+    undo() {
+        if (this.canvas?.gesture) return;
+        if (this.quickEdit?.session) { this.quickEdit.undo(); return; }
+        this.state.undo();
+    }
+
+    redo() {
+        if (this.canvas?.gesture) return;
+        if (this.quickEdit?.session) { this.quickEdit.redo(); return; }
+        this.state.redo();
     }
 
     // -- editing ---------------------------------------------------------
@@ -1992,7 +3305,7 @@ class FigureWorkspace {
         const dismiss = document.createElement("button");
         dismiss.type = "button";
         dismiss.className = "fb-toast-close";
-        dismiss.innerHTML = '<span class="fas fa-xmark"></span>';
+        dismiss.innerHTML = FigureIcons.svg("x", 14);
         dismiss.addEventListener("click", () => toast.remove());
         toast.appendChild(dismiss);
 
@@ -2050,7 +3363,10 @@ class FigureWorkspace {
         };
         this.state.commit([{ op: "add_page", page: page }],
             (draft) => { draft.pages.push(page); });
-        this.canvas.pageId = page.page_id;
+        // After the commit, through the one page switch: the commit redraws
+        // first, and a page id set behind it left every side column describing
+        // the page that was just left.
+        this.goToPage(page.page_id);
     }
 
     async removePage() {
@@ -2144,24 +3460,69 @@ class FigureWorkspace {
 
     /** Drop the filter and show the whole tray again. */
     clearTraySearch() {
-        this.traySearch = "";
         const search = this.el("fb_tray_search");
         if (search) search.value = "";
+        this.setTraySearch("");
+    }
+
+    /** One search for the whole Assets tab: this figure's images and the
+     *  captures and bookmarks grids under them. */
+    setTraySearch(query) {
+        this.traySearch = query;
+        for (const grid of Object.values(this.assetGrids || {})) grid.setQuery(query);
         this.renderTray();
     }
 
+    /** The figure's images that are off the page, under the Assets tab now
+     *  showing (each goes back under the tab it was added from), and
+     *  matching the search. */
     trayPanels() {
-        const panels = FigureSchema.panelsInTray(this.state.document);
-        const needle = this.traySearch.trim().toLowerCase();
-        if (!needle) return panels;
-        return panels.filter((panel) => this.trayHaystack(panel).includes(needle));
+        return FigureSchema.panelsInTray(this.state.document)
+            .filter((panel) => this.inAssetsPane(panel))
+            .filter((panel) => this.passesAssetFilter(panel));
     }
 
+    /** The search and the filter, for one of this figure's images. */
+    passesAssetFilter(panel) {
+        if (!FigureSchema.matchesSearch(this.trayHaystack(panel), this.traySearch)) return false;
+        return !this.assetFilter || !this.assetFilter.active
+            || this.assetFilter.matches(this.panelFacets(panel));
+    }
+
+    /** Is the tab narrowed at all, by the search or the filter? */
+    get assetsNarrowed() {
+        return Boolean(this.traySearch.trim()) || Boolean(this.assetFilter && this.assetFilter.active);
+    }
+
+    /** Is this image of the kind the Assets tab now showing lists? */
+    inAssetsPane(panel) {
+        const origin = { captures: "capture", bookmarks: "bookmark", uploads: "upload" }[
+            this.assetsPane || "captures"];
+        return FigureSchema.panelOrigin(panel, this.state.source(panel.source_id)) === origin;
+    }
+
+    /** While a search is typed, the images ON the page that answer it too:
+     *  a search for a channel or a file has to find it wherever it is. */
+    placedMatches() {
+        if (!this.assetsNarrowed) return [];
+        return Object.values(this.state.document?.panels || {})
+            .filter((panel) => panel.placement && this.inAssetsPane(panel))
+            .filter((panel) => this.passesAssetFilter(panel));
+    }
+
+    /** Everything an image of this figure can be found by in the Assets
+     *  search: its names and captions, the image it came from, and what the
+     *  scene showed (channels, cell layers). */
     trayHaystack(panel) {
         const source = this.state.source(panel.source_id);
-        return [FigureSchema.panelCaption(panel), panel.label && panel.label.text,
-                source && (source.display_name || source.datasource)]
-            .filter(Boolean).join(" ").toLowerCase();
+        const facets = this.projectCards && typeof FigureAssetFilter !== "undefined"
+            ? this.panelFacets(panel) : null;
+        return [panel.name, FigureSchema.panelCaption(panel), panel.label && panel.label.text,
+                ...(panel.labels || []).map((entry) => entry.text),
+                source && source.display_name, source && source.datasource,
+                facets && facets.project, facets && facets.dataset,
+                FigureSchema.sceneSearchText(panel.scene)]
+            .filter(Boolean).join(" ");
     }
 
     /**
@@ -2284,6 +3645,28 @@ class FigureWorkspace {
 
     // -- importing files -----------------------------------------------------
 
+    /** Captures and bookmarks dragged in from the Assets tab: into the
+     *  figure, onto the page where they were dropped. (The figure's own
+     *  images in the same drag are the canvas's: FigureCanvas.dropFromTray.) */
+    dropCaptures(event) {
+        const raw = event.dataTransfer?.getData("text/x-plexora-capture");
+        if (!raw) return;
+        let ids = [];
+        try {
+            ids = JSON.parse(raw);
+        } catch (error) {
+            return;
+        }
+        if (!Array.isArray(ids) || !ids.length) return;
+        event.preventDefault();
+        this.placeCapturesAt(ids, event);
+    }
+
+    async placeCapturesAt(ids, point) {
+        await this.adoptCaptures(ids, { place: true, at: this.canvas.surfacePoint(point) });
+        for (const grid of Object.values(this.assetGrids || {})) grid.refresh();
+    }
+
     dropFiles(event) {
         const files = Array.from(event.dataTransfer?.files || []);
         if (!files.length) return;
@@ -2366,6 +3749,7 @@ class FigureWorkspace {
                          viewport: { x: 0, y: 0,
                                      w: entry.dimensions.width, h: entry.dimensions.height } },
                 placement: { page_id: page.page_id, ...boxes[index], z: z++ },
+                origin: "upload",
                 label: { text: "", auto: true, visible: true },
                 ...FigureSchema.defaultFurniture({
                     scalebar: { ...FigureSchema.defaultFurniture().scalebar,
@@ -2469,6 +3853,7 @@ class FigureWorkspace {
         } catch (error) {
             /* Private-browsing modes throw; the navigation is still worth doing. */
         }
+        this.saveReturn();
         PlexoraRouter.go(this.api.url(encodeURIComponent(source.datasource))
             + "?tool=figure_builder");
     }
@@ -2513,6 +3898,18 @@ class FigureWorkspace {
 
     zoomToFit() {
         this.canvas.zoomToFit(this.el("fb_canvas_scroll"));
+        this.afterZoom();
+    }
+
+    /** The page as wide as the canvas allows, scrolled to its top. */
+    zoomToWidth() {
+        const scroll = this.el("fb_canvas_scroll");
+        const page = this.canvas.page;
+        if (!scroll || !page) return;
+        const box = window.getComputedStyle(scroll);
+        const width = scroll.clientWidth - parseFloat(box.paddingLeft) - parseFloat(box.paddingRight) - 48;
+        this.canvas.setScale(width / page.size_mm.w);
+        scroll.scrollTop = 0;
         this.afterZoom();
     }
 
@@ -2598,11 +3995,34 @@ class FigureWorkspace {
         const title = this.el("fb_title");
         if (title && title !== document.activeElement) title.value = this.state.title;
 
+        if (!this._fitted) {
+            // Coming back (from the viewer, Back, a reload): the page that
+            // was showing, before anything is drawn.
+            this._return = this.readReturn();
+            const page = this._return && this._return.page;
+            if (page && page !== this.canvas.pageId && this.state.pages.some((each) => each.page_id === page)) {
+                this.canvas.setPage(page);
+            }
+        }
         this.renderPageList();
+        // An undo, a redo or a refused save can take away objects that were
+        // selected (Cmd+D, then Cmd+Z: the copies go, the selection held them).
+        // Left in, every later command would send ids the document no longer
+        // has, and the server refuses the whole batch.
+        for (const id of Array.from(this.canvas.selection)) {
+            const object = this.canvas.objectById(id);
+            const page = object && (object.placement ? object.placement.page_id : object.page_id);
+            if (!object || (page && page !== this.canvas.pageId)) this.canvas.selection.delete(id);
+        }
         this.canvas.render();
         if (!this._fitted) {
             this._fitted = true;
             this.canvas.zoomToFit(this.el("fb_canvas_scroll"));
+            if (this._return) {
+                const snapshot = this._return;
+                this._return = null;
+                window.requestAnimationFrame(() => this.applyReturn(snapshot));
+            }
         }
         // Margins move with the page, the grid and the rulers move with the
         // zoom, and both can have changed by the time this runs.
@@ -2626,12 +4046,16 @@ class FigureWorkspace {
         this.renderHistory();
         this.renderRail();
         this.renderPageMeta();
-        this.contextBar?.update(Array.from(this.canvas.selection));
-        this.textPanel?.update(Array.from(this.canvas.selection));
-        this.shapePanel?.update(Array.from(this.canvas.selection));
-        this.linePanel?.update(Array.from(this.canvas.selection));
-        this.imagePanel?.update(Array.from(this.canvas.selection));
+        const ids = Array.from(this.canvas.selection);
+        this.contextBar?.update(ids);
+        this.layers?.render();
+        this.inspector?.update(ids);
+        this.textPanel?.update(ids);
+        this.shapePanel?.update(ids);
+        this.linePanel?.update(ids);
+        this.imagePanel?.update(ids);
         this.contextSidebar();
+        this.fillStarter();
     }
 
     /**
@@ -2644,6 +4068,12 @@ class FigureWorkspace {
      */
     renderPageMeta() {
         const page = this.canvas.page;
+        const label = this.el("fb_page_setup_label");
+        if (label) {
+            label.textContent = page ? `${(FigureSchema.PAGE_PRESETS[page.preset]
+                || { label: "Custom" }).label} · ${page.orientation === "landscape"
+                ? "Landscape" : "Portrait"}` : "";
+        }
         const caption = this.el("fb_sheet_caption");
         if (caption) {
             // Rounded to a tenth and stripped of a trailing zero: A4 is 210 mm,
@@ -2658,12 +4088,22 @@ class FigureWorkspace {
         if (!count) return;
         if (!page) {
             count.textContent = "";
+            const empty = this.el("fb_page_empty");
+            if (empty) empty.hidden = true;
             return;
         }
         const placed = FigureSchema.panelsOnPage(this.state.document, page.page_id).length
             + Object.values(this.state.document.annotations)
                 .filter((annotation) => annotation.page_id === page.page_id).length;
-        count.textContent = placed === 1 ? "1 object" : `${placed} objects`;
+        const index = this.state.pages.findIndex((entry) => entry.page_id === page.page_id);
+        const selected = this.canvas.selection.size;
+        count.textContent = `Page ${index + 1} of ${this.state.pages.length} · `
+            + (placed === 1 ? "1 object" : `${placed} objects`)
+            + (selected ? ` · ${selected} selected` : "");
+        // The empty page's invitation, on the sheet, only while there is
+        // nothing at all on it.
+        const empty = this.el("fb_page_empty");
+        if (empty) empty.hidden = placed > 0;
     }
 
     selectionChanged(ids) {
@@ -2676,7 +4116,11 @@ class FigureWorkspace {
             this.renderTray();
         }
         this.renderRail();
+        this.renderPageMeta();
         this.contextBar?.update(ids);
+        this.layers?.syncSelection();
+        this.layers?.reveal();
+        this.inspector?.update(ids);
         this.textPanel?.update(ids);
         this.shapePanel?.update(ids);
         this.linePanel?.update(ids);
@@ -2694,6 +4138,11 @@ class FigureWorkspace {
         const pages = this.state.pages;
         if (!pages.some((page) => page.page_id === this.canvas.pageId)) {
             this.canvas.pageId = pages.length ? pages[0].page_id : null;
+        }
+        const label = this.el("fb_page_label");
+        if (label) {
+            const index = pages.findIndex((page) => page.page_id === this.canvas.pageId);
+            label.textContent = `Page ${index + 1} of ${pages.length}`;
         }
         if (!select) return;
         select.innerHTML = pages.map((page) =>
@@ -2719,82 +4168,65 @@ class FigureWorkspace {
 
     renderTray() {
         const all = FigureSchema.panelsInTray(this.state.document);
+        const count = this.el("fb_tray_count");
+        if (count) count.textContent = all.length ? String(all.length) : "";
+        // On the Assets tab, so a capture arriving while Layers is showing is
+        // not a capture that seems to have been lost.
+        const badge = this.el("fb_tray_badge");
+        if (badge) badge.textContent = all.length ? String(all.length) : "";
+        // The grid itself waits while nobody can see it: this runs on every
+        // document change (each drag, nudge and undo), and rebuilding the
+        // filter facets and every card behind the Layers tab was work for
+        // nobody. `showTab` brings it up to date when Assets is shown.
+        if (this.tab && this.tab !== "assets") { this._trayStale = true; return; }
+        this._trayStale = false;
         const shown = this.trayPanels();
+        this.updateFilterOptions();
 
-        const wrap = this.el("fb_tray_search_wrap");
-        if (wrap) wrap.hidden = all.length < FigureWorkspace.SEARCH_THRESHOLD;
         const clear = this.el("fb_tray_search_clear");
         if (clear) clear.hidden = !this.traySearch;
-        const count = this.el("fb_tray_count");
-        if (count) {
-            count.textContent = all.length
-                ? (shown.length === all.length
-                    ? String(all.length)
-                    : `${shown.length} / ${all.length}`)
-                : "";
-        }
-        const empty = this.el("fb_tray_empty");
-        if (empty) empty.hidden = all.length > 0;
 
-        // Only while the card is shut. Open, the count is already in its
-        // heading, and two copies of the same number a hundred pixels apart
-        // read as two different numbers.
-        const badge = this.el("fb_tray_badge");
-        const panel = this.el("fb_tray_panel");
-        if (badge) {
-            badge.textContent = (all.length && panel?.hidden) ? String(all.length) : "";
-        }
+        // This figure's images go into the tab's own grid, as cards like the
+        // rest, tagged "In figure": those off the page, then a search's or
+        // filter's matches on the page ("On page"). What is on the page is
+        // otherwise in Layers.
+        const grid = (this.assetGrids || {})[this.assetsPane || "captures"];
+        if (!grid) return;
+        const total = all.filter((panel) => this.inAssetsPane(panel)).length;
+        grid.setExtras(shown.concat(this.placedMatches()).map((panel) => this.assetCard(panel)), total);
+        this.fitSourceCard();
+    }
 
-        const strip = this.el("fb_tray_strip");
-        if (!strip) return;
-        // Anything filtered out of view is out of the selection too: a batch
-        // placed from a search box has to be the batch that was visible.
-        const visible = new Set(shown.map((panel) => panel.panel_id));
-        for (const id of Array.from(this.traySelection)) {
-            if (!visible.has(id)) this.traySelection.delete(id);
-        }
+    /**
+     * The tab's "how to get some" card: whole while the tab is empty; once
+     * there is something, just its button, pinned to the bottom of the
+     * column (.fb-assets-source.is-compact).
+     */
+    fitSourceCard() {
+        const pane = this.assetsPane || "captures";
+        const grid = (this.assetGrids || {})[pane];
+        const card = this.el({ captures: "fb_assets_viewer", bookmarks: "fb_assets_bookmark_go",
+                               uploads: "fb_assets_upload" }[pane]);
+        if (!card) return;
+        card.classList.toggle("is-compact", Boolean(grid && grid.hasAny()));
+    }
 
-        if (all.length && !shown.length) {
-            strip.innerHTML = '<p class="fb-muted fb-tray-nomatch">No panel matches that.</p>';
-            return;
-        }
-        // Kept pictures, as on the sheet: the strip is redrawn on every
-        // document change and a tray of a dozen previews re-fetched each time
-        // was a dozen requests per nudge (FigureCanvas.replaceKeepingImages).
-        FigureCanvas.replaceKeepingImages(strip, shown.map((panel) => {
-            const source = this.state.source(panel.source_id);
-            const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
-            const caption = FigureSchema.panelCaption(panel)
-                || (source && (source.display_name || source.datasource))
-                || "Untitled panel";
-            const detail = span ? FigureSchema.formatMicrons(span) + " wide" : "";
-            const selected = this.traySelection.has(panel.panel_id);
-            // The tiles are two across and mostly picture now, so the caption
-            // is behind a hover -- which makes this the accessible name as well
-            // as the tooltip, and it has to carry both lines.
-            const tip = detail ? `${caption} — ${detail}` : caption;
-            // And the tile is the SHAPE of the region it shows, before the
-            // picture arrives: the preview is this viewport, so the ratio is
-            // known without waiting for the file. A grid that resized itself as
-            // twelve lazy images loaded would move the tile out from under the
-            // pointer that was reaching for it.
-            const view = panel.scene && panel.scene.viewport;
-            const ratio = (view && view.w > 0 && view.h > 0)
-                ? ` style="aspect-ratio:${Number(view.w)} / ${Number(view.h)}"`
-                : "";
-            return `<div class="fb-tray-item${selected ? " is-selected" : ""}" draggable="true"
-                         role="option" aria-selected="${selected}"
-                         data-panel-id="${FigureSchema.escapeHtml(panel.panel_id)}"
-                         aria-label="${FigureSchema.escapeHtml(tip)}"
-                         title="${FigureSchema.escapeHtml(tip)}">
-                <img src="${this.api.previewUrl(this.figureId, panel.panel_id, panel.render_revision)}"
-                     alt="" draggable="false" loading="lazy"${ratio}>
-                <span class="fb-tray-item-text">
-                    <span class="fb-tray-item-name">${FigureSchema.escapeHtml(caption)}</span>
-                    <span class="fb-tray-item-meta">${FigureSchema.escapeHtml(detail)}</span>
-                </span>
-            </div>`;
-        }).join(""));
+    /** One of this figure's images as the Assets grid draws it. */
+    assetCard(panel) {
+        const source = this.state.source(panel.source_id);
+        const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
+        const frame = panel.scene && panel.scene.viewport
+            ? FigureSchema.frameSize(panel.scene.viewport) : null;
+        const pixels = frame ? `${Math.round(frame.w)} × ${Math.round(frame.h)} px` : "";
+        return {
+            id: panel.panel_id,
+            name: panel.name || FigureSchema.panelCaption(panel)
+                || (source && (source.display_name || source.datasource)) || "Untitled image",
+            meta: [span ? FigureSchema.formatMicrons(span) + " wide" : "", pixels]
+                .filter(Boolean).join(" · "),
+            url: this.canvas.panelImageUrl(panel, source),
+            placed: Boolean(panel.placement),
+        };
     }
 
     renderStatus(payload) {
@@ -2810,6 +4242,11 @@ class FigureWorkspace {
                 unreadable: "Cannot be opened",
             }[payload.status] || "";
             status.className = "fb-save-status fb-status-" + payload.status;
+            // A tick for saved, the one state that is good news; the rest are
+            // words alone, in their own colour (see .fb-status-*).
+            if (payload.status === "saved") {
+                status.innerHTML = FigureIcons.svg("check", 12) + " Saved";
+            }
         }
         const conflict = this.el("fb_conflict_banner");
         if (conflict) conflict.hidden = payload.status !== "conflict";

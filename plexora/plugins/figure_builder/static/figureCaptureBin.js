@@ -60,6 +60,8 @@ class FigureCaptureBin {
             // exploration, and forcing a layout decision at the moment of
             // capture is what makes people stop capturing.
             placement: null,
+            // Which Assets tab it goes back to when it is taken off the page.
+            origin: capture.bookmarked ? "bookmark" : "capture",
             label: { text: "", auto: true, visible: true },
             // No calibration, no PHYSICAL scale bar -- a bar drawn from an
             // assumed pixel size looks exactly like one that is right. An

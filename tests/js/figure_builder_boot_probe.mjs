@@ -87,6 +87,8 @@ function browserGlobals() {
                 }
             }
         },
+        // figureSelect.js watches the sidebars for <select>s to replace.
+        MutationObserver: class { observe() {} disconnect() {} takeRecords() { return []; } },
         requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
         fetch: async (url) => {
             requests.push(String(url));
@@ -299,6 +301,9 @@ for (const name of SCRIPTS) {
 }
 
 const report = { order: SCRIPTS, loaded, registered: [], problems };
+// What loading alone asked for, before any block below builds a workspace on
+// purpose (and that one, rightly, fetches its Assets).
+const requestedByLoading = requests.slice();
 
 // Every file loaded without throwing, which is the precondition for asking any
 // of them a question. Recorded once rather than re-tested as `!problems.length`
@@ -1567,7 +1572,10 @@ if (!problems.length) {
                      status: state.status, revision: state.revision };
         })()`, ctx);
 
-        const expected = [7, 8, 9, 10, 11];
+        // The two undos are pressed before either is sent, so only the second
+        // whole-document replace goes out: it holds everything the first
+        // would have (FigureDocumentState._replaceWith skips the first).
+        const expected = [7, 8, 9, 10];
         if (queue.sent.join(",") !== expected.join(",")) {
             problems.push("queued saves sent the revisions "
                           + `[${queue.sent.join(", ")}], expected `
@@ -1593,7 +1601,8 @@ report.registered = registered.map((d) => ({
     name: d.name, ownsCellLayer: d.ownsCellLayer, hooks: Object.keys(d),
 }));
 report.controller = ctx.__built || null;
-report.requests = requests;
+report.requests = requestedByLoading;
+report.allRequests = requests;
 report.problems = problems;
 
 console.error(JSON.stringify(report, null, 2));

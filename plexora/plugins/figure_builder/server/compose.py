@@ -67,34 +67,196 @@ NOMINAL_CHAR_EM = 0.55
 def page_instructions(document, page, panels, annotations):
     """Everything drawn on one page, back to front.
 
-    Order is the order it is drawn in: panels first, then their furniture, then
-    annotations on top. Within panels, `placement.z` -- which is what the canvas
-    z-orders by, so a figure exports stacked the way it looked.
+    Order is the order it is drawn in, the canvas's stacking order
+    (`stacking_order`): each panel with its furniture, and each annotation, at
+    its place in the stack, so a figure exports stacked the way it looked.
     """
     style = document["settings"]["style"]
     label_style = document["settings"]["label_style"]
     instructions = []
 
-    for index, panel in enumerate(sorted(panels, key=_reading_order)):
+    # Two orders, kept apart. The LETTER comes from reading order (rows, then
+    # columns), which is how a reader finds panel C; the STACKING comes from
+    # `z`, which is how the canvas draws them. This used to draw in reading
+    # order too, so two overlapping panels exported stacked differently from
+    # the way they looked on screen.
+    #
+    # Hidden objects keep their place in the reading order and are only left
+    # undrawn, so hiding panel B does not reletter C as B in the exported file
+    # while the canvas still says C.
+    reading = reading_order(panels)
+    letter_index = {panel["panel_id"]: index for index, panel in enumerate(reading)}
+    for kind, item in stacking_order(document, reading, annotations):
+        if item.get("hidden"):
+            continue
+        if kind == "annotation":
+            instructions.extend(_annotation(item, style))
+            continue
+        panel = item
         place = panel["placement"]
-        instructions.append({
+        drawn = [{
             "kind": "panel", "panel_id": panel["panel_id"],
             "x": place["x_mm"], "y": place["y_mm"],
             "w": place["w_mm"], "h": place["h_mm"],
-        })
-        instructions.extend(_panel_furniture(document, panel, index, label_style, style))
-
-    for annotation in sorted(annotations, key=lambda a: a["z"]):
-        instructions.extend(_annotation(annotation, style))
+        }]
+        drawn.extend(_panel_border(panel, place))
+        drawn.extend(_panel_furniture(
+            document, panel, letter_index[panel["panel_id"]], label_style, style))
+        # A turned panel turns as one: picture, border and furniture about the
+        # panel's centre, applied around the finished layout as for a turned
+        # annotation (see _rotated).
+        rotation = place.get("rotation") or 0.0
+        if rotation:
+            pivot = {"x": place["x_mm"] + place["w_mm"] / 2,
+                     "y": place["y_mm"] + place["h_mm"] / 2}
+            drawn = [{**item, "rotation": rotation, "pivot": pivot} for item in drawn]
+        instructions.extend(drawn)
 
     return instructions
 
 
+def stacking_order(document, panels, annotations):
+    """One page's panels and annotations, back to front, as (kind, object).
+
+    Mirrors `FigureSchema.stackOnPage`. A figure whose settings say
+    `stack: "shared"` stacks both kinds by `z` together (a panel first on a
+    tie); an older one ("split") draws every panel by its `z` and then every
+    annotation by its own, which is how it always looked.
+    """
+    ordered = ([("panel", panel) for panel in sorted(panels, key=lambda p: p["placement"]["z"])]
+               + [("annotation", a) for a in sorted(annotations, key=lambda a: a["z"])])
+    if (document.get("settings") or {}).get("stack") != "shared":
+        return ordered
+    # sorted() is stable, so panels stay ahead of annotations on equal z.
+    return sorted(ordered, key=lambda entry: (entry[1]["placement"]["z"] if entry[0] == "panel"
+                                              else entry[1]["z"]))
+
+
+#: How far apart a panel's shape and its frame's may be and still count as the
+#: same shape. Rounding in millimetres and in pixels both produce ratios a hair
+#: apart; treating those as a crop would move every picture by a fraction of a
+#: pixel for nothing.
+ASPECT_TOLERANCE = 0.002
+
+
+def visible_frame(viewport, w_mm, h_mm):
+    """(width, height), in image pixels, of the part of a panel's captured frame
+    that a panel of w_mm x h_mm shows.
+
+    ONE rule for a panel whose shape no longer matches the field it captured --
+    it was resized from an edge, or put into a layout cell of another shape --
+    and the canvas, both exporters and the scale bar all follow it: the panel
+    shows the CENTRE of its frame, as much of it as fits at the frame's own
+    proportions, and never stretches it. The canvas has always drawn it this way
+    (`object-fit: cover`); the exporters used to stretch the whole frame into the
+    box instead, which distorted the tissue in the file while the screen looked
+    right, and measured the scale bar across the whole frame while only part of
+    it was on the page.
+
+    The bar is measured across THIS width (`scale_bar`), which is what keeps a
+    physical scale bar true when a panel is cropped by its shape.
+    """
+    orientation = _turned(viewport) or {}
+    frame_w = orientation.get("frame_w") or viewport.get("w") or 0
+    frame_h = orientation.get("frame_h") or viewport.get("h") or 0
+    if not w_mm or not h_mm or w_mm <= 0 or h_mm <= 0 or frame_w <= 0 or frame_h <= 0:
+        return frame_w, frame_h
+    aspect = w_mm / h_mm
+    frame_aspect = frame_w / frame_h
+    if abs(frame_aspect / aspect - 1) <= ASPECT_TOLERANCE:
+        return frame_w, frame_h
+    if frame_aspect > aspect:
+        return frame_h * aspect, frame_h
+    return frame_w, frame_w / aspect
+
+
+def _turned(viewport):
+    """The viewport's orientation when it turns or mirrors anything, else None
+    -- `PlexoraViewerScene.orientationOf`'s rule, so both sides agree that a
+    record of "0 degrees, no flips" is upright."""
+    orientation = viewport.get("orientation")
+    if not isinstance(orientation, dict):
+        return None
+    degrees = float(orientation.get("degrees") or 0) % 360
+    if min(degrees, 360 - degrees) < 1e-9 and not orientation.get("flip_h") \
+            and not orientation.get("flip_v"):
+        return None
+    return orientation
+
+
+def visible_viewport(viewport, w_mm, h_mm):
+    """The viewport cut down to `visible_frame`, about the same centre.
+
+    An upright viewport is its own frame, so the box shrinks. A turned one
+    keeps its box -- the renderer reads the box and cuts the frame out of the
+    middle of the turned raster -- and only the frame's size changes.
+    """
+    frame_w, frame_h = visible_frame(viewport, w_mm, h_mm)
+    orientation = _turned(viewport)
+    if orientation:
+        if frame_w == orientation.get("frame_w") and frame_h == orientation.get("frame_h"):
+            return viewport
+        return {**viewport, "orientation": {**orientation,
+                                            "frame_w": frame_w, "frame_h": frame_h}}
+    if frame_w == viewport["w"] and frame_h == viewport["h"]:
+        return viewport
+    # An orientation record that turns and mirrors nothing is upright, and is
+    # dropped with the cut so the renderer takes the upright path for it.
+    upright = {key: value for key, value in viewport.items() if key != "orientation"}
+    return {**upright,
+            "x": viewport["x"] + (viewport["w"] - frame_w) / 2,
+            "y": viewport["y"] + (viewport["h"] - frame_h) / 2,
+            "w": frame_w, "h": frame_h}
+
+
+def _panel_border(panel, place):
+    """A panel's border as four filled strips along the inside of its edge.
+
+    Strips rather than a stroked rectangle, because the two backends disagree
+    about where a stroke goes -- reportlab centres it on the path, Pillow
+    draws it inward -- and a border has to be exactly as wide in the PDF as on
+    the PNG, and inside the panel in both (`FigureCanvas.panelMarkup` draws it
+    the same way, with `box-sizing: border-box`).
+    """
+    border = panel.get("border") or {}
+    if not border.get("visible"):
+        return []
+    t = min(border.get("width_pt", 0.75) * textmetrics.MM_PER_PT,
+            place["w_mm"] / 2, place["h_mm"] / 2)
+    x, y, w, h = place["x_mm"], place["y_mm"], place["w_mm"], place["h_mm"]
+    strip = lambda sx, sy, sw, sh: {"kind": "rect", "x": sx, "y": sy, "w": sw, "h": sh,  # noqa: E731
+                                    "fill": border.get("color", "#ffffff"),
+                                    "stroke": None, "line_width_pt": 0}
+    return [strip(x, y, w, t), strip(x, y + h - t, w, t),
+            strip(x, y + t, t, h - 2 * t), strip(x + w - t, y + t, t, h - 2 * t)]
+
+
 def _reading_order(panel):
     place = panel["placement"]
-    # Rows before columns, matching the canvas: a reader numbers a grid
-    # left-to-right and top-to-bottom, not by when each field was captured.
     return (place["y_mm"], place["x_mm"], place["z"])
+
+
+def reading_order(panels):
+    """Panels in the order their letters run: rows top to bottom, each row left
+    to right. Mirrors `FigureSchema.panelsOnPage`.
+
+    A panel joins the current row when its top is above the middle of the
+    row's first (topmost) panel. Exact tops are not enough: a layout that fits
+    a wider picture into its cell centres it vertically, so its top sits a
+    little lower than its neighbours', and sorting on the top alone lettered a
+    row of three as A C B.
+    """
+    rows = []
+    for panel in sorted(panels, key=_reading_order):
+        place = panel["placement"]
+        if rows:
+            anchor = rows[-1][0]["placement"]
+            if place["y_mm"] < anchor["y_mm"] + anchor["h_mm"] / 2:
+                rows[-1].append(panel)
+                continue
+        rows.append([panel])
+    return [panel for row in rows
+            for panel in sorted(row, key=lambda p: (p["placement"]["x_mm"], p["placement"]["z"]))]
 
 
 def _panel_furniture(document, panel, index, label_style, style):
@@ -113,14 +275,39 @@ def _panel_furniture(document, panel, index, label_style, style):
 
     label = panel["label"]["text"] if not panel["label"]["auto"] else label_for(index, label_style)
     if panel["label"]["visible"] and label:
-        out.append(_furniture(label, place["x_mm"] + INSET_MM,
-                              place["y_mm"] + INSET_MM,
-                              place["w_mm"] - 2 * INSET_MM, "left",
-                              style["label_size_pt"], "#ffffff", family, bold=True))
+        out.extend(_panel_letter(panel["label"], label, place, style, family))
 
     out.extend(_scalebar_instructions(document, panel, place, style, family))
     out.extend(_colorbar_instructions(panel, place, style, family))
     out.extend(_panel_label_instructions(panel, place, style, family))
+    return out
+
+
+#: The padding round a panel letter's ground, when it has one.
+LETTER_GROUND_PAD_MM = 0.5
+
+
+def _panel_letter(own, text, place, style, family):
+    """The panel's letter, at its anchor, and the ground behind it if it has one.
+
+    Anchored like a caption (`anchor_box`, `INSET_MM` from the edges) and sized
+    from its own size or the figure's. A letter with no setting of its own is
+    exactly what every letter was before these existed: the figure's size,
+    white, bold, top left. `FigureCanvas.panelLetterMarkup` is the mirror.
+    """
+    size_pt = own.get("size_pt") or style["label_size_pt"]
+    height = size_pt * textmetrics.MM_PER_PT
+    width = _nominal_width_mm(text, size_pt)
+    position = own.get("position") or "top_left"
+    pad = LETTER_GROUND_PAD_MM if own.get("background") else 0.0
+    x, y = anchor_box(place, position, width + 2 * pad, height + 2 * pad, INSET_MM)
+    column = anchor_parts(position)[1]
+    out = []
+    if own.get("background"):
+        out.append({"kind": "rect", "x": x, "y": y, "w": width + 2 * pad, "h": height + 2 * pad,
+                    "fill": own["background"], "stroke": None, "line_width_pt": 0})
+    out.append(_furniture(text, x + pad, y + pad, width, column, size_pt,
+                          own.get("color") or "#ffffff", family, bold=own.get("bold", True)))
     return out
 
 
@@ -242,8 +429,26 @@ def _colorbar_instructions(panel, place, style, family):
         block_w = length
         block_h = lane * len(rows) + gap * (len(rows) - 1)
 
-    x, y = anchor_box(place, settings["position"], block_w, block_h,
-                      settings["margin_mm"])
+    # The end labels are centred on the end ticks, so they overhang the bar
+    # (horizontal: half the first and last label's width; vertical: half a
+    # line above and below). The block is anchored WITH that overhang, so a
+    # bar in a corner keeps its labels inside the panel.
+    over_a = over_b = 0.0
+    if ticked and vertical:
+        over_a = over_b = _pt_to_mm(size_pt) / 2
+    elif ticked:
+        # 0.6 rather than half: the width is an estimate, and the extra
+        # tenth keeps a slightly wide label off the panel's edge.
+        over_a = max(_nominal_width_mm(row["labels"][0], size_pt) for row in rows) * 0.6
+        over_b = max(_nominal_width_mm(row["labels"][-1], size_pt) for row in rows) * 0.6
+    if vertical:
+        x, y = anchor_box(place, settings["position"], block_w,
+                          block_h + over_a + over_b, settings["margin_mm"])
+        y += over_a
+    else:
+        x, y = anchor_box(place, settings["position"], block_w + over_a + over_b,
+                          block_h, settings["margin_mm"])
+        x += over_a
 
     out = []
     for index, row in enumerate(rows):
@@ -698,8 +903,11 @@ def scale_bar(document, panel):
     # Across the PANEL: a turned capture's frame, not the box around it
     # (`schema.frame_size`, read inline -- this module stays free of the
     # schema's machinery).
+    # The width the panel SHOWS, which is its frame's width unless the panel's
+    # shape crops it (`visible_frame`).
     viewport = panel["scene"]["viewport"]
-    span_px = (viewport.get("orientation") or {}).get("frame_w") or viewport["w"]
+    place = panel.get("placement") or {}
+    span_px, _ = visible_frame(viewport, place.get("w_mm") or 0, place.get("h_mm") or 0)
     source = document["sources"].get(panel["source_id"])
     pixel_size = source and source.get("pixel_size")
     calibrated = bool(pixel_size and pixel_size.get("value"))

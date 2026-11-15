@@ -25,6 +25,8 @@ const FigureSchema = {
 
     PAGE_PRESETS: {
         a4: { w: 210.0, h: 297.0, label: "A4" },
+        a3: { w: 297.0, h: 420.0, label: "A3" },
+        a5: { w: 148.0, h: 210.0, label: "A5" },
         letter: { w: 215.9, h: 279.4, label: "US Letter" },
         square: { w: 200.0, h: 200.0, label: "Square" },
     },
@@ -109,17 +111,85 @@ const FigureSchema = {
         return style === "a" ? out.toLowerCase() : out;
     },
 
-    /** Panels on one page, in the order their labels should run. */
+    /** The letter automatic numbering gives this panel now: its place in its
+     *  page's reading order, in the figure's numbering scheme. */
+    automaticLetter(document_, panel) {
+        const page = panel && panel.placement && panel.placement.page_id;
+        if (!page) return "";
+        const index = this.panelsOnPage(document_, page).findIndex((each) => each.panel_id === panel.panel_id);
+        return index < 0 ? "" : this.labelFor(index, document_.settings && document_.settings.label_style);
+    },
+
+    /** "A to E": the first and last letters automatic numbering gives
+     *  `count` panels, in the figure's scheme. */
+    letterRange(document_, count) {
+        if (count < 1) return "";
+        const style = document_ && document_.settings && document_.settings.label_style;
+        const first = this.labelFor(0, style);
+        return count === 1 ? first : `${first} to ${this.labelFor(count - 1, style)}`;
+    },
+
+    /** Panels on one page, in the order their labels should run: rows top
+     *  to bottom, each row left to right (z breaks ties). A user who lays out
+     *  a 3x2 grid expects A B C / D E F.
+     *
+     *  A panel joins the current row when its top is above the middle of the
+     *  row's first (topmost) panel, so a picture a layout centred in its cell
+     *  -- its top a little lower than its neighbours' -- keeps its place in
+     *  the row instead of lettering A C B. Mirrors `compose.reading_order`. */
     panelsOnPage(document_, pageId) {
-        return Object.values((document_ && document_.panels) || {})
+        const sorted = Object.values((document_ && document_.panels) || {})
             .filter((panel) => panel.placement && panel.placement.page_id === pageId)
-            // Reading order, then z as the tiebreak. A user who lays out a 3x2
-            // grid expects A B C / D E F, which is rows before columns; sorting
-            // by z alone would number them by the order they happened to be
-            // captured in.
             .sort((a, b) => (a.placement.y_mm - b.placement.y_mm)
                 || (a.placement.x_mm - b.placement.x_mm)
                 || (a.placement.z - b.placement.z));
+        const rows = [];
+        for (const panel of sorted) {
+            const row = rows[rows.length - 1];
+            const anchor = row && row[0].placement;
+            if (anchor && panel.placement.y_mm < anchor.y_mm + anchor.h_mm / 2) row.push(panel);
+            else rows.push([panel]);
+        }
+        return rows.flatMap((row) => row.slice().sort((a, b) =>
+            (a.placement.x_mm - b.placement.x_mm) || (a.placement.z - b.placement.z)));
+    },
+
+    /** Whether panels and annotations share one stack. Figures saved before
+     *  `settings.stack` existed read as "split": every annotation above every
+     *  panel. Mirrors `compose.stacking_order`. */
+    sharedStack(document_) {
+        return Boolean(document_ && document_.settings && document_.settings.stack === "shared");
+    },
+
+    /** One page's objects back to front, as {kind, id, z, object}. Shared:
+     *  by `z` across both kinds, a panel first on a tie. Split: panels by
+     *  `z`, then annotations by theirs. */
+    stackOnPage(document_, pageId) {
+        const panels = this.panelsOnPage(document_, pageId).slice()
+            .sort((a, b) => a.placement.z - b.placement.z)
+            .map((panel) => ({ kind: "panel", id: panel.panel_id, z: panel.placement.z, object: panel }));
+        const annotations = Object.values((document_ && document_.annotations) || {})
+            .filter((annotation) => annotation.page_id === pageId)
+            .sort((a, b) => a.z - b.z)
+            .map((annotation) => ({ kind: "annotation", id: annotation.annotation_id,
+                                    z: annotation.z, object: annotation }));
+        const ordered = panels.concat(annotations);
+        if (!this.sharedStack(document_)) return ordered;
+        return ordered.map((entry, index) => ({ entry, index }))
+            .sort((a, b) => (a.entry.z - b.entry.z) || (a.index - b.index))
+            .map((item) => item.entry);
+    },
+
+    /** The CSS z-index an object draws at inside the (isolated) page. */
+    stackIndex(document_, kind, z) {
+        return kind === "annotation" && !this.sharedStack(document_) ? 1000 + z : z;
+    },
+
+    /** The `z` that puts a new object of `kind` on top of the page. */
+    nextZ(document_, pageId, kind) {
+        const stack = this.stackOnPage(document_, pageId)
+            .filter((entry) => this.sharedStack(document_) || entry.kind === kind);
+        return stack.reduce((top, entry) => Math.max(top, entry.z), 0) + 1;
     },
 
     /** Panels not on any page: captured, kept, not laid out.
@@ -195,6 +265,37 @@ const FigureSchema = {
      * pixel size is wrong and looks exactly like one that is right, which is the
      * single worst failure mode a figure tool has.
      */
+    /** `compose.ASPECT_TOLERANCE`, mirrored. */
+    ASPECT_TOLERANCE: 0.002,
+
+    /**
+     * The viewport cut to the part of the frame a panel of this placement
+     * SHOWS -- `compose.visible_viewport`'s mirror, and the one rule for a
+     * panel whose shape no longer matches its field: the centre of the frame,
+     * at the frame's own proportions, never stretched. The canvas draws it
+     * that way (`object-fit: cover`), the exporters cut it that way, and the
+     * scale bar and the effective resolution are measured across it.
+     */
+    shownViewport(viewport, placement) {
+        if (!viewport || !placement || !(placement.w_mm > 0) || !(placement.h_mm > 0)) {
+            return viewport;
+        }
+        const frame = this.frameSize(viewport);
+        if (!(frame.w > 0) || !(frame.h > 0)) return viewport;
+        const aspect = placement.w_mm / placement.h_mm;
+        const frameAspect = frame.w / frame.h;
+        if (Math.abs(frameAspect / aspect - 1) <= this.ASPECT_TOLERANCE) return viewport;
+        const w = frameAspect > aspect ? frame.h * aspect : frame.w;
+        const h = frameAspect > aspect ? frame.h : frame.w / aspect;
+        // Only a turn or a mirror makes the frame differ from the box; an
+        // orientation record that says neither is read as upright everywhere.
+        if (this.orientationOf(viewport)) {
+            return { ...viewport, orientation: { ...viewport.orientation, frame_w: w, frame_h: h } };
+        }
+        return { ...viewport, x: viewport.x + (viewport.w - w) / 2,
+                 y: viewport.y + (viewport.h - h) / 2, w: w, h: h };
+    },
+
     physicalWidthUm(source, viewport) {
         const pixelSize = source && source.pixel_size;
         if (!pixelSize || !(pixelSize.value > 0) || !viewport) return null;
@@ -409,6 +510,56 @@ const FigureSchema = {
     panelCaption(panel) {
         return ((panel && panel.labels) || [])
             .map((entry) => entry.text).find(Boolean) || "";
+    },
+
+    /**
+     * Which Assets tab a panel belongs under: "capture", "bookmark" or
+     * "upload". A panel from before `origin` was stored is read from its
+     * source -- an imported file is an upload, anything else a capture.
+     */
+    panelOrigin(panel, source) {
+        const origin = panel && panel.origin;
+        if (origin === "capture" || origin === "bookmark" || origin === "upload") return origin;
+        return source && source.kind === "imported_asset" ? "upload" : "capture";
+    },
+
+    /**
+     * Does `text` answer the search `query`? Every word of the query has to
+     * appear somewhere in it, in any order and any case, so "cd8 tonsil" finds
+     * a capture of CD8 on the tonsil image. An empty query matches everything.
+     */
+    matchesSearch(text, query) {
+        const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+        if (!words.length) return true;
+        const haystack = String(text || "").toLowerCase();
+        return words.every((word) => haystack.includes(word));
+    },
+
+    /** The words a captured scene can be found by: its channels' names and
+     *  the cell layers and plugins that were drawn over it. */
+    sceneSearchText(scene) {
+        if (!scene) return "";
+        const overlays = scene.core_overlays || {};
+        return [
+            ...(scene.channels || []).map((channel) => channel.fullname_at_capture || channel.key),
+            ...(overlays.cell_layers || []).map((layer) => layer.name),
+            ...Object.keys(scene.plugins || {}),
+        ].filter(Boolean).join(" ");
+    },
+
+    /**
+     * Everything a capture or bookmark in the bin can be searched by: its
+     * name, the image and file it came from, its caption, and what the scene
+     * showed. Notes users write on a capture belong here too, when captures
+     * carry them -- this is the one place the search reads.
+     */
+    captureSearchText(capture) {
+        if (!capture) return "";
+        const source = capture.source || {};
+        return [capture.label, capture.caption, capture.datasource,
+                source.display_name, source.datasource,
+                FigureSchema.sceneSearchText(capture.scene)]
+            .filter(Boolean).join(" ");
     },
 
     /**

@@ -286,9 +286,12 @@ def test_adoption_moves_the_raster_and_empties_the_row(client):
     preview = client.get(f"{API}/figures/{figure_id}/previews/pnl_one")
     assert preview.status_code == 200
     assert preview.get_data() == b"the-pixels"
-    # ...and out of the bin, which is what stops the strip offering a capture
-    # that is already a panel.
-    assert client.get(f"{API}/captures").get_json()["captures"] == []
+    # ...and kept, marked as used in this figure (the Assets tab's "Previously
+    # used"), but out of its image's strip in the viewer, which is what stops
+    # the strip offering a capture that is already a panel.
+    listed = client.get(f"{API}/captures").get_json()["captures"]
+    assert [(c["capture_id"], c["used_in"]) for c in listed] == [("cap_one", [figure_id])]
+    assert client.get(f"{API}/captures?datasource=demo").get_json()["captures"] == []
 
 
 def test_a_capture_with_no_raster_still_leaves_the_bin(client):
@@ -303,7 +306,7 @@ def test_a_capture_with_no_raster_still_leaves_the_bin(client):
                        ).get_json()
     assert body["moved"] == []
     assert body["missing"] == ["cap_one"]
-    assert client.get(f"{API}/captures").get_json()["captures"] == []
+    assert client.get(f"{API}/captures?datasource=demo").get_json()["captures"] == []
 
 
 def test_adopting_into_a_figure_that_is_gone_is_404_and_keeps_the_captures(client):
@@ -530,8 +533,13 @@ def test_adopting_a_bookmark_copies_its_raster_and_keeps_it(client):
                                        {"capture_id": "cap_plain", "panel_id": "pnl_plain"}]}).get_json()
     assert sorted(body["moved"]) == ["cap_mark", "cap_plain"] and body["kept"] == ["cap_mark"]
     assert client.get(f"{API}/figures/{figure_id}/previews/pnl_mark").get_data() == b"mark-pixels"
-    left = client.get(f"{API}/captures").get_json()["captures"]
+    # Both are kept now (a used capture is marked, not deleted); in the
+    # image's strip only the bookmark is still offered.
+    left = client.get(f"{API}/captures?datasource=demo").get_json()["captures"]
     assert [(row["capture_id"], row["bookmarked"], row["has_preview"]) for row in left] == [("cap_mark", True, True)]
+    every = client.get(f"{API}/captures").get_json()["captures"]
+    assert sorted((row["capture_id"], row["used_in"]) for row in every) == [
+        ("cap_mark", [figure_id]), ("cap_plain", [figure_id])]
     # Taking the bookmark off afterwards leaves the figure's panel as it was.
     client.patch(f"{API}/captures/cap_mark", json={"bookmarked": False})
     assert client.get(f"{API}/figures/{figure_id}/previews/pnl_mark").get_data() == b"mark-pixels"

@@ -45,7 +45,7 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // viewerScene.js first: FigureSchema/FigureScene delegate their viewport
 // helpers to core's PlexoraViewerScene (loaded by base.html on every page).
 const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureColorField.js", "figureChoiceField.js",
-                 "figureActions.js", "figureImagePanel.js"];
+                 "figureActions.js", "figureIcons.js", "figureInspector.js", "figureImagePanel.js"];
 
 const problems = [];
 

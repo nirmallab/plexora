@@ -461,6 +461,24 @@ def test_a_figures_own_page_renders(client):
     assert f'data-figure-id="{figure_id}"' in html
 
 
+def test_the_plugins_pages_say_the_website_answers_them(client, monkeypatch):
+    """On the website (PLEXORA_BACKEND=browser) a page must say so, as core's
+    pages do: services/backend.js sends its requests to the page's worker only
+    then, and base.html writes the variables as data instead of an inline
+    script the site's CSP refuses. Without it every request of a figure page
+    failed on the website."""
+    figure_id = create(client)
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    for path in ("/plugins/figure_builder/figures", "/plugins/figure_builder/captures",
+                 f"/plugins/figure_builder/figure/{figure_id}"):
+        html = client.get(path).get_data(as_text=True)
+        assert 'id="plexora-variables"' in html, path
+        assert '"backend": "browser"' in html, path
+    monkeypatch.delenv("PLEXORA_BACKEND")
+    html = client.get(f"/plugins/figure_builder/figure/{figure_id}").get_data(as_text=True)
+    assert 'id="plexora-variables"' not in html
+
+
 def test_a_page_for_a_figure_that_is_gone_is_404(client):
     assert client.get("/plugins/figure_builder/figure/fig_deadbeefcafe").status_code == 404
     assert client.get("/plugins/figure_builder/figure/not-an-id").status_code == 404

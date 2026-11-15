@@ -140,6 +140,8 @@ SHAPE_PRESETS = (
 #: is worse than no list. `custom` is any w/h the user types.
 PAGE_PRESETS = {
     "a4": (210.0, 297.0),
+    "a3": (297.0, 420.0),
+    "a5": (148.0, 210.0),
     "letter": (215.9, 279.4),
     "square": (200.0, 200.0),
 }
@@ -194,6 +196,12 @@ MAX_HEAD_SIZE_PT = 72.0
 PANEL_ANCHORS = ("top_left", "top_center", "top_right",
                  "middle_left", "center", "middle_right",
                  "bottom_left", "bottom_center", "bottom_right")
+
+#: Where a panel came from, so a panel taken off the page goes back under the
+#: Assets tab it was added from: a capture, a bookmark, or an uploaded file.
+#: Empty on a panel from before the key existed; the client then reads it from
+#: the source (an `imported_asset` is an upload, anything else a capture).
+PANEL_ORIGINS = ("", "capture", "bookmark", "upload")
 
 #: How a scale-bar length is written. "auto" is the historical behaviour --
 #: microns below a millimetre, millimetres above -- and stays ACCEPTED so that
@@ -429,6 +437,11 @@ def default_settings():
             "panel_background": "#000000",
         },
         "label_style": "A",
+        # One stack for panels and annotations, so an image moved above a
+        # shape covers it. Figures saved before this have no key and read as
+        # "split": every annotation above every panel, the old rule, until
+        # their order is next changed (FigureCanvas.restackPages converts).
+        "stack": "shared",
     }
 
 
@@ -450,6 +463,7 @@ def normalize_settings(raw):
         "dpi_default": clamp(as_int(raw.get("dpi_default"), defaults["dpi_default"]), 72, 1200),
         "style": style,
         "label_style": label_style if label_style in ("A", "a", "A1") else defaults["label_style"],
+        "stack": "shared" if raw.get("stack") == "shared" else "split",
     }
 
 
@@ -629,10 +643,21 @@ def normalize_panel(raw):
             # which of "A" and "A'" it is allowed to overwrite.
             "auto": bool(label.get("auto", True)),
             "visible": bool(label.get("visible", True)),
+            # How this panel's letter is drawn. Each defaults to what every
+            # letter looked like before it existed -- the figure's letter
+            # size, white, bold, top left, no ground -- so an old figure is
+            # unchanged. `size_pt` null follows the figure's size.
+            "size_pt": (clamp(as_float(label.get("size_pt"), 10.0), 4.0, 72.0)
+                        if label.get("size_pt") not in (None, "") else None),
+            "color": color(label.get("color"), "#ffffff"),
+            "position": one_of(label.get("position"), PANEL_ANCHORS, "top_left"),
+            "bold": bool(label.get("bold", True)),
+            "background": color(label.get("background"), "") if label.get("background") else "",
         },
         "scalebar": normalize_scalebar(scalebar),
         "colorbar": normalize_colorbar(
             raw.get("colorbar") if isinstance(raw.get("colorbar"), dict) else {}),
+        "border": normalize_border(raw.get("border")),
         # Free captions on the image, as many as the panel needs. Distinct from
         # `label`, which is the figure's own A/B/C and is one per panel by
         # definition, and from a text annotation, which sits on the PAGE and
@@ -641,6 +666,7 @@ def normalize_panel(raw):
                    if isinstance(item, dict) and clean_id(item.get("label_id"))
                    ][:MAX_PANEL_LABELS],
         "link_group": clean_id(raw.get("link_group")) or None,
+        "origin": one_of(raw.get("origin"), PANEL_ORIGINS, ""),
         "render_revision": max(0, as_int(raw.get("render_revision"), 0)),
         "derived_from": {
             "panel_id": clean_id(derived.get("panel_id")),
@@ -649,6 +675,52 @@ def normalize_panel(raw):
         } if derived else None,
         "created_at": clean_text(raw.get("created_at")),
         "updated_at": clean_text(raw.get("updated_at")),
+        **normalize_layer_fields(raw),
+    }
+
+
+def normalize_border(raw):
+    """A line round the panel's edge, drawn INSIDE it -- so a bordered panel
+    keeps the size the layout gave it and its neighbours' gaps are unchanged.
+
+    Additive: a panel written before this has no border, which is what it
+    always looked like. Coerced, never refused.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "visible": bool(raw.get("visible", False)),
+        "width_pt": clamp(as_float(raw.get("width_pt"), 0.75), 0.1, 20.0),
+        "color": color(raw.get("color"), "#ffffff"),
+    }
+
+
+#: How long a layer's own name may be. A name is a handle for finding an object
+#: in the Layers list, not a caption: it is never drawn on the figure.
+MAX_LAYER_NAME_LENGTH = 80
+
+
+def normalize_layer_fields(raw):
+    """What the Layers list says about one object: its name, and whether it is
+    hidden or locked.
+
+    Additive, and tolerant both ways, by the project's rule for new keys: a
+    document written before these existed reads as named by its content, shown
+    and unlocked, and an older build simply drops them. No `SCHEMA_VERSION` bump.
+
+    `hidden` is a statement about DRAWING, not about the document. A hidden
+    object keeps its place in the reading order -- so a hidden panel B leaves
+    A and C lettered as they were -- and is skipped only where something is
+    painted: the canvas, the thumbnail and the exporters.
+
+    `locked` is a statement about the POINTER. A locked object is drawn and
+    exported like any other; the canvas will not pick it up, the marquee passes
+    over it, and the arrange commands leave it where it is. The Layers list is
+    the one place it can still be selected.
+    """
+    return {
+        "name": clean_text(raw.get("name"), MAX_LAYER_NAME_LENGTH),
+        "hidden": bool(raw.get("hidden", False)),
+        "locked": bool(raw.get("locked", False)),
     }
 
 
@@ -774,7 +846,19 @@ def normalize_placement(raw):
         # unflipped rather than unreadable.
         "flip_h": bool(raw.get("flip_h")),
         "flip_v": bool(raw.get("flip_v")),
+        # Degrees clockwise about the panel's centre, as an annotation's
+        # `geometry.rotation`. The picture, its scale bar, labels and border
+        # turn together; the box (x, y, w, h) stays the unturned one.
+        "rotation": _degrees(raw.get("rotation")),
     }
+
+
+def _degrees(value):
+    """An angle in [0, 360), one decimal; anything unreadable is 0."""
+    angle = as_float(value, 0.0)
+    if angle != angle or angle in (float("inf"), float("-inf")):
+        return 0.0
+    return round(angle % 360.0, 1) % 360.0
 
 
 def normalize_scene(raw):
@@ -1051,6 +1135,7 @@ def normalize_annotation(raw):
             "edge": one_of(style.get("edge"), LINE_EDGES, "standard"),
         },
         "z": as_int(raw.get("z"), 0),
+        **normalize_layer_fields(raw),
     }
     if kind == "text":
         # `rich` is the words; `text` is a projection of it, recomputed here and
@@ -1386,6 +1471,47 @@ def normalize_group(raw):
     return {
         "group_id": validate_id(raw.get("group_id"), "group id"),
         "member_ids": [clean_id(m) for m in raw.get("member_ids") or [] if clean_id(m)],
+        # The folder name in the Layers list. Empty means "Group", numbered by
+        # the list; never drawn on the figure.
+        "name": clean_text(raw.get("name"), MAX_LAYER_NAME_LENGTH),
+        "layout": normalize_group_layout(raw.get("layout")),
+    }
+
+
+#: The arrangements a layout group may record. The geometry of each is the
+#: browser's (figureLayouts.js) -- the server never re-lays a group out, it only
+#: keeps the record of what was asked for so the arrangement stays editable.
+LAYOUT_PRESETS = ("1x2", "2x1", "3x1", "4x1", "1x3", "2x2", "3x2", "2x3", "3x3",
+                  "4x2", "top2", "top3", "left2", "left3")
+
+
+def normalize_group_layout(raw):
+    """How a layout group was arranged, so it can be arranged again.
+
+    A layout is ordinary geometry -- the panels in it can be dragged like any
+    others -- plus this record, which is what makes "change the gap", "swap two
+    panels" and "make it 3 x 2 instead" one gesture each instead of a rebuild.
+    Members keep their own order in `member_ids`: that order IS the reading
+    order of the cells. Detaching a layout clears this and leaves the group.
+
+    Coerced, never refused: a preset from a newer build becomes no layout at
+    all, which leaves a plain group behind rather than deleting the user's
+    arrangement on the next read.
+    """
+    if not isinstance(raw, dict):
+        return None
+    preset = one_of(raw.get("preset"), LAYOUT_PRESETS, "")
+    if not preset:
+        return None
+    return {
+        "preset": preset,
+        "gap_x_mm": clamp(as_float(raw.get("gap_x_mm"), 3.0), 0.0, 50.0),
+        "gap_y_mm": clamp(as_float(raw.get("gap_y_mm"), 3.0), 0.0, 50.0),
+        # "fit" keeps every image's own proportions inside its cell; "fill"
+        # makes each panel the cell, reframing its region to the cell's shape.
+        # Neither ever crops silently: fill changes the panel's FIELD, which the
+        # inspector says and Reset crop undoes.
+        "fit": one_of(raw.get("fit"), ("fit", "fill"), "fit"),
     }
 
 

@@ -65,6 +65,12 @@ class FigureCanvas {
      *  barely see. Same trick, and same reason, as `.fb-stroke-hit`. */
     static get SHAPE_HIT_PX() { return 12; }
 
+    /** Keys a focused sidebar widget owns (see `keyDown`). */
+    static get WIDGET_KEYS() {
+        return new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End",
+                        "Enter", " ", "Delete", "Backspace", "Escape"]);
+    }
+
     /** How far a duplicate or a paste lands from the original. Enough to see
      *  that there are two of something, small enough to still be next to it. */
     static get PASTE_OFFSET_MM() { return 4; }
@@ -88,6 +94,8 @@ class FigureCanvas {
         this.onRotatePreview = options.onRotatePreview || (() => {});
         //: A drawing tool has placed something and the rail should stand down.
         this.onToolFinished = options.onToolFinished || (() => {});
+        //: A one-line notice for the user (the workspace's toast).
+        this.onNotice = options.onNotice || (() => {});
         //: Open the in-place editor on a text annotation. The editor lives in
         //: the overlay layer, which this does not own -- render() would destroy
         //: it mid-keystroke.
@@ -104,6 +112,9 @@ class FigureCanvas {
         //: the tray needs telling separately that the panels it was holding
         //: have gone.
         this.onPlaced = options.onPlaced || (() => {});
+        //: The low-resolution badge on a panel was pressed. The workspace opens
+        //: the explanation, which lives in the overlay this does not own.
+        this.onResolution = options.onResolution || (() => {});
 
         this.pageEl = options.pageEl;
         this.surfaceEl = options.surfaceEl;
@@ -195,6 +206,12 @@ class FigureCanvas {
         window.addEventListener("pointerup", this._onUp);
         this._onKey = (event) => this.keyDown(event);
         window.addEventListener("keydown", this._onKey);
+        // A scroll during a drag (the wheel, or the canvas following the
+        // pointer) moves the surface under it: the rect cached for the drag
+        // is read again on the next move. Capture, because scroll does not
+        // bubble.
+        this._onScroll = () => { if (this.gesture) this.gesture.rect = null; };
+        document.addEventListener("scroll", this._onScroll, true);
 
         this.surfaceEl.addEventListener("dragover", (event) => {
             if (event.dataTransfer?.types.includes("text/x-plexora-panel")) event.preventDefault();
@@ -206,6 +223,8 @@ class FigureCanvas {
         window.removeEventListener("pointermove", this._onMove);
         window.removeEventListener("pointerup", this._onUp);
         window.removeEventListener("keydown", this._onKey);
+        document.removeEventListener("scroll", this._onScroll, true);
+        if (this._moveFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._moveFrame);
     }
 
     // -- rendering -------------------------------------------------------
@@ -268,10 +287,16 @@ class FigureCanvas {
             && document.activeElement !== this.surfaceEl;
 
         // The markup is rebuilt; the PICTURES are not. See `replaceKeepingImages`.
+        // A hidden object is not drawn, and keeps its place in the reading
+        // order: hiding panel B leaves A and C lettered as they were, which is
+        // what the exporter does too (compose.page_instructions).
         FigureCanvas.replaceKeepingImages(this.surfaceEl,
-            panels.map((panel, index) => this.panelMarkup(panel, index, labelStyle)).join("")
-            + annotations.map((annotation) => this.annotationMarkup(annotation)).join("")
-            + this.selectionUnionMarkup());
+            panels.map((panel, index) => (panel.hidden ? ""
+                : this.panelMarkup(panel, index, labelStyle))).join("")
+            + annotations.filter((annotation) => !annotation.hidden)
+                .map((annotation) => this.annotationMarkup(annotation)).join("")
+            + this.selectionUnionMarkup()
+            + this.selectionSizeMarkup());
         this.describeObjects();
         if (held) this.focusObject(this.focusId);
         this.clearGuides();
@@ -464,8 +489,15 @@ class FigureCanvas {
             const id = el.dataset.panelId || el.dataset.annotationId;
             el.setAttribute("role", "option");
             el.setAttribute("aria-selected", this.selection.has(id) ? "true" : "false");
-            el.setAttribute("aria-label", this.objectLabel(id));
+            el.setAttribute("aria-label", this.objectLabel(id)
+                + (this.isLocked(id) ? ", locked" : ""));
             el.tabIndex = id === this.focusId ? 0 : -1;
+            // Marked here, once, for every kind of object, rather than in the
+            // five functions that draw them. The class takes the object out of
+            // hit-testing (see `.is-locked` in the stylesheet), so a press on
+            // it lands on whatever is underneath -- usually the page, which
+            // starts a marquee.
+            el.classList.toggle("is-locked", this.isLocked(id));
         }
     }
 
@@ -499,6 +531,28 @@ class FigureCanvas {
             return shape ? `Shape: ${String(shape).replace(/_/g, " ")}` : "Shape";
         }
         return annotation.type.charAt(0).toUpperCase() + annotation.type.slice(1);
+    }
+
+    /** The object with this id, panel or annotation, or null. */
+    objectById(id) {
+        return this.state.panel(id) || this.state.document?.annotations?.[id] || null;
+    }
+
+    /** Whether the pointer may take this object. See `normalize_layer_fields`
+     *  for what locked and hidden each mean. */
+    isLocked(id) {
+        return Boolean(this.objectById(id)?.locked);
+    }
+
+    isHidden(id) {
+        return Boolean(this.objectById(id)?.hidden);
+    }
+
+    /** Neither locked nor hidden: what a drag, a nudge, an arrange or Delete
+     *  may act on. Selecting from the Layers list can still hold the others. */
+    isEditable(id) {
+        const object = this.objectById(id);
+        return Boolean(object) && !object.locked && !object.hidden;
     }
 
     /** Put the keyboard on one object, without scrolling the sheet under it --
@@ -542,6 +596,31 @@ class FigureCanvas {
                 >${this.handlesMarkup()}</div>`;
     }
 
+    /**
+     * The selection's size, under it, in the figure's unit -- the number a
+     * figure is laid out by, where the eye already is. Not for a lone line,
+     * whose box is a vector rather than a size. Hidden while a drag is in
+     * flight (`.is-gesturing` on the workspace), when it would describe the
+     * box the drag started from.
+     */
+    selectionSizeMarkup() {
+        if (!this.selection.size) return "";
+        const ids = Array.from(this.selection);
+        if (ids.length === 1) {
+            const only = this.state.document.annotations[ids[0]];
+            if (only && FigureCanvas.isStrokeType(only.type)) return "";
+        }
+        const union = this.selectionUnion();
+        if (!union) return "";
+        const unit = this.unit || { per: 1, label: "mm" };
+        const digits = unit.label === "in" ? 2 : 1;
+        const show = (mm) => String(Number((mm / unit.per).toFixed(digits)));
+        return `<span class="fb-sel-size" aria-hidden="true"
+                      style="left:${this.toPx(union.x_mm + union.w_mm / 2)}px;
+                             top:${this.toPx(union.y_mm + union.h_mm) + 8}px"
+                >${show(union.w_mm)} × ${show(union.h_mm)} ${unit.label}</span>`;
+    }
+
     panelMarkup(panel, index, labelStyle) {
         const place = panel.placement;
         const selected = this.selection.has(panel.panel_id);
@@ -553,22 +632,115 @@ class FigureCanvas {
                      data-panel-id="${FigureSchema.escapeHtml(panel.panel_id)}"
                      style="left:${this.toPx(place.x_mm)}px;top:${this.toPx(place.y_mm)}px;
                             width:${this.toPx(place.w_mm)}px;height:${this.toPx(place.h_mm)}px;
-                            z-index:${place.z}">
+                            z-index:${place.z};${place.rotation
+                                ? `transform:rotate(${place.rotation}deg);transform-origin:center;` : ""}">
             <img class="fb-panel-image" draggable="false"
                  src="${this.panelImageUrl(panel, source)}"
                  style="${FigureCanvas.flipStyle(place)}"
                  alt="">
+            ${this.borderMarkup(panel)}
             ${this.scaleBarMarkup(panel, source, place)}
             ${this.colorBarMarkup(panel, place)}
             ${this.panelLabelsMarkup(panel, place)}
-            ${panel.label.visible && label
-                ? `<span class="fb-panel-label">${FigureSchema.escapeHtml(label)}</span>` : ""}
+            ${panel.label.visible && label ? this.panelLetterMarkup(panel.label, label, place) : ""}
             ${status !== "ok"
                 ? `<span class="fb-panel-badge fb-panel-badge-${status}"
                          title="This panel's source has ${status === "missing" ? "gone" : "changed"}">
-                       <span class="fas fa-triangle-exclamation"></span></span>` : ""}
-            ${this.showHandles(selected) ? this.handlesMarkup() : ""}
+                       <span class="fas fa-triangle-exclamation"></span></span>`
+                : this.resolutionBadgeMarkup(panel)}
+            ${this.showHandles(selected) ? this.handlesMarkup(true) : ""}
         </div>`;
+    }
+
+    /**
+     * The panel's letter at its own anchor, size and colour, on its ground if
+     * it has one -- `compose._panel_letter`'s mirror, in the panel's own
+     * coordinates. It used to be a fixed 13 px in the corner whatever the zoom
+     * or the figure's letter size, so the canvas and the file disagreed.
+     */
+    panelLetterMarkup(own, text, place) {
+        const style = this.state.document.settings.style;
+        const sizePt = own.size_pt || style.label_size_pt;
+        const height = sizePt * FigureSchema.MM_PER_INCH / 72;
+        const width = FigureCanvas.nominalWidthMm(text, sizePt);
+        const pad = own.background ? 0.5 : 0;
+        const at = FigureSchema.anchorBox(FigureCanvas.localPlace(place), own.position || "top_left",
+                                          width + 2 * pad, height + 2 * pad, 1.2);
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        return `<span class="fb-panel-label${own.background ? " has-ground" : ""}"
+                      style="left:${this.toPx(at.x)}px;top:${this.toPx(at.y)}px;
+                             padding:${this.toPx(pad)}px;font-size:${this.ptToPx(sizePt)}px;
+                             line-height:${this.toPx(height)}px;color:${escape(own.color || "#ffffff")};
+                             font-weight:${own.bold === false ? 400 : 700};
+                             ${own.background ? `background:${escape(own.background)};` : ""}"
+                >${escape(text)}</span>`;
+    }
+
+    /** A panel's border, inside its edge (`compose._panel_border`). */
+    borderMarkup(panel) {
+        const border = panel.border;
+        if (!border || !border.visible) return "";
+        return `<span class="fb-panel-border" style="border:${
+            Math.max(0.5, this.ptToPx(border.width_pt || 0.75))}px solid ${
+            FigureSchema.escapeHtml(border.color || "#ffffff")}"></span>`;
+    }
+
+    /**
+     * The low-resolution badge, or nothing.
+     *
+     * A button rather than an icon, because the only useful thing about a
+     * warning is what to do about it: pressing it opens the numbers and the
+     * remedies (FigureWorkspace.showResolution). Drawn on the panel, which is
+     * on the artwork, so it carries its own amber -- never part of the figure:
+     * Preview and the exporters do not draw it.
+     */
+    resolutionBadgeMarkup(panel) {
+        const quality = FigureCanvas.panelQuality(panel, this.state.document);
+        if (!quality || !quality.low) return "";
+        const id = FigureSchema.escapeHtml(panel.panel_id);
+        return `<button type="button" class="fb-panel-badge fb-panel-badge-lowres"
+                        data-lowres="${id}"
+                        title="Low effective resolution: ${quality.ppi} ppi at this size"
+                        aria-label="Low effective resolution, ${quality.ppi} ppi. Show details">
+                    ${FigureIcons.svg("warn", 12)}</button>`;
+    }
+
+    /**
+     * How many source pixels each printed inch of this panel holds.
+     *
+     * The viewport is in full-resolution image pixels by construction, so its
+     * width IS what the source holds across the panel; divided by the printed
+     * width in inches that is the panel's real resolution, whatever DPI the
+     * file is later written at. "Low" uses the exporter's own rule -- below
+     * three quarters of the figure's export DPI (`export._warnings`) -- so the
+     * badge and the export dialog's warning can never disagree.
+     *
+     * Null for a 3-D panel, whose picture is a stored render with its own
+     * size (the exporter reports that one), and for anything unplaced.
+     */
+    static panelQuality(panel, document_) {
+        const place = panel && panel.placement;
+        const view = panel && panel.scene && panel.scene.viewport;
+        if (!place || !view || place.w_mm <= 0) return null;
+        // `export.volume_state`'s test, mirrored.
+        const volume = panel.scene.plugins?.volume?.state;
+        if (volume && volume.mode === "volume") return null;
+        const full = FigureSchema.frameSize(view);
+        const frame = FigureSchema.frameSize(FigureSchema.shownViewport(view, place));
+        if (!(frame.w > 0)) return null;
+        const dpi = Number(document_?.settings?.dpi_default) || 300;
+        const ppi = Math.round(frame.w / (place.w_mm / FigureSchema.MM_PER_INCH));
+        return {
+            ppi: ppi, dpi: dpi, low: ppi < dpi * 0.75,
+            source_w: Math.round(frame.w), source_h: Math.round(frame.h),
+            // Whether the panel's shape is showing less than the whole field.
+            cropped: Math.round(frame.w) < Math.round(full.w)
+                || Math.round(frame.h) < Math.round(full.h),
+            frame_w: Math.round(full.w), frame_h: Math.round(full.h),
+            // The widest the panel can print at the export DPI and still have
+            // a source pixel for every printed dot.
+            fit_w_mm: frame.w / dpi * FigureSchema.MM_PER_INCH,
+        };
     }
 
     /**
@@ -624,7 +796,10 @@ class FigureCanvas {
     scaleBarMarkup(panel, source, place) {
         const bar = panel.scalebar;
         if (!bar.visible) return "";
-        const measure = FigureCanvas.scaleBarLength(bar, source, panel.scene.viewport);
+        // Measured across the part of the frame the panel shows, which is the
+        // whole frame unless the panel's shape crops it.
+        const measure = FigureCanvas.scaleBarLength(
+            bar, source, FigureSchema.shownViewport(panel.scene.viewport, place));
         if (!measure) return "";
         const fraction = measure.fraction;
 
@@ -643,6 +818,7 @@ class FigureCanvas {
                              width:${this.toPx(widthMm)}px">
             ${labelled ? `<span class="fb-panel-scalebar-label"
                   style="font-size:${this.ptToPx(sizePt)}px;text-align:${align};
+                         justify-content:${align === "right" ? "flex-end" : (align === "center" ? "center" : "flex-start")};
                          height:${this.toPx(captionMm - 0.4)}px;
                          margin-bottom:${this.toPx(0.4)}px;
                          color:${FigureSchema.escapeHtml(bar.color)}"
@@ -725,8 +901,24 @@ class FigureCanvas {
             blockH = laneMm * rows.length + bar.gap_mm * (rows.length - 1);
         }
 
-        const at = FigureSchema.anchorBox(FigureCanvas.localPlace(place), bar.position,
-            blockW, blockH, bar.margin_mm);
+        // compose._colorbar_instructions' rule: the end labels overhang the
+        // bar, and the block is anchored with that overhang so a bar in a
+        // corner keeps its labels inside the panel.
+        let overA = 0;
+        let overB = 0;
+        if (ticked && vertical) {
+            overA = overB = labelMm / 2;
+        } else if (ticked) {
+            overA = Math.max(...rows.map((row) => FigureCanvas.nominalWidthMm(row.labels[0], sizePt))) * 0.6;
+            overB = Math.max(...rows.map((row) => FigureCanvas.nominalWidthMm(row.labels[row.labels.length - 1], sizePt))) * 0.6;
+        }
+        const at = vertical
+            ? FigureSchema.anchorBox(FigureCanvas.localPlace(place), bar.position,
+                blockW, blockH + overA + overB, bar.margin_mm)
+            : FigureSchema.anchorBox(FigureCanvas.localPlace(place), bar.position,
+                blockW + overA + overB, blockH, bar.margin_mm);
+        if (vertical) at.y += overA;
+        else at.x += overA;
         const lanes = rows.map((row, index) => (vertical
             ? this.colorBarLaneVertical(row, index * (laneMm + bar.gap_mm), lengthMm,
                 bar, sizePt, tickMm)
@@ -935,7 +1127,7 @@ class FigureCanvas {
             `top:${this.toPx(geometry.y_mm)}px`,
             `width:${this.toPx(geometry.w_mm)}px`,
             `height:${this.toPx(geometry.h_mm)}px`,
-            `z-index:${1000 + annotation.z}`,
+            `z-index:${FigureSchema.stackIndex(this.state.document, "annotation", annotation.z)}`,
             // Escaped although the server checks colours: this string is an
             // attribute value, and a quote in it would end the attribute.
             `color:${FigureSchema.escapeHtml(annotation.style.color)}`,
@@ -999,7 +1191,15 @@ class FigureCanvas {
         // for the exporters; neither reads it off the other.
         const filled = Boolean(shape.closed && annotation.style.fill);
         const hit = Math.max(FigureCanvas.SHAPE_HIT_PX, stroke);
+        // The inside of a closed OUTLINE is grabbable as well (.fb-shape-body),
+        // the way Figma and Keynote treat one. It never takes a press meant for
+        // what shows through it: `pointerDown` hands such a press to the object
+        // underneath (`objectBelow`) unless this shape is already selected, so
+        // a box drawn round a panel still lets the panel be clicked.
+        const body = shape.closed && !filled
+            ? `<path class="fb-shape-body" d="${d}" pointer-events="fill"/>` : "";
         return `<svg class="fb-shape" viewBox="0 0 1 1" preserveAspectRatio="none">`
+            + body
             + `<path class="fb-shape-hit" d="${d}" stroke-width="${hit}"`
             + ` pointer-events="${filled ? "all" : "stroke"}"`
             + ` vector-effect="non-scaling-stroke"/>`
@@ -1413,7 +1613,7 @@ class FigureCanvas {
             `top:${this.toPx(geometry.y_mm + Math.min(0, geometry.h_mm)) - pad}px`,
             `width:${boxWidth}px`,
             `height:${boxHeight}px`,
-            `z-index:${1000 + annotation.z}`,
+            `z-index:${FigureSchema.stackIndex(this.state.document, "annotation", annotation.z)}`,
         ].join(";");
 
         return `<div class="fb-annotation fb-annotation-stroke${selected ? " is-selected" : ""}"
@@ -1449,9 +1649,13 @@ class FigureCanvas {
      * marquee, not from a context menu. Half a group would drag apart under
      * the pointer, which is the one thing grouping exists to prevent.
      */
-    select(ids, additive) {
+    select(ids, additive, exact) {
         if (!additive) this.selection.clear();
-        for (const id of this.expandToGroups(ids)) {
+        // `exact` takes the ids as given, without their groups: the Layers
+        // list's member rows and a Cmd-click on the page reach INTO a group,
+        // which is how one panel of a layout is cropped or replaced without
+        // ungrouping it first.
+        for (const id of (exact ? ids : this.expandToGroups(ids))) {
             if (additive && this.selection.has(id)) this.selection.delete(id);
             else this.selection.add(id);
         }
@@ -1540,9 +1744,11 @@ class FigureCanvas {
 
     selectAllOnPage() {
         const panels = FigureSchema.panelsOnPage(this.state.document, this.pageId)
+            .filter((panel) => !panel.hidden && !panel.locked)
             .map((panel) => panel.panel_id);
         const annotations = Object.values(this.state.document.annotations)
-            .filter((annotation) => annotation.page_id === this.pageId)
+            .filter((annotation) => annotation.page_id === this.pageId
+                                    && !annotation.hidden && !annotation.locked)
             .map((annotation) => annotation.annotation_id);
         this.select(panels.concat(annotations), false);
     }
@@ -1550,7 +1756,12 @@ class FigureCanvas {
     // -- gestures --------------------------------------------------------
 
     surfacePoint(event) {
-        const rect = this.surfaceEl.getBoundingClientRect();
+        // During a drag the rect is read once, not per move: reading it after
+        // the previous frame's style writes forced a layout on every
+        // pointermove (`_onScroll` drops it when the surface really moves).
+        const gesture = this.gesture;
+        const rect = (gesture && gesture.rect) || this.surfaceEl.getBoundingClientRect();
+        if (gesture && !gesture.rect) gesture.rect = rect;
         return { x: this.toMm(event.clientX - rect.left), y: this.toMm(event.clientY - rect.top) };
     }
 
@@ -1583,9 +1794,28 @@ class FigureCanvas {
             return;
         }
 
+        // The resolution badge is a button ON the panel. Answered before the
+        // panel takes the press, or every click on it would start a drag.
+        const badge = event.target.closest?.("[data-lowres]");
+        if (badge) {
+            event.preventDefault();
+            this.onResolution(badge.dataset.lowres);
+            return;
+        }
+
         const handle = event.target.closest?.(".fb-handle");
-        const panelEl = event.target.closest?.(".fb-panel");
-        const annotationEl = event.target.closest?.(".fb-annotation");
+        let panelEl = event.target.closest?.(".fb-panel");
+        let annotationEl = event.target.closest?.(".fb-annotation");
+        // Inside an outline shape that is not selected: whatever shows through
+        // it takes the press, if anything does; otherwise the shape does.
+        if (event.target.classList?.contains("fb-shape-body") && annotationEl
+            && !this.selection.has(annotationEl.dataset.annotationId)) {
+            const below = this.objectBelow(event, annotationEl);
+            if (below) {
+                panelEl = below.closest(".fb-panel");
+                annotationEl = panelEl ? null : below.closest(".fb-annotation");
+            }
+        }
 
         // The multi-selection frame is a sibling of the objects, not a wrapper
         // round them, so its handles are inside neither -- and it is asked
@@ -1622,7 +1852,12 @@ class FigureCanvas {
             return;
         }
         if (panelEl || annotationEl) {
-            if (!this.selection.has(id)) this.select([id], event.shiftKey);
+            // Cmd/Ctrl-click reaches into a group and takes one member.
+            const deep = event.metaKey || event.ctrlKey;
+            if (!this.selection.has(id)) this.select([id], event.shiftKey, deep);
+            else if (deep && this.selection.size > 1 && !event.shiftKey) {
+                this.select([id], false, true);
+            }
             else if (event.shiftKey) { this.select([id], true); return; }
             event.preventDefault();
             this.beginGesture("move", event, {});
@@ -1631,6 +1866,18 @@ class FigureCanvas {
         // Empty page: a marquee, or a click that clears the selection.
         this.select([], false);
         this.beginGesture("marquee", event, {});
+    }
+
+    /** The topmost element under the pointer that belongs to another object,
+     *  skipping the insides of other outline shapes, or null. */
+    objectBelow(event, self) {
+        const stack = document.elementsFromPoint?.(event.clientX, event.clientY) || [];
+        for (const element of stack) {
+            if (!this.surfaceEl.contains(element) || element.classList.contains("fb-shape-body")) continue;
+            const owner = element.closest(".fb-panel, .fb-annotation");
+            if (owner && owner !== self) return element;
+        }
+        return null;
     }
 
     /**
@@ -1703,6 +1950,7 @@ class FigureCanvas {
     gestureItems() {
         const items = [];
         for (const id of this.selection) {
+            if (!this.isEditable(id)) continue;
             const panel = this.state.panel(id);
             if (panel && panel.placement) {
                 items.push({ kind: "panel", id: id, start: { ...panel.placement } });
@@ -1720,6 +1968,26 @@ class FigureCanvas {
         if (this.shapeDrawing?.pointerMove(event)) return;
         if (this.pointEditor?.pointerMove(event)) return;
         if (!this.gesture) return;
+        // One preview per frame, from the latest position. A mouse or a
+        // trackpad sends pointermoves faster than the screen draws, and each
+        // one wrote styles and moved guides that the next one overwrote
+        // before anything was painted.
+        this._pendingMove = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
+        // Without frames (a test harness, a hidden page) the move applies now.
+        if (typeof requestAnimationFrame !== "function") this.flushMove();
+        else if (!this._moveFrame) {
+            this._moveFrame = requestAnimationFrame(() => this.flushMove());
+        }
+    }
+
+    /** Apply the latest pointer position to the gesture (see `pointerMove`). */
+    flushMove() {
+        if (this._moveFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._moveFrame);
+        this._moveFrame = 0;
+        const event = this._pendingMove;
+        this._pendingMove = null;
+        if (!event || !this.gesture) return;
+        this.gesture.previewed = true;
         this.gesture.current = this.surfacePoint(event);
         const dx = this.gesture.current.x - this.gesture.origin.x;
         const dy = this.gesture.current.y - this.gesture.origin.y;
@@ -1739,6 +2007,8 @@ class FigureCanvas {
         // branch returns before `beginGesture` ever runs.
         if (this.shapeDrawing?.pointerUp(event)) return;
         if (this.pointEditor?.pointerUp(event)) return;
+        // The last move has to land before the release is read.
+        if (this._pendingMove) this.flushMove();
         const gesture = this.gesture;
         this.gesture = null;
         if (!gesture) return;
@@ -1757,7 +2027,10 @@ class FigureCanvas {
             return;
         }
         if (!gesture.moved) {
-            this.render();
+            // A press that never left its spot draws nothing new: the select
+            // in `pointerDown` already rendered. Only a sub-threshold wobble
+            // that was previewed needs putting back.
+            if (gesture.previewed) this.render();
             return;
         }
         this.commitGesture(gesture);
@@ -1820,7 +2093,6 @@ class FigureCanvas {
     previewRotate(snap) {
         let shown = null;
         for (const item of this.gesture.items) {
-            if (item.kind === "panel") continue;
             const centre = { x: item.start.x_mm + item.start.w_mm / 2,
                              y: item.start.y_mm + item.start.h_mm / 2 };
             let degrees = (item.start.rotation || 0) + FigureCanvas.sweep(
@@ -2023,7 +2295,9 @@ class FigureCanvas {
     resizedBox(start, handle, dx, dy, freeAspect, annotation) {
         let { x_mm: x, y_mm: y, w_mm: w, h_mm: h } = start;
         const isText = Boolean(annotation) && annotation.type === "text";
-        const rotation = (annotation && annotation.geometry.rotation) || 0;
+        // An annotation's angle is on its geometry; a panel's is on its
+        // placement, which is what `start` is for a panel.
+        const rotation = (annotation ? annotation.geometry.rotation : start.rotation) || 0;
 
         // A rotated box resizes along ITS OWN axes, so the pointer's movement is
         // turned back through the angle before any of the arithmetic below sees
@@ -2135,10 +2409,8 @@ class FigureCanvas {
         // Intersecting rather than fully-enclosed: on a page where panels butt
         // up against each other, "fully enclosed" means a marquee has to be
         // drawn outside the page to catch the edge ones.
-        // Intersecting rather than fully-enclosed: on a page where panels butt
-        // up against each other, "fully enclosed" means a marquee has to be
-        // drawn outside the page to catch the edge ones.
         const hits = FigureSchema.panelsOnPage(this.state.document, this.pageId)
+            .filter((panel) => !panel.hidden && !panel.locked)
             .filter((panel) => {
                 const place = panel.placement;
                 return place.x_mm < box.x + box.w && place.x_mm + place.w_mm > box.x
@@ -2151,6 +2423,7 @@ class FigureCanvas {
         const annotations = Object.values(this.state.document.annotations)
             .filter((annotation) => {
                 if (annotation.page_id !== this.pageId) return false;
+                if (annotation.hidden || annotation.locked) return false;
                 const g = annotation.geometry;
                 const left = g.x_mm + Math.min(0, g.w_mm);
                 const top = g.y_mm + Math.min(0, g.h_mm);
@@ -2193,6 +2466,7 @@ class FigureCanvas {
         const preset = FigureCanvas.shapePreset(type);
         const overlay = FigureCanvas.lineTool(type);
         if (overlay) {
+            this._guides = null;
             this.guideEl.innerHTML = this.strokeMarkup({
                 annotation_id: "__draft", type: "line", z: 999,
                 geometry: { ...box, rotation: 0 },
@@ -2206,6 +2480,7 @@ class FigureCanvas {
             // The real thing, not an outline of its box. A pentagon previewed
             // as a rectangle is a preview of the wrong shape, and the moment it
             // matters is the moment the user is deciding how big to make it.
+            this._guides = null;
             this.guideEl.innerHTML = this.annotationMarkup({
                 annotation_id: "__draft", type: "shape", z: 999,
                 geometry: { ...box, rotation: 0 },
@@ -2217,6 +2492,7 @@ class FigureCanvas {
             // selector nothing can be written against, and the draft box is the
             // same dashed rectangle whichever of the three armed it.
             const kind = FigureCanvas.textTool(type) ? "text" : type;
+            this._guides = null;
             this.guideEl.innerHTML = `<span class="fb-draft fb-draft-${kind}"
                 style="left:${this.toPx(box.x_mm)}px;top:${this.toPx(box.y_mm)}px;
                        width:${this.toPx(box.w_mm)}px;height:${this.toPx(box.h_mm)}px"></span>`;
@@ -2403,9 +2679,7 @@ class FigureCanvas {
     }
 
     nextAnnotationZ() {
-        return Object.values(this.state.document.annotations)
-            .filter((annotation) => annotation.page_id === this.pageId)
-            .reduce((top, annotation) => Math.max(top, annotation.z), 0) + 1;
+        return FigureSchema.nextZ(this.state.document, this.pageId, "annotation");
     }
 
     commitGesture(gesture) {
@@ -2428,7 +2702,10 @@ class FigureCanvas {
                 };
             }
             if (item.kind === "panel") {
-                moves.push({ panel_id: item.id, placement: { ...item.start, ...box } });
+                // A rotation writes back only the angle, as for an annotation.
+                moves.push({ panel_id: item.id, placement: gesture.kind === "rotate"
+                    ? { ...item.start, rotation: item.rotation || 0 }
+                    : { ...item.start, ...box } });
                 if (gesture.kind === "resize") {
                     // A linked row shares a box. Only on a resize: sharing a
                     // POSITION would mean dragging one panel dragged them all
@@ -2440,9 +2717,11 @@ class FigureCanvas {
                 // saying how tall it should be, so it stops following its
                 // contents. The gesture IS the opt-out -- a checkbox they had
                 // to find first would make the drag do nothing.
+                const reflow = this.reflowText(item.id, box, false);
                 annotationOps.push({
                     op: "update_annotation", annotation_id: item.id,
-                    changes: { geometry: box, style: { autofit: false } },
+                    changes: { geometry: box, style: { autofit: false },
+                               ...(reflow ? { rich: reflow.rich } : {}) },
                 });
             } else if (gesture.kind === "rotate") {
                 // Only the angle: a rotation must not also write back the box,
@@ -2453,8 +2732,16 @@ class FigureCanvas {
                     changes: { geometry: { rotation: item.rotation || 0 } },
                 });
             } else {
+                // A text box made narrower or wider re-breaks its lines -- the
+                // break is stored, not recomputed at draw time -- and, while
+                // its height follows its text, takes the new height too.
+                const reflow = gesture.kind === "resize" ? this.reflowText(item.id, box, true) : null;
                 annotationOps.push({
-                    op: "update_annotation", annotation_id: item.id, changes: { geometry: box },
+                    op: "update_annotation", annotation_id: item.id,
+                    changes: reflow
+                        ? { geometry: { ...box, ...(reflow.h_mm ? { h_mm: reflow.h_mm } : {}) },
+                            rich: reflow.rich }
+                        : { geometry: box },
                 });
             }
         }
@@ -2469,16 +2756,52 @@ class FigureCanvas {
                 draft.panels[move.panel_id].placement = move.placement;
             }
             for (const op of annotationOps) {
-                Object.assign(draft.annotations[op.annotation_id].geometry, op.changes.geometry);
+                const annotation = draft.annotations[op.annotation_id];
+                Object.assign(annotation.geometry, op.changes.geometry);
+                if (op.changes.style) Object.assign(annotation.style, op.changes.style);
+                if (op.changes.rich) {
+                    annotation.rich = op.changes.rich;
+                    annotation.text = FigureRichText.plainText(op.changes.rich);
+                }
             }
         });
     }
 
+    /**
+     * A text box's lines re-broken for a new width, or null when `geometry`
+     * does not change its width (or it is not text).
+     *
+     * Where a caption's lines break is decided once, by the browser, and
+     * stored (`FigureRichText.rewrap`) -- so a box that changes width has to be
+     * re-broken explicitly, or the words keep the old width's lines and run
+     * out of the new box. `autofit` says whether the height follows; the
+     * caller passes false when its own gesture has just switched that off.
+     */
+    reflowText(id, geometry, autofit) {
+        const annotation = this.state.document.annotations[id];
+        if (!annotation || annotation.type !== "text" || geometry.w_mm === undefined
+                || Math.abs(geometry.w_mm - annotation.geometry.w_mm) < 1e-6) {
+            return null;
+        }
+        const merged = { ...annotation, geometry: { ...annotation.geometry, ...geometry } };
+        const rich = this.rewrapAnnotation(merged);
+        const out = { rich: rich };
+        if (autofit && annotation.style.autofit) {
+            out.h_mm = FigureCanvas.textLayout({ ...merged, rich: rich }).block_h_mm;
+        }
+        return out;
+    }
+
     elementFor(item) {
+        // Kept on the gesture item: looked up once per drag rather than once
+        // per object per frame.
+        if (item.el && item.el.isConnected) return item.el;
         const selector = item.kind === "panel"
             ? `.fb-panel[data-panel-id="${FigureSchema.cssEscape(item.id)}"]`
             : `.fb-annotation[data-annotation-id="${FigureSchema.cssEscape(item.id)}"]`;
-        return this.surfaceEl.querySelector(selector);
+        const element = this.surfaceEl.querySelector(selector);
+        if (this.gesture && this.gesture.items.includes(item)) item.el = element;
+        return element;
     }
 
     // -- snapping --------------------------------------------------------
@@ -2491,7 +2814,9 @@ class FigureCanvas {
      */
     snapMove(dx, dy) {
         const tolerance = this.toMm(FigureCanvas.SNAP_PIXELS);
-        const targets = this.snapTargets();
+        // Nothing but the moving objects changes during a drag, so the lines
+        // are gathered once per gesture.
+        const targets = this.gesture.targets || (this.gesture.targets = this.snapTargets());
         // Annotations both snap and are snapped to. They were neither, so a
         // caption could not be lined up with the panel above it by dragging --
         // which is the one alignment on a figure page that always matters.
@@ -2550,14 +2875,14 @@ class FigureCanvas {
             y.push(0, page.size_mm.h / 2, page.size_mm.h,
                    page.margins_mm.top, page.size_mm.h - page.margins_mm.bottom);
             for (const panel of FigureSchema.panelsOnPage(this.state.document, this.pageId)) {
-                if (moving.has(panel.panel_id)) continue;
+                if (moving.has(panel.panel_id) || panel.hidden) continue;
                 const place = panel.placement;
                 x.push(place.x_mm, place.x_mm + place.w_mm / 2, place.x_mm + place.w_mm);
                 y.push(place.y_mm, place.y_mm + place.h_mm / 2, place.y_mm + place.h_mm);
             }
             for (const annotation of Object.values(this.state.document.annotations)) {
                 if (annotation.page_id !== this.pageId) continue;
-                if (moving.has(annotation.annotation_id)) continue;
+                if (moving.has(annotation.annotation_id) || annotation.hidden) continue;
                 // Normalised, because a line's w/h are legally negative: they
                 // are an offset from its start point, not a box.
                 const g = annotation.geometry;
@@ -2579,6 +2904,12 @@ class FigureCanvas {
 
     showGuides(lineX, lineY) {
         if (!this.guideEl) return;
+        // Snapping and DRAWING the line it snapped to are two preferences:
+        // a magnet nobody sees is still a magnet.
+        if (this.snapping && this.snapping.showGuides === false) {
+            lineX = null;
+            lineY = null;
+        }
         const parts = [];
         if (lineX !== null && lineX !== undefined) {
             parts.push(`<span class="fb-guide fb-guide-v" style="left:${this.toPx(lineX)}px"></span>`);
@@ -2586,11 +2917,15 @@ class FigureCanvas {
         if (lineY !== null && lineY !== undefined) {
             parts.push(`<span class="fb-guide fb-guide-h" style="top:${this.toPx(lineY)}px"></span>`);
         }
-        this.guideEl.innerHTML = parts.join("");
+        const markup = parts.join("");
+        if (markup === this._guides) return;
+        this._guides = markup;
+        this.guideEl.innerHTML = markup;
     }
 
     showMarquee(box) {
         if (!this.guideEl) return;
+        this._guides = null;
         this.guideEl.innerHTML = box
             ? `<span class="fb-marquee" style="left:${this.toPx(box.x)}px;top:${this.toPx(box.y)}px;
                    width:${this.toPx(box.w)}px;height:${this.toPx(box.h)}px"></span>`
@@ -2598,6 +2933,7 @@ class FigureCanvas {
     }
 
     clearGuides() {
+        this._guides = null;
         if (this.guideEl) this.guideEl.innerHTML = "";
     }
 
@@ -2671,6 +3007,18 @@ class FigureCanvas {
             && (["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)
                 || active.isContentEditable);
         if (typing) return;
+        // Widgets that walk with the arrow keys (the Layers rows, the custom
+        // dropdowns that replaced <select>, anchor grids, menus) keep their
+        // keys: an ArrowDown that moves focus down the Layers list must not
+        // also nudge the selected panel, and a Backspace on a focused dropdown
+        // must not delete the text box it belongs to. Delete on a Layers row
+        // still deletes, as in every layers list.
+        if (active && active !== document.body && FigureCanvas.WIDGET_KEYS.has(event.key)) {
+            const widget = active.closest?.(".fb-dd, .fb-choice-popover, .fb-menu, [role='listbox'], "
+                + "[role='menu'], [role='radiogroup'], [role='tablist'], .fb-insp-seg, .fb-pg-seg, dialog");
+            const row = active.closest?.(".fb-layers");
+            if (widget || (row && event.key !== "Delete" && event.key !== "Backspace")) return;
+        }
 
         // The two modes come before every shortcut below, and after the two
         // guards above. Order is the whole point: while a polygon is being
@@ -2741,14 +3089,16 @@ class FigureCanvas {
      */
     nudge(dx, dy) {
         const moves = this.selectedPanels()
-            .filter((panel) => panel.placement)
+            .filter((panel) => panel.placement && this.isEditable(panel.panel_id))
             .map((panel) => ({
                 panel_id: panel.panel_id,
                 placement: { ...panel.placement,
                              x_mm: panel.placement.x_mm + dx,
                              y_mm: panel.placement.y_mm + dy },
             }));
-        const shifts = this.selectedAnnotations().map((annotation) => ({
+        const shifts = this.selectedAnnotations()
+            .filter((annotation) => this.isEditable(annotation.annotation_id))
+            .map((annotation) => ({
             op: "update_annotation", annotation_id: annotation.annotation_id,
             changes: { geometry: { x_mm: annotation.geometry.x_mm + dx,
                                    y_mm: annotation.geometry.y_mm + dy } },
@@ -2776,9 +3126,12 @@ class FigureCanvas {
      * under the pointer.
      */
     removeSelection() {
-        const panels = this.selectedPanels().filter((panel) => panel.placement);
+        // A locked object stays where it is. A hidden one too: it cannot be
+        // seen, so it cannot be what the user meant to delete.
+        const panels = this.selectedPanels()
+            .filter((panel) => panel.placement && this.isEditable(panel.panel_id));
         const annotationIds = Array.from(this.selection)
-            .filter((id) => this.state.document.annotations[id]);
+            .filter((id) => this.state.document.annotations[id] && this.isEditable(id));
 
         const operations = [];
         if (panels.length) {
@@ -2791,11 +3144,18 @@ class FigureCanvas {
             operations.push({ op: "remove_annotations", annotation_ids: annotationIds });
         }
         if (!operations.length) return;
+        // What leaves the page leaves its group too, in the same commit -- a
+        // layout still holding two panels that are no longer on the page would
+        // be a "2 x 2" folder over two images. Annotations are taken out by the
+        // server's own remove; panels only change placement, so it is done here.
+        const regroup = this.regroupWithout(panels.map((panel) => panel.panel_id));
+        operations.push(...regroup.operations);
 
         this.selection.clear();
         this.state.commit(operations, (draft) => {
             for (const panel of panels) draft.panels[panel.panel_id].placement = null;
             for (const id of annotationIds) delete draft.annotations[id];
+            regroup.mutate(draft);
         });
         this.onSelectionChange([]);
     }
@@ -2888,8 +3248,18 @@ class FigureCanvas {
         const flags = options || {};
         if (!made.panels.length && !made.annotations.length) return Promise.resolve(false);
         let z = this.nextZ();
-        for (const entry of made.panels) {
-            if (entry.copy.placement && flags.select !== false) entry.copy.placement.z = z++;
+        if (flags.select !== false && FigureSchema.sharedStack(this.state.document)) {
+            // On one stack the copies go on top together, keeping the order
+            // they had among themselves: a shape that sat under an image is
+            // pasted under its copy too.
+            const placed = made.panels.filter((entry) => entry.copy.placement)
+                .map((entry) => ({ z: entry.copy.placement.z, set: (v) => { entry.copy.placement.z = v; } }))
+                .concat(made.annotations.map((a) => ({ z: a.z, set: (v) => { a.z = v; } })));
+            placed.sort((a, b) => a.z - b.z).forEach((item) => item.set(z++));
+        } else {
+            for (const entry of made.panels) {
+                if (entry.copy.placement && flags.select !== false) entry.copy.placement.z = z++;
+            }
         }
         const operations = (flags.operations || []).slice();
         operations.push(...made.panels.map((entry) => ({ op: "add_panel", panel: entry.copy })));
@@ -2986,60 +3356,71 @@ class FigureCanvas {
      * Written as absolute z values rather than as +1/-1, because "bring to
      * front" past a panel already at the front has to be a no-op rather than a
      * number that climbs for ever.
-     *
-     * Panels and annotations are reordered in separate stacks. Annotations draw
-     * at `1000 + z` and so are always above every panel; "bring to front" on a
-     * caption means the front of the captions, and always did.
      */
     reorderZ(command) {
-        const annotations = this.selectedAnnotations();
-        if (annotations.length) this.reorderAnnotationZ(command, annotations);
-        const selected = this.selectedPanels().filter((panel) => panel.placement);
-        if (!selected.length) return;
-
-        const chosen = new Set(selected.map((panel) => panel.panel_id));
-        // Sorted by z here, not taken in `panelsOnPage`'s order: that one sorts
-        // into READING order for numbering (A B C / D E F), and renumbering z
-        // from it would rewrite the stacking of every panel the user did not
-        // touch. One press of "Bring to front" would reshuffle the whole page.
+        // One stack for both kinds (FigureSchema.stackOnPage): "Bring to
+        // front" on a panel puts it above a shape it overlaps, and the other
+        // way round. A figure still on the old split stack is converted by
+        // the commit, keeping everything else where it draws.
+        const chosen = new Set(this.selectedPanels().filter((panel) => panel.placement)
+            .map((panel) => panel.panel_id)
+            .concat(this.selectedAnnotations().map((annotation) => annotation.annotation_id)));
+        if (!chosen.size) return;
         const ordered = FigureCanvas.reordered(
-            FigureSchema.panelsOnPage(this.state.document, this.pageId)
-                .slice().sort((a, b) => a.placement.z - b.placement.z),
-            chosen, command, (panel) => panel.panel_id);
-        if (!ordered) return;
-
-        const moves = ordered.map((panel, index) => ({
-            panel_id: panel.panel_id,
-            placement: { ...panel.placement, z: index },
-        }));
-        this.state.commit([{ op: "move_panels", moves: moves }], (draft) => {
-            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
-        });
+            FigureSchema.stackOnPage(this.state.document, this.pageId),
+            chosen, command, (entry) => entry.id);
+        if (ordered) this.commitStack(ordered);
     }
 
     /**
-     * Reorder annotations among themselves.
+     * Commit a new back-to-front order for the page being looked at, as ONE
+     * undo step. `backToFront` is entries of `FigureSchema.stackOnPage`.
      *
-     * They can be ordered against EACH OTHER at all only since the offset above
-     * was separated from the stack below it -- before that, "Bring to front" on
-     * a text box was a menu item that did nothing, in two different menus.
+     * Renumbers `z` from 0 across both kinds. A figure on the old split stack
+     * (every annotation above every panel) moves to the shared one here, and
+     * every other page is renumbered from the order it already draws in, so
+     * nothing there changes on screen. False when nothing would change.
      */
-    reorderAnnotationZ(command, selected) {
-        const chosen = new Set(selected.map((annotation) => annotation.annotation_id));
-        const ordered = FigureCanvas.reordered(
-            Object.values(this.state.document.annotations)
-                .filter((annotation) => annotation.page_id === this.pageId)
-                .sort((a, b) => a.z - b.z),
-            chosen, command, (annotation) => annotation.annotation_id);
-        if (!ordered) return;
-
-        const ops = ordered.map((annotation, index) => ({
-            op: "update_annotation", annotation_id: annotation.annotation_id,
-            changes: { z: index },
-        }));
+    commitStack(backToFront) {
+        const doc = this.state.document;
+        const convert = !FigureSchema.sharedStack(doc);
+        const current = FigureSchema.stackOnPage(doc, this.pageId);
+        if (current.map((entry) => entry.id).join() === backToFront.map((entry) => entry.id).join()) {
+            return false;
+        }
+        const orders = [backToFront];
+        if (convert) {
+            for (const page of doc.pages || []) {
+                if (page.page_id !== this.pageId) orders.push(FigureSchema.stackOnPage(doc, page.page_id));
+            }
+        }
+        const moves = [];
+        const shifts = [];
+        for (const list of orders) {
+            list.forEach((entry, index) => {
+                if (entry.kind === "panel") {
+                    const panel = this.state.panel(entry.id);
+                    if (panel && panel.placement && panel.placement.z !== index) {
+                        moves.push({ panel_id: entry.id, placement: { ...panel.placement, z: index } });
+                    }
+                } else {
+                    const annotation = doc.annotations[entry.id];
+                    if (annotation && annotation.z !== index) {
+                        shifts.push({ op: "update_annotation", annotation_id: entry.id, changes: { z: index } });
+                    }
+                }
+            });
+        }
+        const ops = convert ? [{ op: "set_meta", changes: { settings: { stack: "shared" } } }] : [];
+        if (moves.length) ops.push({ op: "move_panels", moves: moves });
+        ops.push(...shifts);
+        if (!ops.length) return false;
         this.state.commit(ops, (draft) => {
-            ops.forEach((op) => { draft.annotations[op.annotation_id].z = op.changes.z; });
+            if (convert) draft.settings = { ...draft.settings, stack: "shared" };
+            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
+            for (const shift of shifts) draft.annotations[shift.annotation_id].z = shift.changes.z;
         });
+        return true;
     }
 
     /**
@@ -3076,6 +3457,378 @@ class FigureCanvas {
         const out = rest.slice();
         out.splice(out.indexOf(neighbour) + (forward ? 1 : 0), 0, ...picked);
         return out;
+    }
+
+    // -- the Layers list's own edits ----------------------------------------
+
+    /**
+     * Rename, hide or lock objects, as ONE commit.
+     *
+     * `changes` is any of {name, hidden, locked}. A panel takes them through
+     * `update_panel` and an annotation through `update_annotation`; both are
+     * top-level keys there (`schema.normalize_layer_fields`), so a shallow merge
+     * is all either needs. Hiding or locking lets go of what it hid or locked:
+     * a selection the pointer can no longer touch is a selection the arrow keys
+     * and Delete would silently skip.
+     */
+    setLayerFields(ids, changes) {
+        const operations = [];
+        for (const id of ids) {
+            if (this.state.panel(id)) {
+                operations.push({ op: "update_panel", panel_id: id, changes: { ...changes } });
+            } else if (this.state.document.annotations[id]) {
+                operations.push({ op: "update_annotation", annotation_id: id,
+                                  changes: { ...changes } });
+            }
+        }
+        if (!operations.length) return;
+        this.state.commit(operations, (draft) => {
+            for (const id of ids) {
+                const object = draft.panels[id] || draft.annotations[id];
+                if (object) Object.assign(object, changes);
+            }
+        });
+        if (changes.hidden || changes.locked) {
+            const kept = Array.from(this.selection).filter((id) => !ids.includes(id));
+            if (kept.length !== this.selection.size) this.select(kept, false, true);
+        }
+    }
+
+    /**
+     * The operations that take `ids` out of their visual groups: each group
+     * they were in is rebuilt from the members that remain, or dissolved below
+     * two. A layout keeps its record only while the remaining panels still fill
+     * its preset; otherwise it becomes a plain group, which is the honest name
+     * for what is left. Returned rather than committed, so it rides in the
+     * caller's commit.
+     */
+    regroupWithout(ids) {
+        const leaving = new Set(ids);
+        const operations = [];
+        const rebuilt = [];
+        for (const group of Object.values(this.state.document.groups || {})) {
+            if (!group.member_ids.some((id) => leaving.has(id))) continue;
+            const kept = group.member_ids.filter((id) => !leaving.has(id));
+            operations.push({ op: "ungroup_items", group_id: group.group_id });
+            if (kept.length < 2) {
+                rebuilt.push({ remove: group.group_id });
+                continue;
+            }
+            const preset = group.layout ? FigureLayouts.byId(group.layout.preset) : null;
+            const next = { ...group, member_ids: kept,
+                           layout: preset && FigureLayouts.fits(preset, kept.length) ? group.layout : null };
+            operations.push({ op: "group_items", group: next });
+            rebuilt.push({ remove: group.group_id, add: next });
+        }
+        return {
+            operations: operations,
+            mutate: (draft) => {
+                for (const change of rebuilt) {
+                    delete draft.groups[change.remove];
+                    if (change.add) draft.groups[change.add.group_id] = change.add;
+                }
+            },
+        };
+    }
+
+    /** A group's name or layout record, as one commit. */
+    updateGroup(groupId, changes) {
+        const group = this.state.document.groups?.[groupId];
+        if (!group) return;
+        this.state.commit([{ op: "update_group", group_id: groupId, changes: changes }],
+            (draft) => { Object.assign(draft.groups[groupId], changes); });
+    }
+
+    /**
+     * Restack the page from the Layers list's order.
+     *
+     * `frontToBack` is object ids on the page in the order the list now shows
+     * them. Panels and annotations share one stack, so dragging an image above
+     * a shape in the list puts it above the shape on the page and in the
+     * export. Anything on the page the list left out stays at the back.
+     */
+    restack(frontToBack) {
+        const stack = FigureSchema.stackOnPage(this.state.document, this.pageId);
+        const byId = new Map(stack.map((entry) => [entry.id, entry]));
+        const listed = frontToBack.filter((id) => byId.has(id)).reverse().map((id) => byId.get(id));
+        const named = new Set(listed.map((entry) => entry.id));
+        this.commitStack(stack.filter((entry) => !named.has(entry.id)).concat(listed));
+    }
+
+    // -- layouts -------------------------------------------------------------
+
+    /** The visual group these exact panels make up, if there is one. */
+    groupOfExactly(ids) {
+        const wanted = new Set(ids);
+        for (const group of Object.values(this.state.document.groups || {})) {
+            if (group.member_ids.length === wanted.size
+                    && group.member_ids.every((id) => wanted.has(id))) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Lay `panelIds` out in a preset, and keep them as an editable layout.
+     *
+     * The panels become one group carrying a `layout` record -- the preset,
+     * both gaps and fit/fill -- in member order, which is the cells' reading
+     * order. Asking again with different settings (`relayout`) re-runs the same
+     * arithmetic on the same members, so changing the gap, the preset or the
+     * order later is one gesture each. The geometry is ordinary placement: the
+     * panels can still be dragged, and Detach clears the record and nothing else.
+     *
+     * Where it goes: across the width the panels cover now, from the top of
+     * where they are -- so a layout lands where its panels were, and one the
+     * user has made narrower stays narrower when only its gap changes. The
+     * page's printable width instead when they were bunched into less than
+     * 40% of it, or when asked (`options.fullWidth`). Either way it is shrunk,
+     * gaps kept, to stop at the bottom margin.
+     *
+     * `options.order` is the member order to use; by default an existing
+     * layout keeps its own and a new one takes reading order (rows, then
+     * columns), which is the order A, B, C will run in. `options.label` turns
+     * on automatic letters for every member.
+     *
+     * One commit: the moves, the grouping and the letters undo together.
+     */
+    applyLayout(panelIds, layout, options = {}) {
+        const page = this.page;
+        const preset = FigureLayouts.byId(layout.preset);
+        if (!page || !preset) return null;
+        const placed = panelIds.map((id) => this.state.panel(id))
+            .filter((panel) => panel && panel.placement);
+        // A locked panel is never moved, so a layout holding one cannot be
+        // arranged. Said, rather than arranging the rest round it: that used
+        // to throw the locked panel out of its own layout and stack the others
+        // into its cell.
+        if (placed.some((panel) => panel.locked)) {
+            this.onNotice("Unlock the locked images first: a layout moves every image in it.");
+            return null;
+        }
+        const panels = placed;
+        if (!FigureLayouts.fits(preset, panels.length)) return null;
+
+        const existing = this.groupOfExactly(panels.map((panel) => panel.panel_id));
+        let ordered;
+        if (options.order) {
+            ordered = options.order.map((id) => this.state.panel(id)).filter(Boolean);
+        } else if (existing && existing.layout) {
+            ordered = existing.member_ids.map((id) => this.state.panel(id)).filter(Boolean);
+        } else {
+            ordered = panels.slice().sort((a, b) => (a.placement.y_mm - b.placement.y_mm)
+                || (a.placement.x_mm - b.placement.x_mm));
+        }
+
+        const margins = page.margins_mm;
+        const union = FigureCanvas.unionBox(ordered.map((panel) => panel.placement));
+        const contentW = page.size_mm.w - margins.left - margins.right;
+        // The width the panels already cover, so a layout lands where they
+        // were rather than spreading over whatever is beside them -- unless
+        // they were bunched into a sliver, or the user asked for the page.
+        const ownWidth = union.w_mm >= contentW * 0.4 && !options.fullWidth;
+        const box = ownWidth
+            ? { x: Math.max(margins.left, union.x_mm),
+                w: Math.min(union.w_mm, page.size_mm.w - margins.right - Math.max(margins.left, union.x_mm)) }
+            : { x: margins.left, w: contentW };
+        box.y = Math.max(margins.top, union.y_mm);
+        box.maxH = Math.max(10, page.size_mm.h - margins.bottom - box.y);
+
+        // Cells take the first panel's own proportions -- the shape of its
+        // FIELD, not of the box it happens to be in now.
+        const aspectOf = (panel) => FigureSchema.frameAspect(panel.scene.viewport);
+        const cells = FigureLayouts.cells(preset, box, layout.gap_x_mm, layout.gap_y_mm,
+                                          aspectOf(ordered[0]));
+        const moves = ordered.map((panel, index) => ({
+            panel_id: panel.panel_id,
+            placement: { ...panel.placement,
+                         ...FigureLayouts.place(cells[index], aspectOf(panel), layout.fit) },
+        }));
+
+        const record = { preset: preset.id, gap_x_mm: layout.gap_x_mm,
+                         gap_y_mm: layout.gap_y_mm, fit: layout.fit || "fit" };
+        const memberIds = ordered.map((panel) => panel.panel_id);
+        const operations = [{ op: "move_panels", moves: moves }];
+        let groupId;
+        const dissolve = [];
+        if (existing) {
+            groupId = existing.group_id;
+            operations.push({ op: "update_group", group_id: groupId,
+                              changes: { layout: record, member_ids: memberIds } });
+        } else {
+            // A member already in some other group leaves it: the layout is now
+            // what holds it, and a panel belongs to one group at a time.
+            for (const id of memberIds) {
+                const group = this.groupFor(id);
+                if (group && !dissolve.includes(group.group_id)) dissolve.push(group.group_id);
+            }
+            dissolve.forEach((id) => operations.push({ op: "ungroup_items", group_id: id }));
+            groupId = FigureSchema.newGroupId();
+            operations.push({ op: "group_items", group: {
+                group_id: groupId, member_ids: memberIds, name: "", layout: record } });
+        }
+        // Only shows letters that were hidden. A letter the user typed stays
+        // as typed: a layout is an arrangement, not a renaming.
+        const labelled = options.label ? ordered.filter((panel) => !panel.label.visible) : [];
+        labelled.forEach((panel) => operations.push({
+            op: "update_panel", panel_id: panel.panel_id,
+            changes: { label: { ...panel.label, visible: true } } }));
+
+        this.state.commit(operations, (draft) => {
+            draft.groups = draft.groups || {};
+            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
+            for (const id of dissolve) delete draft.groups[id];
+            if (existing) {
+                Object.assign(draft.groups[groupId], { layout: record, member_ids: memberIds });
+            } else {
+                draft.groups[groupId] = { group_id: groupId, member_ids: memberIds,
+                                          name: "", layout: record };
+            }
+            for (const panel of labelled) {
+                draft.panels[panel.panel_id].label = { ...panel.label, visible: true };
+            }
+        });
+        return groupId;
+    }
+
+    /** Re-run a layout group's arrangement with some of its settings changed. */
+    relayout(groupId, changes, options = {}) {
+        const group = this.state.document.groups?.[groupId];
+        if (!group || !group.layout) return null;
+        return this.applyLayout(group.member_ids, { ...group.layout, ...changes }, options);
+    }
+
+    /** Keep the panels where they are and forget that they were a layout. */
+    detachLayout(groupId) {
+        this.updateGroup(groupId, { layout: null });
+    }
+
+    // -- the whole page's content ---------------------------------------------
+
+    /** Every visible object on the page, as {kind, id, box}. Lines included:
+     *  fitting and centring move a whole page's content as one block, so a
+     *  vector's direction is never in question. */
+    pageItems() {
+        const items = [];
+        // Locked objects stay where they are, as for every arrange command
+        // (schema.normalize_layer_fields).
+        for (const panel of FigureSchema.panelsOnPage(this.state.document, this.pageId)) {
+            if (!panel.hidden && !panel.locked) items.push({ kind: "panel", id: panel.panel_id, box: { ...panel.placement } });
+        }
+        for (const annotation of Object.values(this.state.document.annotations)) {
+            if (annotation.page_id !== this.pageId || annotation.hidden || annotation.locked) continue;
+            items.push({ kind: "annotation", id: annotation.annotation_id,
+                         box: { ...annotation.geometry } });
+        }
+        return items;
+    }
+
+    /**
+     * Scale and move everything on the page to fill the space inside its
+     * margins, as one block.
+     *
+     * Uniform scale, about the block's top-left, so every relationship on the
+     * page -- gaps, alignments, proportions -- survives. A panel's scale bar is
+     * a fraction of the panel and its caption a physical length, so both stay
+     * true. Text keeps its point size and only moves: a caption that grew with
+     * the panels would be a typographic change nobody asked for. Never run
+     * automatically -- empty space on a page is not a mistake.
+     */
+    fitContentToPage() { this.reflowContent(true); }
+
+    /** Move everything on the page so the block sits centred inside the margins. */
+    centerContent() { this.reflowContent(false); }
+
+    reflowContent(scaleToFit) {
+        const page = this.page;
+        const items = this.pageItems();
+        if (!page || !items.length) return;
+        const union = FigureCanvas.unionBox(items.map((item) => item.box));
+        const m = page.margins_mm;
+        const roomW = page.size_mm.w - m.left - m.right;
+        const roomH = page.size_mm.h - m.top - m.bottom;
+        const k = scaleToFit ? Math.min(roomW / union.w_mm, roomH / union.h_mm) : 1;
+        if (!(k > 0) || !Number.isFinite(k)) return;
+        const left = m.left + (roomW - union.w_mm * k) / 2;
+        const top = scaleToFit ? m.top : m.top + (roomH - union.h_mm * k) / 2;
+        const moves = [];
+        const operations = [];
+        for (const item of items) {
+            const box = item.box;
+            const x = left + (box.x_mm - union.x_mm) * k;
+            const y = top + (box.y_mm - union.y_mm) * k;
+            if (item.kind === "panel") {
+                moves.push({ panel_id: item.id, placement: { ...box, x_mm: x, y_mm: y,
+                    w_mm: box.w_mm * k, h_mm: box.h_mm * k } });
+                continue;
+            }
+            const annotation = this.state.document.annotations[item.id];
+            const scaled = annotation.type === "text"
+                ? { x_mm: x, y_mm: y }
+                : { x_mm: x, y_mm: y, w_mm: box.w_mm * k, h_mm: box.h_mm * k };
+            operations.push({ op: "update_annotation", annotation_id: item.id,
+                              changes: { geometry: scaled } });
+        }
+        if (moves.length) operations.unshift({ op: "move_panels", moves: moves });
+        this.state.commit(operations, (draft) => {
+            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
+            for (const op of operations) {
+                if (op.op !== "update_annotation") continue;
+                Object.assign(draft.annotations[op.annotation_id].geometry, op.changes.geometry);
+            }
+        });
+    }
+
+    /**
+     * Put a panel back to its field's own proportions, keeping its width and
+     * its middle -- the inverse of anything that cropped it by its shape. The
+     * panel shows its whole captured field again.
+     */
+    resetPanelShape(panelIds) {
+        const moves = [];
+        for (const id of panelIds) {
+            const panel = this.state.panel(id);
+            if (!panel || !panel.placement || panel.locked) continue;
+            const aspect = FigureSchema.frameAspect(panel.scene.viewport);
+            const place = panel.placement;
+            const h = place.w_mm / aspect;
+            if (Math.abs(h - place.h_mm) < 1e-3) continue;
+            moves.push({ panel_id: id, placement: { ...place, h_mm: h,
+                         y_mm: place.y_mm + (place.h_mm - h) / 2 } });
+        }
+        if (!moves.length) return;
+        this.state.commit([{ op: "move_panels", moves: moves }], (draft) => {
+            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
+        });
+    }
+
+    /** One object's box from the inspector's number fields, as one commit.
+     *  `box` holds any of x_mm, y_mm, w_mm, h_mm (and rotation, for an
+     *  annotation). */
+    setBox(id, box) {
+        const panel = this.state.panel(id);
+        if (panel && panel.placement) {
+            const placement = { ...panel.placement, ...box };
+            placement.w_mm = Math.max(1, placement.w_mm);
+            placement.h_mm = Math.max(1, placement.h_mm);
+            this.state.commit([{ op: "move_panels", moves: [{ panel_id: id, placement: placement }] }],
+                (draft) => { draft.panels[id].placement = placement; });
+            return;
+        }
+        const annotation = this.state.document.annotations[id];
+        if (!annotation) return;
+        const reflow = this.reflowText(id, box, true);
+        const geometry = { ...box, ...(reflow && reflow.h_mm ? { h_mm: reflow.h_mm } : {}) };
+        const changes = reflow ? { geometry: geometry, rich: reflow.rich } : { geometry: geometry };
+        this.state.commit([{ op: "update_annotation", annotation_id: id, changes: changes }],
+            (draft) => {
+                Object.assign(draft.annotations[id].geometry, geometry);
+                if (reflow) {
+                    draft.annotations[id].rich = reflow.rich;
+                    draft.annotations[id].text = FigureRichText.plainText(reflow.rich);
+                }
+            });
     }
 
     // -- layout commands -------------------------------------------------
@@ -3151,6 +3904,7 @@ class FigureCanvas {
     arrangeItems() {
         const items = [];
         for (const id of this.selection) {
+            if (!this.isEditable(id)) continue;
             const panel = this.state.panel(id);
             if (panel && panel.placement) {
                 items.push({ kind: "panel", id: id, box: { ...panel.placement } });
@@ -3163,6 +3917,38 @@ class FigureCanvas {
             }
         }
         return items;
+    }
+
+    /**
+     * Space the selection by a GIVEN gap along one axis: left to right (or top
+     * to bottom) from where the first one is, each the gap after the one
+     * before. The inspector's Gap fields; one commit.
+     */
+    spaceBy(axis, gapMm) {
+        const items = this.arrangeItems();
+        if (items.length < 2 || !(gapMm >= 0)) return;
+        const key = axis === "x" ? "x_mm" : "y_mm";
+        const size = axis === "x" ? "w_mm" : "h_mm";
+        const boxes = items.map((item) => ({ ...item.box }));
+        const order = boxes.map((box, index) => index).sort((a, b) => boxes[a][key] - boxes[b][key]);
+        let cursor = boxes[order[0]][key];
+        for (const index of order) {
+            boxes[index][key] = cursor;
+            cursor += boxes[index][size] + gapMm;
+        }
+        this.commitBoxes(items, boxes);
+    }
+
+    /** The gap between the selection's neighbours along an axis, when they
+     *  are all the same -- what the Gap field shows -- else null. */
+    currentGap(axis) {
+        const boxes = this.arrangeItems().map((item) => item.box);
+        if (boxes.length < 2) return null;
+        const key = axis === "x" ? "x_mm" : "y_mm";
+        const size = axis === "x" ? "w_mm" : "h_mm";
+        boxes.sort((a, b) => a[key] - b[key]);
+        const gaps = boxes.slice(1).map((box, i) => box[key] - (boxes[i][key] + boxes[i][size]));
+        return gaps.every((gap) => Math.abs(gap - gaps[0]) < 0.05) && gaps[0] >= -0.05 ? gaps[0] : null;
     }
 
     /** Equal GAPS, not equal centres. Equal centres leaves visibly uneven space
@@ -3291,6 +4077,9 @@ class FigureCanvas {
             }
             if (item.kind === "panel") {
                 const flag = horizontal ? "flip_h" : "flip_v";
+                // A mirror turns a tilt the other way, as it does for an
+                // annotation below: a panel at +30 degrees flips to -30.
+                if (box.rotation) box.rotation = (360 - box.rotation) % 360;
                 moves.push({ panel_id: item.id,
                              placement: { ...box, [flag]: !box[flag] } });
                 continue;
@@ -3695,8 +4484,7 @@ class FigureCanvas {
     }
 
     nextZ() {
-        const panels = FigureSchema.panelsOnPage(this.state.document, this.pageId);
-        return panels.reduce((top, panel) => Math.max(top, panel.placement.z), 0) + 1;
+        return FigureSchema.nextZ(this.state.document, this.pageId, "panel");
     }
 
 }

@@ -126,9 +126,14 @@ def test_every_annotation_type_the_schema_allows_can_be_drawn():
 
     rich_text = (static / "figureRichText.js").read_text(encoding="utf-8")
 
-    assert 'id="fb_tool_text"' in template, "the rail has no Text button"
-    assert "openTextCard(event.currentTarget)" in workspace, \
-        "the Text button opens nothing"
+    # The rail is gone (2026-11): drawing tools are reached from Annotate on the
+    # editing row, and from the Insert tab, which opens the same cards.
+    assert 'id="fb_menu_annotate"' in template, "the editing row has no Annotate"
+    assert "this.openAnnotateCard(event.currentTarget)" in workspace, \
+        "Annotate opens nothing"
+    assert 'id="fb_insert_view"' in template, "there is no Insert tab"
+    assert "text: () => this.openTextCard(" in workspace, \
+        "the Insert tab's Text tile opens nothing"
     assert 'data-act="text:${preset.id}"' in workspace, "the text card is not wired"
     for style in ('id: "heading"', 'id: "subheading"', 'id: "body"'):
         assert style in rich_text, f"the text card offers no {style}"

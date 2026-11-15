@@ -166,6 +166,10 @@ CREATE INDEX IF NOT EXISTS captures_by_datasource ON captures (datasource);
 _ADDED_COLUMNS = {
     "bookmarked": "INTEGER NOT NULL DEFAULT 0",
     "label": "TEXT NOT NULL DEFAULT ''",
+    # The figures a capture has been added to, as a JSON list of ids. A used
+    # capture is kept (it used to be deleted on the way into a figure), so the
+    # Assets tab can show what has been used apart from what has not.
+    "used_in": "TEXT NOT NULL DEFAULT '[]'",
 }
 
 #: A bookmark's label, as long as a tray item can say.
@@ -426,14 +430,24 @@ def _row(row) -> dict:
         "created_at": row["created_at"] or "",
         "bookmarked": bool(row["bookmarked"]),
         "label": row["label"] or "",
+        "used_in": _used_in(row),
         "source": source,
         "scene": scene,
     }
 
 
+def _used_in(row) -> list:
+    """The figures a capture went into (see `mark_used`)."""
+    try:
+        used = json.loads(row["used_in"] or "[]")
+    except (ValueError, IndexError, KeyError):
+        return []
+    return [str(entry) for entry in used] if isinstance(used, list) else []
+
+
 #: What a listing reads of a row: everything but the raster.
 _COLUMNS = ("capture_id, datasource, source_json, scene_json, caption, width, height, format, "
-            "created_at, bookmarked, label, preview IS NOT NULL AS has_preview")
+            "created_at, bookmarked, label, used_in, preview IS NOT NULL AS has_preview")
 
 
 def list_captures(datasource=None, bookmarked=None) -> list[dict]:
@@ -460,6 +474,10 @@ def list_captures(datasource=None, bookmarked=None) -> list[dict]:
     if datasource:
         where.append("datasource = ?")
         parameters = (str(datasource),)
+        # The viewer's strip, one image's captures: as before captures were
+        # kept once used, a capture already in a figure is not among them
+        # (a bookmark still is).
+        where.append("(bookmarked = 1 OR used_in = '[]' OR used_in = '')")
     if bookmarked:
         where.append("bookmarked = 1")
     if where:
@@ -513,7 +531,11 @@ def count() -> int:
 
 
 def transfer_previews(figure_id, pairs) -> dict:
-    """Move captures' rasters into a figure's previews, and empty their rows.
+    """Copy captures' rasters into a figure's previews, and mark them used.
+
+    (They used to be deleted here. They are kept now, with the figure noted
+    in `used_in` -- see `mark_used` -- and what follows about deleting reads
+    as marking.)
 
     The one path out of the bin. It lives here rather than in `repository`
     because the deciding half is the bin's: the row is deleted, and a delete
@@ -562,12 +584,9 @@ def transfer_previews(figure_id, pairs) -> dict:
         found = get_preview(capture_id)
         if found is None:
             # Either the capture is gone or its raster never arrived. Both are
-            # "nothing to copy", and the row still goes: the panel exists now,
-            # and a bin row for a capture that is already in a figure is the
-            # one thing the bin must never show -- unless it is a bookmark.
+            # "nothing to copy"; the capture is used all the same.
             missing.append(capture_id)
-            if not keep:
-                remove([capture_id])
+            mark_used(capture_id, figure_id)
             continue
         if stored is None:  # pragma: no cover - raced with a delete
             missing.append(capture_id)
@@ -575,7 +594,39 @@ def transfer_previews(figure_id, pairs) -> dict:
         data, fmt = found
         repository.put_preview(figure_id, panel_id, revision, data,
                                width=stored["width"], height=stored["height"], fmt=fmt)
-        if not keep:
-            remove([capture_id])
+        mark_used(capture_id, figure_id)
         moved.append(capture_id)
     return {"moved": moved, "missing": missing, "kept": kept}
+
+
+def mark_used(capture_id, figure_id) -> None:
+    """Record that a capture went into `figure_id`, and keep it.
+
+    A capture used to leave the bin on its way into a figure. It stays now,
+    marked, so the Assets tab can show what has been used apart from what has
+    not ("Previously used"); deleting one is still the user's own act.
+    """
+    try:
+        connection = _connect()
+    except CapturesUnavailable:
+        return
+    try:
+        with _LOCK, connection:
+            row = connection.execute(
+                "SELECT used_in FROM captures WHERE capture_id = ?", (capture_id,)).fetchone()
+            if row is None:
+                return
+            try:
+                used = json.loads(row["used_in"] or "[]")
+            except ValueError:
+                used = []
+            if not isinstance(used, list):
+                used = []
+            if figure_id not in used:
+                used.append(figure_id)
+            connection.execute("UPDATE captures SET used_in = ? WHERE capture_id = ?",
+                               (json.dumps(used), capture_id))
+    except sqlite3.Error:
+        return
+    finally:
+        connection.close()

@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20261114_audit"
+VERSION = "20261115_p3"
 
 
 def _blueprint():
@@ -82,6 +82,8 @@ PLUGIN = Plugin(
         "figureSceneSnapshot.js",
         "figureBuilderApi.js",
         "figureBookmarkStore.js",
+        # Opens this tool on the viewer "Capture from a viewer" led to.
+        "figureArrival.js",
     ),
     # Order is for reading, not for the browser: every cross-file reference is
     # inside a method or a constructor, and both the tool loader and
@@ -94,6 +96,7 @@ PLUGIN = Plugin(
     # its own root element is on the page, so loading all of them everywhere
     # costs a few kilobytes and buys one asset list instead of three.
     scripts=(
+        "figureSelect.js",
         "figureBuilderApi.js",
         "figureSchema.js",
         "figureRichText.js",
@@ -130,6 +133,11 @@ PLUGIN = Plugin(
         "figureCaptureBinGrid.js",
         "figureLibrary.js",
         "figureExportUi.js",
+        "figureIcons.js",
+        "figureLayouts.js",
+        "figureLayers.js",
+        "figureInspector.js",
+        "figureAssetFilter.js",
         "figureWorkspace.js",
         "figureSidebarController.js",
     ),

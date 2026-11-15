@@ -138,6 +138,8 @@ const globals = {
     URLSearchParams,
     setTimeout: (fn, ms) => { const id = nextTimer++; timers.set(id, fn); return id; },
     clearTimeout: (id) => { timers.delete(id); },
+    // figureSelect.js watches the sidebars for <select>s to replace.
+    MutationObserver: class { observe() {} disconnect() {} takeRecords() { return []; } },
     requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
     fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
     Blob: class Blob {},

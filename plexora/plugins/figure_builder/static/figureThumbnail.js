@@ -73,23 +73,23 @@ class FigureThumbnail {
             items: [],
         };
 
-        const placed = Object.values(document_.panels || {})
-            .filter((panel) => panel.placement && panel.placement.page_id === page.page_id)
-            .sort((a, b) => (a.placement.z || 0) - (b.placement.z || 0));
-        for (const panel of placed) {
-            out.items.push({
-                kind: "panel",
-                panel_id: panel.panel_id,
-                render_revision: panel.render_revision || 1,
-                ...FigureThumbnail._rect(panel.placement, scale),
-            });
-        }
-        for (const annotation of Object.values(document_.annotations || {})) {
-            if (annotation.page_id !== page.page_id) continue;
-            out.items.push({
-                kind: annotation.kind === "text" ? "text" : "shape",
-                ...FigureThumbnail._rect(annotation, scale),
-            });
+        // Back to front in the page's own stacking order.
+        for (const entry of FigureSchema.stackOnPage(document_, page.page_id)) {
+            const object = entry.object;
+            if (object.hidden) continue;
+            if (entry.kind === "panel") {
+                out.items.push({
+                    kind: "panel",
+                    panel_id: object.panel_id,
+                    render_revision: object.render_revision || 1,
+                    ...FigureThumbnail._rect(object.placement, scale),
+                });
+            } else {
+                out.items.push({
+                    kind: object.kind === "text" ? "text" : "shape",
+                    ...FigureThumbnail._rect(object, scale),
+                });
+            }
         }
 
         if (out.items.length) return out;

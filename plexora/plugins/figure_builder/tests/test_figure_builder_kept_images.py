@@ -86,6 +86,9 @@ def test_the_sheet_and_the_tray_render_through_it():
     render = canvas[canvas.index("    render() {"):canvas.index("    describeObjects() {")]
     assert "FigureCanvas.replaceKeepingImages(this.surfaceEl" in render
     assert "this.surfaceEl.innerHTML =" not in render
-    workspace = WORKSPACE.read_text(encoding="utf-8")
-    tray = workspace[workspace.index("    renderTray() {"):workspace.index("    renderStatus(")]
-    assert "FigureCanvas.replaceKeepingImages(strip" in tray
+    # The tray is the Assets grid now (FigureCaptureBinGrid), and the Layers
+    # list draws thumbnails too: both keep their pictures across redraws.
+    grid = (CANVAS.parent / "figureCaptureBinGrid.js").read_text(encoding="utf-8")
+    assert "FigureCanvas.replaceKeepingImages(grid, markup)" in grid
+    layers = (CANVAS.parent / "figureLayers.js").read_text(encoding="utf-8")
+    assert "FigureCanvas.replaceKeepingImages(this.root" in layers

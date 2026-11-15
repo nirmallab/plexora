@@ -52,6 +52,22 @@ class FigureBuilderApi {
         return this.url("plugins/figure_builder/captures");
     }
 
+    /**
+     * Core's project list (`GET /projects`): per image key its display name,
+     * the dataset holding it and the location it is kept in -- what the
+     * Assets filter names captures by. Null when it cannot be read.
+     */
+    async listProjects() {
+        try {
+            const response = await fetch(this.url("projects"));
+            if (!response.ok) return null;
+            const cards = await response.json();
+            return Array.isArray(cards) ? cards : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     /** Open the viewer on `datasource` at bookmark `captureId`: a note left
      *  for core's bookmarks (client/src/js/services/bookmarks.js, OPEN_KEY),
      *  read once there when the image is open. */
@@ -289,7 +305,13 @@ class FigureBuilderApi {
             return { ok: false, data: null, aborted: true };
         }
         if (!response.ok) return { ok: false, data: null };
-        const buffer = await response.arrayBuffer();
+        let buffer;
+        try {
+            // The abort can land while the body is still arriving, too.
+            buffer = await response.arrayBuffer();
+        } catch (error) {
+            return { ok: false, data: null, aborted: true };
+        }
         const [width, height] = (response.headers.get("X-Fb-Shape") || "0x0")
             .split("x").map((value) => parseInt(value, 10) || 0);
         return {

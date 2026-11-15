@@ -107,12 +107,9 @@ class FigureQuickEdit {
     /** What the note under the view says, by kind of panel. */
     static get NOTES() {
         return {
-            plane: "Drag to reposition, scroll to zoom. Quick Edit allows changes to "
-                + "image rendering only. For overlays, click 'Open in Main Viewer' to "
-                + "update the figure panel.",
+            plane: "Drag to move, scroll to zoom. Overlays are changed in the main viewer.",
             volume: "Drag to turn, scroll to zoom, Shift-drag to move the area. "
-                + "Surfaces and the orientation gizmo are not shown here; click "
-                + "'Open in Main Viewer' for them.",
+                + "Surfaces are changed in the main viewer.",
             locked: "This 3-D panel's image is not open in the viewer. Open in Main "
                 + "Viewer to change it.",
         };
@@ -215,6 +212,16 @@ class FigureQuickEdit {
             this.zRange?.addEventListener("input", () => this.onPlaneInput());
         }
         this.bindView();
+        // Any press in the card: the user is working, so changes from here on
+        // are undo steps; and a chip added since mount gets its popovers
+        // adopted before this press can open one (adoptPopovers).
+        const engage = () => {
+            if (!this.session) return;
+            this.armHistory();
+            this.adoptPopovers();
+        };
+        this.root.addEventListener("pointerdown", engage, true);
+        this.root.addEventListener("keydown", engage, true);
 
         // The card is a flex child of the body and the body is the window's:
         // anything that changes the window changes the mini view's size, and
@@ -369,6 +376,8 @@ class FigureQuickEdit {
     /** The session has something to save: Done may write it. */
     markReady(session) {
         session.ready = true;
+        // What opening produced is where undo stops.
+        this.startHistory();
         const done = document.getElementById("fb_quickedit_done");
         if (done) done.disabled = false;
     }
@@ -382,6 +391,8 @@ class FigureQuickEdit {
      * has to remember to put it back rather than four.
      */
     teardownSession() {
+        if (this._paintFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._paintFrame);
+        this._paintFrame = 0;
         const panelId = this.session && this.session.panelId;
         // The 3-D view, if there was one: its canvases, its observer and its
         // GPU textures go with it (VolumeRenderer.destroy).
@@ -394,16 +405,57 @@ class FigureQuickEdit {
         this.fetchSeq += 1;
         window.clearTimeout(this._settleTimer);
         window.clearTimeout(this._previewTimer);
+        window.clearTimeout(this._historyTimer);
+        this._historyTimer = null;
+        this.history = null;
         this.session = null;
         this.planes.clear();
         this.sheet = null;
         this.sheetDirty = false;
+        // The channel widget, disposed of rather than dropped. It builds two
+        // elements outside the slot list -- the contrast bar and the add row
+        // -- and its colour and marker pickers, histogram and sliders hold
+        // listeners of their own. Clearing only the list left the bar behind,
+        // so every reopen or panel switch stacked another contrast slider,
+        // each still wired to a session that was gone.
+        const sidebar = this.sidebar;
+        if (sidebar) {
+            sidebar.destroy?.();
+            sidebar.contrastBar?.remove();
+            sidebar.addRow?.remove();
+            sidebar.contrastBar = null;
+            sidebar.addRow = null;
+        }
         this.sidebar = null;
         this.bus = null;
         this.drag = null;
         const list = document.getElementById("fbqe_channel_slot_list");
         if (list) list.innerHTML = "";
         if (panelId) this.clearLivePreview(panelId);
+    }
+
+    /**
+     * Escape: close, as any floating panel does -- but nothing made here is
+     * kept until Done, so a session that was worked in asks first rather
+     * than throwing the work away on one key.
+     */
+    async requestClose() {
+        const session = this.session;
+        if (!session) return;
+        // Reframed (a drag or a scroll on the picture), or a channel change
+        // recorded -- or made in the last moment, before its step was.
+        const history = this.history;
+        const worked = session.touched || Boolean(history && (history.past.length
+            || JSON.stringify(this.snapshot()) !== JSON.stringify(history.current)));
+        if (worked) {
+            const discard = await FigureConfirm.ask({
+                title: "Discard Quick Edit changes?",
+                body: "Changes made here are kept only when you press Done.",
+                confirm: "Discard", cancel: "Keep editing",
+            });
+            if (!discard || this.session !== session) return;
+        }
+        this.close();
     }
 
     close() {
@@ -514,8 +566,23 @@ class FigureQuickEdit {
             if (described[name]) return Promise.resolve(described[name]);
             if (!keyByName[name]) return Promise.resolve({});
             if (!asking.has(name)) {
-                asking.set(name, this.api.pixelInfo(this.figureId, sourceId, keyByName[name])
-                    .catch(() => ({ ok: false }))
+                // A channel's summary does not change while the page is open,
+                // so reopening Quick Edit on the same image (or another panel
+                // of it) does not ask again. Only answers are kept: a failed
+                // read is asked again next time.
+                // Answers only, never a request still in flight: a session
+                // must not wait on one that belongs to a session already
+                // replaced.
+                const cache = this._stats || (this._stats = new Map());
+                const cacheKey = `${sourceId}|${keyByName[name]}`;
+                const ask = cache.has(cacheKey) ? Promise.resolve(cache.get(cacheKey))
+                    : this.api.pixelInfo(this.figureId, sourceId, keyByName[name])
+                        .catch(() => ({ ok: false }))
+                        .then((result) => {
+                            if (result && result.ok) cache.set(cacheKey, result);
+                            return result;
+                        });
+                asking.set(name, ask
                     .then((result) => {
                         described[name] = FigureQuickEdit.describeRange(
                             (result && result.ok && result.data.stats) || {});
@@ -567,9 +634,12 @@ class FigureQuickEdit {
         // in memory, which is the whole point of fetching them separately --
         // so the repaint is synchronous and the refresh, which usually has
         // nothing to fetch, follows behind it.
+        // One composite per frame: a contrast drag sends BRUSH_MOVE faster
+        // than the screen draws, and each composite is a pass over every
+        // pixel of every channel.
         const repaint = () => {
             this.sheetDirty = true;
-            this.paint();
+            this.schedulePaint();
             this.scheduleLivePreview();
             this.refresh();
         };
@@ -577,16 +647,24 @@ class FigureQuickEdit {
                              ChannelList.events.COLOR_TRANSFER_CHANGE,
                              ChannelList.events.BRUSH_MOVE]) {
             this.sidebar.eventHandler.bind(event, () => {
+                this.noteChange();
                 const renderer = this.session?.renderer;
                 if (!renderer) {
-                    repaint();
+                    // A channel going is announced BEFORE the widget clears
+                    // it (removeChannelSlot calls deactivateChannel first, then
+                    // empties the slot), so a repaint here would still see it
+                    // enabled and nothing would repaint after -- the removed
+                    // channel stayed in the picture. Composited just after,
+                    // once the widget has finished.
+                    if (event === ChannelList.events.CHANNELS_CHANGE) queueMicrotask(repaint);
+                    else repaint();
                     return;
                 }
                 // The 3-D view, as the viewer's attach() wires it: a channel
                 // appearing needs its level fetched; a colour or a window is
                 // a uniform, read at the next draw.
                 if (event === ChannelList.events.CHANNELS_CHANGE) {
-                    renderer.refresh().then(() => this.scheduleLivePreview());
+                    queueMicrotask(() => renderer.refresh().then(() => this.scheduleLivePreview()));
                 } else {
                     renderer.invalidate();
                 }
@@ -597,7 +675,209 @@ class FigureQuickEdit {
         const sidebar = this.sidebar;
         await sidebar.init(described);
         if (this.session !== session) return;
+        // The widget builds its contrast bar over the slot list; here it lives
+        // above the image, as the one contrast control of the card. The
+        // widget keeps the element (`contrastBar`), so moving it is all.
+        const bar = sidebar.ensureContrastBar?.();
+        const slotForBar = document.getElementById("fb_quickedit_contrast");
+        if (bar && slotForBar && bar.parentNode !== slotForBar) slotForBar.appendChild(bar);
+        // Its histogram opens in the page's portal, outside this card and its
+        // light theme; marked so the builder's styles can reach it, and only
+        // it -- the viewer's own histogram is not this one.
+        sidebar.ensureHistogram?.()?.popover?.classList.add("fb-qe-histogram");
         this.seedFromScene(panel, names, keyByName);
+        this.adoptPopovers();
+    }
+
+    // -- the channel pickers' popovers ----------------------------------------
+
+    /**
+     * The colour and marker popovers of every chip: light, and on screen.
+     *
+     * They are core's (ColorSwatchPicker, SearchableSelect), opened in the
+     * page's portal and placed under their chip -- which, with the channels at
+     * the foot of the card, put them below the bottom of the window, and in
+     * the viewer's dark colours. Each is marked for the builder's light popover
+     * tokens and its own placement is followed by a nudge back into view
+     * (above the chip when there is no room below). Only Quick Edit's
+     * instances are touched; the viewer's own are not these objects.
+     *
+     * Chips are added after mount (the add chip), so this runs again on every
+     * press in the strip, before the press opens anything.
+     */
+    adoptPopovers() {
+        const sidebar = this.sidebar;
+        if (!sidebar) return;
+        for (const picker of sidebar.colorPickers?.values?.() || []) {
+            FigureQuickEdit.adoptPopover(picker, "popover", "positionPopover", "button", 6);
+        }
+        for (const select of sidebar.markerSelects?.values?.() || []) {
+            FigureQuickEdit.adoptPopover(select, "menu", "positionMenu", "anchor", 4);
+        }
+    }
+
+    static adoptPopover(owner, key, method, anchorKey, gap) {
+        if (!owner || owner._fbqeAdopted || typeof owner[method] !== "function") return;
+        owner._fbqeAdopted = true;
+        owner[key]?.classList.add("fb-qe-pop");
+        const place = owner[method].bind(owner);
+        owner[method] = (...args) => {
+            const result = place(...args);
+            const el = owner[key];
+            el?.classList.add("fb-qe-pop");
+            const anchor = owner[anchorKey];
+            if (el && anchor) FigureQuickEdit.keepInView(el, anchor.getBoundingClientRect(), gap);
+            return result;
+        };
+    }
+
+    /** Under the anchor if it fits, else above it, else as low as fits; and
+     *  never past either side. Measured while still hidden, unseen. */
+    static keepInView(el, anchor, gap) {
+        const wasHidden = el.hidden;
+        const visibility = el.style.visibility;
+        el.style.visibility = "hidden";
+        el.hidden = false;
+        const box = el.getBoundingClientRect();
+        el.hidden = wasHidden;
+        el.style.visibility = visibility;
+        const margin = 8;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        let top = anchor.bottom + gap;
+        let above = false;
+        if (top + box.height > height - margin) {
+            const over = anchor.top - gap - box.height;
+            above = over >= margin;
+            top = above ? over : Math.max(margin, height - margin - box.height);
+        }
+        const left = Math.max(margin, Math.min(anchor.left, width - margin - box.width));
+        el.style.top = `${Math.round(top)}px`;
+        el.style.left = `${Math.round(left)}px`;
+        el.style.transformOrigin = above ? "bottom left" : "top left";
+    }
+
+    // -- undo, inside Quick Edit -----------------------------------------------
+
+    /**
+     * Ctrl+Z while Quick Edit is open steps back through ITS changes --
+     * channels shown, hidden, added, removed, recoloured, re-windowed -- not
+     * the figure's. The figure's undo would change something behind the card
+     * the user cannot see, and Done/Cancel already decide what reaches it.
+     *
+     * A step is what the widget looks like once a change has settled (a slider
+     * drag is one step, not a hundred). Recording starts with the first press
+     * inside the card, so what opening does on its own -- seeding the panel's
+     * channels, auto-levelling one -- is the starting point, not a step.
+     */
+    snapshot() {
+        const sidebar = this.sidebar;
+        if (!sidebar) return null;
+        return {
+            selected: sidebar.selectedSlot,
+            slots: sidebar.channelSlots.map((slot) => ({
+                name: slot.name || "",
+                enabled: Boolean(slot.enabled),
+                visible: Boolean(slot.visible),
+                hex: slot.colorHex,
+                range: Array.isArray(slot.range) ? [Number(slot.range[0]), Number(slot.range[1])] : null,
+            })),
+        };
+    }
+
+    startHistory() {
+        window.clearTimeout(this._historyTimer);
+        this.history = { past: [], future: [], current: this.snapshot(), armed: false, restoring: false };
+    }
+
+    /** Arm recording: the user has started working in the card. */
+    armHistory() {
+        if (this.history) this.history.armed = true;
+    }
+
+    noteChange() {
+        const history = this.history;
+        if (!history || history.restoring) return;
+        window.clearTimeout(this._historyTimer);
+        this._historyTimer = window.setTimeout(() => this.recordStep(), 300);
+    }
+
+    recordStep() {
+        window.clearTimeout(this._historyTimer);
+        this._historyTimer = null;
+        const history = this.history;
+        if (!history || history.restoring) return;
+        const now = this.snapshot();
+        if (!now || JSON.stringify(now) === JSON.stringify(history.current)) return;
+        if (history.armed) {
+            history.past.push(history.current);
+            if (history.past.length > 100) history.past.shift();
+            history.future = [];
+        }
+        history.current = now;
+    }
+
+    /** True when Quick Edit had a step to take (the key is then its). */
+    undo() {
+        return this.stepHistory("past", "future");
+    }
+
+    redo() {
+        return this.stepHistory("future", "past");
+    }
+
+    stepHistory(from, to) {
+        const history = this.history;
+        if (!history || !this.sidebar) return false;
+        // A change still settling is a step of its own: undo that first.
+        if (this._historyTimer) this.recordStep();
+        const target = history[from].pop();
+        if (!target) return false;
+        history[to].push(history.current);
+        this.restore(target);
+        return true;
+    }
+
+    /** Put the widget back to `target`, through its ordinary setters. */
+    restore(target) {
+        const sidebar = this.sidebar;
+        const history = this.history;
+        history.restoring = true;
+        try {
+            sidebar.channelSlots.forEach((slot, index) => {
+                const want = target.slots[index];
+                if (!want || !want.name || !want.visible) {
+                    if (slot.visible) sidebar.removeChannelSlot(index);
+                    return;
+                }
+                if (slot.name !== want.name || !slot.visible) {
+                    sidebar.setSlotMarker(index, want.name, { keepColor: true, reveal: true, force: true });
+                }
+                if (slot.colorHex !== want.hex) sidebar.setSlotColor(index, want.hex, true);
+                // The window before the switch, so turning a channel on does
+                // not auto-level it over the window being put back.
+                if (want.range) sidebar.setSlotRange(index, want.range, true);
+                if (slot.enabled !== want.enabled) sidebar.setSlotEnabled(index, want.enabled);
+                if (want.range) {
+                    sidebar.setSlotRange(index, want.range, true);
+                    sidebar.updateSlotReadout?.(slot);
+                }
+            });
+            const chosen = sidebar.channelSlots[target.selected];
+            if (chosen && chosen.visible) sidebar.selectedSlot = target.selected;
+            sidebar.syncContrastBar?.();
+            sidebar.updateSelectedCount?.();
+            sidebar.syncAddRow?.();
+        } finally {
+            window.clearTimeout(this._historyTimer);
+            this._historyTimer = null;
+            history.current = this.snapshot();
+            history.restoring = false;
+        }
+        this.sheetDirty = true;
+        this.paint();
+        this.scheduleLivePreview();
+        this.refresh();
     }
 
     /**
@@ -678,6 +958,10 @@ class FigureQuickEdit {
             // looking the way it would there.
             vmin_hint: Number.isFinite(stats.p01) ? stats.p01 : low,
             vmax_hint: Number.isFinite(stats.p999) ? stats.p999 : high,
+            // What the contrast bar's histogram draws (core's shape: bins of
+            // log intensity). Empty when the server sent none; the popover
+            // then says so rather than waiting.
+            image_histogram: Array.isArray(stats.histogram) ? stats.histogram : [],
         };
     }
 
@@ -1058,7 +1342,9 @@ class FigureQuickEdit {
         canvas.addEventListener("pointerup", stop);
         canvas.addEventListener("pointercancel", stop);
 
+        canvas.addEventListener("pointerdown", () => { if (this.session) this.session.touched = true; });
         canvas.addEventListener("wheel", (event) => {
+            if (this.session) this.session.touched = true;
             if (!this.session || this.session.three) return;
             event.preventDefault();
             const factor = Math.exp(event.deltaY * 0.0015);
@@ -1198,7 +1484,7 @@ class FigureQuickEdit {
             return !held || held.signature !== signature;
         });
         if (!fetches.length) {
-            this.paint();
+            this.schedulePaint();
             return;
         }
 
@@ -1319,6 +1605,16 @@ class FigureQuickEdit {
     }
 
     /** Draw the composited sheet where the current view puts it, and frame it. */
+    /** `paint` at the next frame, once however often it is asked. */
+    schedulePaint() {
+        if (typeof requestAnimationFrame !== "function") { this.paint(); return; }
+        if (this._paintFrame) return;
+        this._paintFrame = requestAnimationFrame(() => {
+            this._paintFrame = 0;
+            if (this.session) this.paint();
+        });
+    }
+
     paint() {
         const canvas = this.canvasEl;
         const context = canvas && canvas.getContext("2d");

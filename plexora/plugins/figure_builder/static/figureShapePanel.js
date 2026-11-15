@@ -112,7 +112,6 @@ class FigureShapePanel {
         if (!annotation) return;
         const style = annotation.style;
         const shape = annotation.shape || { closed: true };
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
         const focus = this.focused();
 
         const hasFill = Boolean(style.fill);
@@ -120,53 +119,48 @@ class FigureShapePanel {
         const opacity = Math.round(
             (style.opacity === undefined ? 1 : style.opacity) * 100);
 
-        this.root.innerHTML = `
-            <header class="fb-side-heading">
-                <span class="fb-side-title">Shape</span>
-                <button type="button" class="fb-icon-button" data-close="1"
-                        title="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
-                </button>
+        // The design's sections: the outline, then the fill. The box is the
+        // inspector's, below.
+        this.root.innerHTML = `<section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Line</span>
+                <button type="button" role="switch" class="fb-switch${hasStroke ? " is-on" : ""}"
+                        id="fb_shape_stroke_on" data-switch-toggle="stroke" aria-checked="${hasStroke}"
+                        aria-label="${hasStroke ? "Remove the outline" : "Outline this shape"}"><span></span></button>
             </header>
-
-            ${this.field("Fill", "fb_shape_fill", `
-                <input type="checkbox" id="fb_shape_fill_on"
-                       data-toggle="fill" ${hasFill ? "checked" : ""}
-                       aria-label="Fill this shape">
+            <div class="fb-insp-row">
                 ${FigureColorField.swatch({
-                    field: "fill", id: "fb_shape_fill", label: "Fill color",
-                    value: style.fill || this.lastFill, disabled: !hasFill })}
-                <input class="fb-input fb-input-hex" id="fb_shape_fill_hex" type="text"
-                       data-hex="fill" spellcheck="false" maxlength="7"
-                       value="${escape(style.fill || "")}" placeholder="None"
-                       ${hasFill ? "" : "disabled"}
-                       aria-label="Fill color, as a hex code">`)}
-            ${shape.closed ? "" : `<p class="fb-side-note">A fill is drawn only
-                when the path is closed. This one keeps its colour for when it
-                is.</p>`}
-
-            ${this.field("Stroke", "fb_shape_stroke", `
-                <input type="checkbox" id="fb_shape_stroke_on"
-                       data-toggle="stroke" ${hasStroke ? "checked" : ""}
-                       aria-label="Outline this shape">
-                ${FigureColorField.swatch({
-                    field: "color", id: "fb_shape_stroke", label: "Stroke color",
+                    field: "color", id: "fb_shape_stroke", label: "Outline color",
                     value: style.color || "#000000", disabled: !hasStroke })}
-                <input class="fb-input fb-input-hex" id="fb_shape_stroke_hex" type="text"
-                       data-hex="color" spellcheck="false" maxlength="7"
-                       value="${escape(style.color || "")}" placeholder="None"
-                       ${hasStroke ? "" : "disabled"}
-                       aria-label="Stroke color, as a hex code">`)}
-
-            ${this.field("Stroke width", "fb_shape_width",
-                this.widthStepper(style.line_width_pt, hasStroke))}
-
-            ${this.field("Opacity", "fb_shape_opacity", `
-                <input id="fb_shape_opacity" type="range"
-                       min="0" max="100" step="1" value="${opacity}"
-                       data-opacity="1" aria-label="Opacity, as a percentage">`)}
-
-            ${this.pointsSection()}`;
+                <label class="fb-insp-field fb-insp-w84" title="Outline thickness">
+                    <input class="fb-insp-input" id="fb_shape_width" type="text" inputmode="decimal"
+                           spellcheck="false" data-width="1" value="${style.line_width_pt}"
+                           ${hasStroke ? "" : "disabled"} aria-label="Outline thickness, in points">
+                    <span class="fb-insp-suffix">pt</span></label>
+                <span class="fb-insp-grow"></span>
+            </div>
+            <div class="fb-insp-switch-row"><span>Opacity</span>
+                <span class="fb-insp-slider">
+                    <input id="fb_shape_opacity" type="range" min="0" max="100" step="1" value="${opacity}"
+                           data-opacity="1" aria-label="Opacity, as a percentage"></span>
+            </div>
+        </section>
+        <section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Fill</span></header>
+            <div class="fb-insp-row">
+                <div class="fb-insp-seg fb-insp-grow" role="group" aria-label="Fill">
+                    <button type="button" class="${hasFill ? "" : "is-on"}" data-switch-toggle="fill"
+                            data-on="false" aria-pressed="${!hasFill}">None</button>
+                    <button type="button" class="${hasFill ? "is-on" : ""}" data-switch-toggle="fill"
+                            data-on="true" aria-pressed="${hasFill}">Color</button>
+                </div>
+                ${hasFill ? FigureColorField.swatch({
+                    field: "fill", id: "fb_shape_fill", label: "Fill color",
+                    value: style.fill || this.lastFill }) : ""}
+            </div>
+            ${shape.closed ? "" : `<p class="fb-insp-note">A fill is drawn only when the path is
+                closed. This one keeps its colour for when it is.</p>`}
+        </section>
+        ${this.pointsSection()}`;
 
         this.upgradeSliders();
         this.restore(focus);
@@ -186,45 +180,34 @@ class FigureShapePanel {
         const points = this.points;
         if (!points) return "";
         const type = points.selectedType;
-        return `<div class="fb-side-group">
-            <div class="fb-side-group-title">Points</div>
-            ${this.field("Node type", null, `<div class="fb-segmented" role="group"
-                     aria-label="Node type">
-                ${this.pointButton("corner", "Corner", type === "corner", !points.selectedCount)}
-                ${this.pointButton("smooth", "Smooth", type === "smooth", !points.selectedCount)}
-            </div>`)}
-            ${this.field("Selection", null, `
-                <button type="button" class="fb-button" data-point="delete"
-                        ${points.canDelete ? "" : "disabled"}>Delete point</button>`)}
-            ${this.field("Path", null, `
-                <button type="button" class="fb-button" data-point="closed"
+        return `<section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Points</span>
+                <span class="fb-insp-aside">${points.selectedCount || 0} selected</span></header>
+            <div class="fb-insp-switch-row"><span>Node</span>
+                <div class="fb-insp-seg fb-insp-w150" role="group" aria-label="Node type">
+                    ${this.pointButton("corner", "Corner", type === "corner", !points.selectedCount)}
+                    ${this.pointButton("smooth", "Smooth", type === "smooth", !points.selectedCount)}
+                </div></div>
+            <div class="fb-insp-grid2">
+                <button type="button" class="fb-insp-btn" data-point="delete"
+                        ${points.canDelete ? "" : "disabled"}>Delete point</button>
+                <button type="button" class="fb-insp-btn" data-point="closed"
                         ${points.canToggleClosed ? "" : "disabled"}
-                >${points.closed ? "Open path" : "Close path"}</button>`)}
-            <p class="fb-side-note">Click a segment to add a point. Drag a node to
-               move it, or its levers to bend the curve either side.</p>
-            <div class="fb-side-actions">
-                <button type="button" class="fb-button fb-button-primary"
-                        data-point="done">Done</button>
+                >${points.closed ? "Open path" : "Close path"}</button>
             </div>
-        </div>`;
+            <p class="fb-insp-note">Click a segment to add a point. Drag a node to move it,
+               or its levers to bend the curve either side.</p>
+            <button type="button" class="fb-insp-btn is-primary" data-point="done">Done</button>
+        </section>`;
     }
 
     pointButton(value, label, on, disabled) {
-        return `<button type="button" class="fb-segmented-button${on ? " is-on" : ""}"
+        return `<button type="button" class="${on ? "is-on" : ""}"
                         data-point="${value}" ${disabled ? "disabled" : ""}
                         aria-pressed="${on ? "true" : "false"}"
                 >${FigureSchema.escapeHtml(label)}</button>`;
     }
 
-    /** One row: the property's name, then its control. */
-    field(name, forId, control) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const label = forId
-            ? `<label class="fb-field-name" for="${forId}">${escape(name)}</label>`
-            : `<span class="fb-field-name">${escape(name)}</span>`;
-        return `<div class="fb-field">${label}
-            <div class="fb-field-control">${control}</div></div>`;
-    }
 
     /**
      * Minus, the number, plus -- the text panel's stepper, in quarter points.
@@ -235,21 +218,6 @@ class FigureShapePanel {
      * field. `inputmode="decimal"` keeps the numeric keypad on a touch device
      * and Up/Down are handled in `keyDown`.
      */
-    widthStepper(value, enabled) {
-        return `<div class="fb-stepper">
-            <button type="button" class="fb-stepper-button" data-step="-1"
-                    ${enabled ? "" : "disabled"} aria-label="Thinner">
-                <span class="fas fa-minus" aria-hidden="true"></span></button>
-            <input class="fb-stepper-value" id="fb_shape_width" type="text"
-                   inputmode="decimal" spellcheck="false" data-width="1"
-                   value="${value}" ${enabled ? "" : "disabled"}
-                   aria-label="Stroke width, in points">
-            <button type="button" class="fb-stepper-button" data-step="1"
-                    ${enabled ? "" : "disabled"} aria-label="Thicker">
-                <span class="fas fa-plus" aria-hidden="true"></span></button>
-        </div>`;
-    }
-
     /** Which control had the keyboard, and where its caret was. The panel
      *  redraws on every document change and every control here causes one, so
      *  without this typing a hex code rebuilds the field under the caret at the
@@ -280,6 +248,14 @@ class FigureShapePanel {
         if (event.target.closest?.("[data-close]")) {
             this.dismissed = true;
             this.onClose();
+            return;
+        }
+        const sw = event.target.closest?.("[data-switch-toggle]");
+        if (sw) {
+            const which = sw.dataset.switchToggle;
+            const on = sw.dataset.on !== undefined ? sw.dataset.on === "true"
+                : sw.getAttribute("aria-checked") !== "true";
+            this.toggle(which, on);
             return;
         }
         const step = event.target.closest?.("[data-step]");

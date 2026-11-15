@@ -164,129 +164,67 @@ class FigureTextPanel {
         const families = FigureRichText.FAMILIES.map((name) =>
             `<option value="${name}"${now.family === name ? " selected" : ""}
              >${escape(FigureTextPanel.FAMILY_LABELS[name] || name)}</option>`).join("");
+        const leading = style.line_height || FigureRichText.LINE_HEIGHT;
 
-        this.root.innerHTML = `
-            <header class="fb-side-heading">
-                <span class="fb-side-title">Text</span>
-                <button type="button" class="fb-icon-button" data-close="1"
-                        title="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
-                </button>
-            </header>
-
-            ${this.field("Font", "fb_text_font",
-                `<select class="fb-input" id="fb_text_font" data-field="family"
-                         aria-label="Font family">${families}</select>`)}
-
-            ${this.field("Size", "fb_text_size", this.stepper(now.size_pt))}
-
-            ${this.field("Color", "fb_text_color", `
+        // The design's Text section: the face, then size + marks + colour,
+        // then alignment + leading. The box (and "Height follows the text")
+        // is the inspector's, below this.
+        this.root.innerHTML = `<section class="fb-insp-section">
+            <header class="fb-insp-section-head"><span>Text</span></header>
+            <select class="fb-insp-select" id="fb_text_font" data-field="family"
+                    aria-label="Font">${families}</select>
+            <div class="fb-insp-row">
+                <label class="fb-insp-field fb-insp-w84" title="Type size">
+                    <input class="fb-insp-input" id="fb_text_size" type="text"
+                           inputmode="decimal" spellcheck="false" data-field="size_pt"
+                           value="${now.size_pt === null ? "" : now.size_pt}" placeholder="Mixed"
+                           aria-label="Size, in points">
+                    <span class="fb-insp-suffix">pt</span></label>
+                <div class="fb-insp-seg fb-insp-grow" role="group" aria-label="Style">
+                    ${this.markButton("bold", "B", "Bold (⌘B)", now.bold)}
+                    ${this.markButton("italic", "I", "Italic (⌘I)", now.italic)}
+                    ${this.markButton("underline", "U", "Underline (⌘U)", now.underline)}
+                    ${this.markButton("strike", "S", "Strikethrough", now.strike)}
+                </div>
                 ${FigureColorField.swatch({
                     field: "color", id: "fb_text_color", label: "Text color",
                     value: now.color || "#000000" })}
-                <input class="fb-input fb-input-hex" id="fb_text_hex" type="text"
-                       data-field="color_hex" spellcheck="false" maxlength="7"
-                       value="${escape(now.color || "")}" placeholder="Mixed"
-                       aria-label="Color, as a hex code">`)}
-
-            ${this.field("Line spacing", "fb_text_leading",
-                this.leadingSelect(style.line_height || FigureRichText.LINE_HEIGHT))}
-
-            ${this.field("Horizontal align", null, this.segmented("Horizontal alignment",
-                [["left", "Align left"], ["center", "Center"],
-                 ["right", "Align right"], ["justify", "Justify"]].map(([value, title]) =>
-                    this.styleButton("align", value, `align-${value}`,
-                                     title, style.align === value))))}
-
-            ${this.field("Vertical align", null, this.segmented("Vertical alignment",
-                [["top", "arrow-up", "Align to the top"],
-                 ["middle", "arrows-up-down", "Center vertically"],
-                 ["bottom", "arrow-down", "Align to the bottom"]].map(
-                    ([value, icon, title]) => this.styleButton(
-                        "valign", value, icon, title, style.valign === value))))}
-
-            ${this.field("Decoration", null, this.segmented("Decoration", [
-                // "(⌘B)" and not "Bold  ⌘B": a shortcut inside a tooltip is
-                // parenthesised, the same way FigureContextBar.button writes
-                // one. Two spaces and a glyph is how a MENU ROW carries it, and
-                // a menu row draws the key in its own right-hand column.
-                this.toggleButton("bold", "bold", "Bold (⌘B)", now.bold),
-                this.toggleButton("italic", "italic", "Italic (⌘I)", now.italic),
-                this.toggleButton("underline", "underline", "Underline (⌘U)", now.underline),
-                this.toggleButton("strike", "strikethrough", "Strikethrough", now.strike),
-            ]))}
-
-            ${this.field("Auto height", "fb_text_autofit",
-                `<input type="checkbox" id="fb_text_autofit" data-style="autofit"
-                        ${style.autofit ? "checked" : ""}
-                        aria-label="Fit the box height to the text">`)}`;
+            </div>
+            <div class="fb-insp-row">
+                <div class="fb-insp-seg fb-insp-grow" role="group" aria-label="Alignment">
+                    ${[["left", "txL", "Align left"], ["center", "txC", "Align center"],
+                       ["right", "txR", "Align right"], ["justify", "txJ", "Justify"]].map(
+                        ([value, icon, title]) => this.styleButton("align", value, icon, title,
+                                                                    style.align === value)).join("")}
+                </div>
+                <label class="fb-insp-field fb-insp-w110" title="Line spacing">
+                    <span class="fb-insp-field-label">Leading</span>
+                    <input class="fb-insp-input" id="fb_text_leading" type="text" inputmode="decimal"
+                           data-style="line_height" aria-label="Line spacing"
+                           value="${escape(String(Number(leading.toFixed(2))))}"></label>
+            </div>
+            <div class="fb-insp-switch-row"><span>In the box</span>
+                <div class="fb-insp-seg fb-insp-w120" role="group" aria-label="Vertical alignment">
+                    ${[["top", "vTop", "Align to the top"], ["middle", "vMid", "Center vertically"],
+                       ["bottom", "vBot", "Align to the bottom"]].map(
+                        ([value, icon, title]) => this.styleButton("valign", value, icon, title,
+                                                                    (style.valign || "top") === value)).join("")}
+                </div>
+            </div>
+        </section>`;
 
         this.restore(focus);
     }
 
-    /** One row: the property's name, then its control. `forId` is the control
-     *  the name belongs to, and is null for the segmented tracks -- a <label>
-     *  can only point at one element, and a track is four buttons that carry
-     *  their own. */
-    field(name, forId, control) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const label = forId
-            ? `<label class="fb-field-name" for="${forId}">${escape(name)}</label>`
-            : `<span class="fb-field-name">${escape(name)}</span>`;
-        return `<div class="fb-field">${label}
-            <div class="fb-field-control">${control}</div></div>`;
+    /** B, I, U, S drawn as the letters themselves, in their own style. */
+    markButton(mark, letter, title, on) {
+        const look = { bold: "font-weight:700", italic: "font-style:italic",
+                       underline: "text-decoration:underline", strike: "text-decoration:line-through" }[mark];
+        return `<button type="button" class="${on ? "is-on" : ""}"
+                        data-mark="${mark}" title="${FigureSchema.escapeHtml(title)}"
+                        aria-label="${FigureSchema.escapeHtml(title)}"
+                        aria-pressed="${on ? "true" : "false"}" style="${look}">${letter}</button>`;
     }
-
-    /**
-     * Minus, the number, plus.
-     *
-     * A bare number field is a control you have to select and retype to change
-     * by one point, and its spin buttons are two arrows four pixels tall that
-     * only appear on hover. Type size is the property on this panel most likely
-     * to be nudged rather than set, so it gets the buttons the reference design
-     * gives it. The field stays editable -- 7.5 is a real answer and no stepper
-     * gets to it.
-     *
-     * A TEXT input and not a number one, which is not a detail: typing "20" put
-     * 02 in the field. `focused()` keeps the caret across the panel's redraw by
-     * reading `selectionStart`, and that property is null on a number input --
-     * the HTML spec makes it null for every type that does not have a "selection
-     * API", number among them. So the caret was restored to offset 0 after the
-     * first digit and the second went in front of it. The platform's own
-     * spinners were already suppressed in CSS, so `type="number"` was buying
-     * nothing but that bug; `inputmode="decimal"` keeps the numeric keypad on a
-     * touch device, and Up/Down are handled in `keyDown`.
-     */
-    stepper(value) {
-        return `<div class="fb-stepper">
-            <button type="button" class="fb-stepper-button" data-step="-1"
-                    aria-label="Smaller">
-                <span class="fas fa-minus" aria-hidden="true"></span></button>
-            <input class="fb-stepper-value" id="fb_text_size" type="text"
-                   inputmode="decimal" spellcheck="false" data-field="size_pt"
-                   value="${value === null ? "" : value}" placeholder="Mixed"
-                   aria-label="Type size, in points">
-            <button type="button" class="fb-stepper-button" data-step="1"
-                    aria-label="Larger">
-                <span class="fas fa-plus" aria-hidden="true"></span></button>
-        </div>`;
-    }
-
-    /** The usual leadings, plus whatever this caption is actually set to. The
-     *  extra option is what keeps a menu from being a value editor that can
-     *  silently round: a figure set to 1.35 by an earlier build, or through the
-     *  REST surface, still shows 1.35 and still selects it. */
-    leadingSelect(current) {
-        const values = FigureTextPanel.LEADINGS.slice();
-        if (!values.includes(current)) values.push(current);
-        values.sort((a, b) => a - b);
-        return `<select class="fb-input" id="fb_text_leading" data-style="line_height"
-                        aria-label="Line spacing">${values.map((value) =>
-            `<option value="${value}"${value === current ? " selected" : ""}
-             >${value.toFixed(2).replace(/\.?0+$/, "")}</option>`).join("")}</select>`;
-    }
-
-    static get LEADINGS() { return [1, 1.15, 1.2, 1.5, 2]; }
 
     /**
      * Which control had the keyboard, and where its caret was.
@@ -320,30 +258,12 @@ class FigureTextPanel {
         if (focus.caret) again.setSelectionRange(focus.caret[0], focus.caret[1]);
     }
 
-    /** A row of buttons that read as one control. Four loose icon buttons and a
-     *  segmented track hold the same things; only the second one says that
-     *  exactly one of them is the current answer. */
-    segmented(label, buttons) {
-        return `<div class="fb-segmented" role="group"
-                     aria-label="${FigureSchema.escapeHtml(label)}"
-                >${buttons.join("")}</div>`;
-    }
-
-    toggleButton(mark, icon, title, on) {
-        return `<button type="button" class="fb-segmented-button${on ? " is-on" : ""}"
-                        data-mark="${mark}" title="${FigureSchema.escapeHtml(title)}"
-                        aria-label="${FigureSchema.escapeHtml(title)}"
-                        aria-pressed="${on ? "true" : "false"}">
-            <span class="fas fa-${icon}" aria-hidden="true"></span></button>`;
-    }
-
     styleButton(field, value, icon, title, on) {
-        return `<button type="button" class="fb-segmented-button${on ? " is-on" : ""}"
+        return `<button type="button" class="${on ? "is-on" : ""}"
                         data-style-set="${field}" data-value="${value}"
                         title="${FigureSchema.escapeHtml(title)}"
                         aria-label="${FigureSchema.escapeHtml(title)}"
-                        aria-pressed="${on ? "true" : "false"}">
-            <span class="fas fa-${icon}" aria-hidden="true"></span></button>`;
+                        aria-pressed="${on ? "true" : "false"}">${FigureIcons.svg(icon, 14)}</button>`;
     }
 
     static get FAMILY_LABELS() {
@@ -451,8 +371,16 @@ class FigureTextPanel {
         }
         if (target.dataset.style) {
             const key = target.dataset.style;
-            this.applyStyle({ [key]: key === "autofit"
-                ? target.checked : parseFloat(target.value) });
+            if (key === "autofit") {
+                this.applyStyle({ autofit: target.checked });
+                return;
+            }
+            // A typed number, committed when the field is left -- "1." is on
+            // the way to "1.5", not a leading of 1.
+            if (event.type !== "change") return;
+            const value = parseFloat(String(target.value).replace(",", "."));
+            if (!(value > 0)) return this.render();
+            this.applyStyle({ [key]: Math.min(4, value) });
         }
     }
 

@@ -199,12 +199,29 @@ class FigureActions {
             // double-click. The bar sits ON the artwork, so a button there that
             // opened a popover covered the panel it was about, and only one of
             // them could be open at a time.
-            { id: "quick_edit", icon: "sliders", label: "Quick Edit…",
-              short: "Quick Edit", surface: ["menu", "sidebar"], group: "image",
+            // On the compact bar too, drawn as a crop: reframing the field is
+            // what most people open Quick Edit to do.
+            { id: "quick_edit", icon: "crop", label: "Quick Edit…",
+              short: "Quick Edit", surface: ["bar", "menu", "sidebar"], group: "image",
               sidebar: { section: "actions", label: "Quick Edit" },
               applies: (sel) => Boolean(sel.singlePanel),
               enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onQuickEdit?.(ctx.ids[0]) },
+
+            // Another of the figure's images in this one's place: its size,
+            // letter, scale bar and layout cell are kept (FigureWorkspace.replacePanel).
+            { id: "replace", icon: "arrow-right-arrow-left", label: "Replace image…",
+              short: "Replace", surface: ["bar", "menu"], group: "image",
+              applies: (sel) => Boolean(sel.singlePanel && sel.singlePanel.placement),
+              enabled: always,
+              run: (ctx) => ctx.handlers.onReplace?.(ctx.ids[0]) },
+
+            // Several images: the layout presets, one press from the bar.
+            { id: "layouts", icon: "table-cells-large", label: "Layouts…",
+              short: "Layouts", surface: ["bar"], group: "object",
+              applies: (sel) => sel.placed.length > 1,
+              enabled: always,
+              run: (ctx) => ctx.handlers.onLayouts?.() },
 
             { id: "edit", icon: "arrow-up-right-from-square",
               label: "Open in Main Viewer", short: "Viewer",

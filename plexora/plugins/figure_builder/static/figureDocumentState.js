@@ -148,25 +148,42 @@ class FigureDocumentState {
         this._setStatus("unsaved");
         this._emit("change", this.document);
 
-        return this._enqueue(() => this._save({ operations: operations, before: before }));
+        const generation = this._generation || 0;
+        const batch = { operations: operations, before: before, generation: generation };
+        this._lastQueued = batch;
+        return this._enqueue(() => this._save(batch));
     }
 
     /** Roll back one committed action. */
     undo() {
         if (!this._undo.length) return Promise.resolve(false);
         const target = this._undo.pop();
-        this._redo.push(this._snapshot());
-        return this._replaceWith(target);
+        const pushed = this._snapshot();
+        this._redo.push(pushed);
+        // Put back as it was if the server refuses the replace.
+        return this._replaceWith(target, () => {
+            FigureDocumentState._remove(this._redo, pushed);
+            this._undo.push(target);
+        });
     }
 
     redo() {
         if (!this._redo.length) return Promise.resolve(false);
         const target = this._redo.pop();
-        this._undo.push(this._snapshot());
-        return this._replaceWith(target);
+        const pushed = this._snapshot();
+        this._undo.push(pushed);
+        return this._replaceWith(target, () => {
+            FigureDocumentState._remove(this._undo, pushed);
+            this._redo.push(target);
+        });
     }
 
-    _replaceWith(target) {
+    static _remove(list, entry) {
+        const at = list.lastIndexOf(entry);
+        if (at >= 0) list.splice(at, 1);
+    }
+
+    _replaceWith(target, revert) {
         const current = this.document;
         const draft = JSON.parse(JSON.stringify(target));
         // A panel's render revision never goes back, not even on an undo: the
@@ -189,7 +206,24 @@ class FigureDocumentState {
         this._setStatus("unsaved");
         this._emit("change", this.document);
 
-        return this._enqueue(() => this._save({ document: draft, before: current }));
+        const generation = this._generation || 0;
+        const batch = { document: draft, before: current, revert: revert, generation: generation };
+        // Undo pressed ten times in a row queues ten whole-document saves.
+        // A replace that has not started and is followed straight away by
+        // another holds nothing the later one does not, so it is skipped --
+        // never one with an edit queued after it, which was made on it.
+        const previous = this._lastQueued;
+        if (previous && previous.document && !previous.started) {
+            previous.skip = true;
+            // This one now stands for both: refused, it goes back to what
+            // the server last had, and both history moves are put back.
+            batch.before = previous.before;
+            const later = revert;
+            const earlier = previous.revert;
+            batch.revert = () => { later?.(); earlier?.(); };
+        }
+        this._lastQueued = batch;
+        return this._enqueue(() => this._save(batch));
     }
 
     /**
@@ -202,6 +236,15 @@ class FigureDocumentState {
      * only once none is left.
      */
     async _save(batch) {
+        batch.started = true;
+        if (batch.skip) return true;
+        // Made on top of an edit the server has since refused: `_settle` put
+        // the tab back to the last confirmed state, which this edit is not
+        // part of, so it is not sent (and its undo step goes with it).
+        if ((batch.generation || 0) !== (this._generation || 0)) {
+            FigureDocumentState._remove(this._undo, batch.before);
+            return false;
+        }
         // A whole-document replace already holds every earlier edit the tab
         // shows, so nothing before it needs sending -- once it is stored. Until
         // then it keeps them: if the server refuses it, the tab goes back to a
@@ -280,7 +323,13 @@ class FigureDocumentState {
         const confirmed = this.revision;
         this.document = item.before;
         this.document.revision = confirmed;
-        this._undo.pop();
+        // The refused edit's own undo step, by identity: a commit made since
+        // has pushed its own on top, and popping would take that one instead.
+        FigureDocumentState._remove(this._undo, item.before);
+        if (typeof item.revert === "function") item.revert();
+        // Commits already queued behind this one were made on the state just
+        // abandoned; `_save` drops them when their turn comes.
+        this._generation = (this._generation || 0) + 1;
         this._setStatus("failed", result.data.error || "That change could not be saved.");
         this._emit("change", this.document);
         return false;

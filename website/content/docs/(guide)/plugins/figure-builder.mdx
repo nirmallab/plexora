@@ -31,7 +31,9 @@ Press **Figure Canvas** and choose an existing figure or a new one. The viewer g
 <Step>
 ### Arrange the page
 
-Move, resize and re-crop panels. Add scale bars, text, shapes, lines and arrows. Everything is placed in millimetres, so the page prints at its true size.
+**Layers** on the left lists everything on the page; **Assets** holds the figure's images that are not on a page yet, with your captures and bookmarks; **Insert** has every object you can add. The inspector on the right shows the page with nothing selected, and the selected object's settings otherwise.
+
+Select several images and choose **Layouts** to arrange them in a grid or a large-plus-small layout, lettered A, B, C… in reading order. A layout stays editable: change its gaps in the inspector, or drag a panel's row in **Layers** to move it to another cell. Everything is placed in millimetres, so the page prints at its true size.
 </Step>
 <Step>
 ### Export
@@ -40,18 +42,25 @@ Press **Export**, choose **PDF**, **TIFF** or **PNG** and a resolution of 150, 3
 </Step>
 </Steps>
 
-<Media src="/media/plugins/figure-canvas.webp" alt="The Figure Canvas with two image panels side by side, each with a scale bar and a label" />
+<Media src="/media/plugins/figure-canvas.webp" alt="The Figure Canvas: Layers on the left listing a 2 × 2 layout of four lettered panels, the page in the middle with scale bars and a caption, and the selected panel's settings on the right" />
 
 ## Tips
 
 - A panel is re-rendered from the original image at export, at the resolution you ask for, not copied from the screen. Keep the source images where they are; moving them breaks the link.
 - A scale bar reads the image's recorded pixel size. Without one, type a pixel size, or the bar is measured in pixels.
-- Views you saved in the viewer with **M** are under **Bookmarks** on the canvas; **Add to figure** puts one straight on the page.
+- Views you saved in the viewer with **M** are under **Assets › Bookmarks**; **Add to figure** puts one straight on the page.
+- A warning on a panel means it has fewer source pixels than the export resolution prints at its size. Click it for the numbers and what to do; enlarging a panel cannot add detail the image does not have.
+- A panel whose shape differs from its capture shows the centre of the view, never a stretched one, and its scale bar measures what is shown.
+- In **Layers**, the eye hides an object (it is not exported) and the padlock stops it being moved on the page. **⌘**-click (Ctrl-click) a panel inside a layout or group to select it alone.
+- The order in **Layers** is the order on the page and in the export, for images and shapes alike: drag an image above a shape to cover it. Figures made before November 2026 keep every shape above every image until you first change their order.
+- A shape with no fill is picked up by its outline, or anywhere inside it where nothing else shows through. Once it is selected, drag it from anywhere inside.
+- Press **P**, or **Preview**, to see the page exactly as it exports.
+- In Quick Edit, **Done** keeps your changes. **Esc** closes it, and asks first if you changed anything.
 - Text uses Helvetica, Times or Courier, so every export format renders it the same way.
 
 ## What it saves
 
-A figure saves itself as you edit (the canvas corner shows **Saving…**, then **Saved**). It stores the layout, crops, text and shapes, never a copy of the pixels. Captures wait in their sample's strip until you use them.
+A figure saves itself as you edit (**Saving…**, then **Saved**, beside its name). It stores the layout, crops, text and shapes, never a copy of the pixels. Captures wait in their sample's strip until you use them.
 
 <Media src="/media/plugins/figure-export.webp" alt="The export dialog with format, resolution and the provenance page option" />
 

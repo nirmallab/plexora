@@ -62,7 +62,8 @@ def export(document, out_dir, options, progress=None, cancelled=None):
     stem = _safe_stem(document["title"]) or document["figure_id"]
 
     pages = _pages(document)
-    total = sum(len(page["panels"]) for page in pages) or 1
+    total = sum(1 for page in pages for panel in page["panels"]
+                if not panel.get("hidden")) or 1
     done = 0
     results = []
 
@@ -75,6 +76,10 @@ def export(document, out_dir, options, progress=None, cancelled=None):
         for page in pages:
             drawn = {}
             for panel in page["panels"]:
+                # Hidden is a drawing decision: compose leaves the panel off
+                # the page, so rendering its pixels would be work for nothing.
+                if panel.get("hidden"):
+                    continue
                 if cancelled and cancelled():
                     return {"cancelled": True}
                 if progress:
@@ -145,6 +150,8 @@ def preflight(document, options):
     try:
         for page in _pages(document):
             for panel in page["panels"]:
+                if panel.get("hidden"):
+                    continue   # not drawn, so nothing to warn about
                 origin = document["sources"].get(panel["source_id"]) or {}
                 if origin.get("kind") == "imported_asset":
                     # Nothing to open and nothing to reconstruct: the file IS
@@ -171,7 +178,7 @@ def preflight(document, options):
                                             "missing_channels": [], "missing_overlays": []}))
                     continue
                 report = render.panel_report(
-                    source, panel["scene"], panel["placement"]["w_mm"], dpi)
+                    source, _shown_scene(panel), panel["placement"]["w_mm"], dpi)
                 reports.append((panel, {**report, "stale_view": True} if stale else report))
     finally:
         for source in sources.values():
@@ -243,7 +250,13 @@ def _imported_report(source, panel, dpi):
     overlays; what there is is a resolution, and enlarging a 400-pixel schematic
     onto a third of a page is exactly as soft as enlarging a crop.
     """
-    width_px = (source.get("image") or {}).get("width") or 0
+    image = source.get("image") or {}
+    width_px = image.get("width") or 0
+    if width_px and image.get("height"):
+        # Only the part the panel's shape shows is spread across its width.
+        width_px, _ = compose.visible_frame(
+            {"w": width_px, "h": image["height"]},
+            panel["placement"]["w_mm"], panel["placement"]["h_mm"])
     return {
         "missing_channels": [], "missing_overlays": [],
         "effective_dpi": round(render.effective_dpi(width_px, panel["placement"]["w_mm"]), 1),
@@ -266,7 +279,8 @@ def _render_imported(document, panel, figure_id, width_px, height_px):
     if path is None:
         return None
     with Image.open(path) as opened:
-        return opened.convert("RGB").resize((width_px, height_px), Image.LANCZOS)
+        picture = _crop_to_panel(opened.convert("RGB"), panel, opened.width, opened.height)
+        return picture.resize((width_px, height_px), Image.LANCZOS)
 
 
 def volume_state(panel):
@@ -343,8 +357,8 @@ def _render_client_raster(document, panel, width_px, height_px):
         return None, 0
     data, _fmt, _revision = found
     with Image.open(io.BytesIO(data)) as opened:
-        native = opened.width
-        return opened.convert("RGB").resize((width_px, height_px), Image.LANCZOS), native
+        picture = _crop_to_panel(opened.convert("RGB"), panel, opened.width, opened.height)
+        return picture.resize((width_px, height_px), Image.LANCZOS), picture.width
 
 
 def _mirrored(image, place):
@@ -409,11 +423,40 @@ def _render_unflipped(document, panel, sources, dpi):
                 {"missing_source": True, "missing_channels": [], "missing_overlays": [],
                  "effective_dpi": 0, "requested_dpi": dpi})
 
-    report = render.panel_report(source, panel["scene"], panel["placement"]["w_mm"], dpi)
+    report = render.panel_report(source, _shown_scene(panel), panel["placement"]["w_mm"], dpi)
     if stale:
         report = {**report, "stale_view": True}
-    image, detail = render.render_panel(source, panel["scene"], width_px, height_px)
+    image, detail = render.render_panel(source, _shown_scene(panel), width_px, height_px)
     return image, {**report, **detail}
+
+
+def _shown_scene(panel):
+    """The panel's scene with its viewport cut to what the panel's shape shows
+    (`compose.visible_viewport`) -- so the file holds the field the canvas
+    draws, at the proportions it was captured at, rather than the whole field
+    stretched into the box."""
+    place = panel["placement"]
+    viewport = compose.visible_viewport(panel["scene"]["viewport"],
+                                        place["w_mm"], place["h_mm"])
+    return {**panel["scene"], "viewport": viewport}
+
+
+def _crop_to_panel(image, panel, frame_w, frame_h):
+    """A raster that holds a panel's whole frame, cut to the part the panel's
+    shape shows. For the two kinds of panel whose picture is a FILE rather than
+    a render -- an imported image and a 3-D view's stored picture -- the same
+    rule `_shown_scene` applies to a render."""
+    place = panel["placement"]
+    shown_w, shown_h = compose.visible_frame(
+        {"w": frame_w, "h": frame_h}, place["w_mm"], place["h_mm"])
+    if (shown_w, shown_h) == (frame_w, frame_h) or frame_w <= 0 or frame_h <= 0:
+        return image
+    sx = image.width / frame_w
+    sy = image.height / frame_h
+    left = (frame_w - shown_w) / 2 * sx
+    top = (frame_h - shown_h) / 2 * sy
+    return image.crop((int(round(left)), int(round(top)),
+                       int(round(left + shown_w * sx)), int(round(top + shown_h * sy))))
 
 
 def _warnings(results, fonts=()):

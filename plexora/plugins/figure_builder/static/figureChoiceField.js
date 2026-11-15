@@ -114,9 +114,11 @@ class FigureChoiceField {
                         ${disabled ? "disabled" : ""}
                         aria-haspopup="true" aria-expanded="${open ? "true" : "false"}"
                         title="${escape(name)}" aria-label="${escape(name)}">
-            ${chosen ? `<span class="fb-choice-text" aria-hidden="true"
-                >${escape(chosen.short)}</span>` : ""}
-            ${grid ? "" : `<span class="fas fa-chevron-down fb-choice-caret"
+            ${variant === "anchor" && chosen && typeof FigureIcons !== "undefined"
+                ? `<span class="fb-choice-icon" aria-hidden="true">${FigureIcons.anchor(chosen.value)}</span>`
+                : (chosen ? `<span class="fb-choice-text" aria-hidden="true"
+                >${escape(chosen.short)}</span>` : "")}
+            ${grid || variant === "unit" ? "" : `<span class="fas fa-chevron-down fb-choice-caret"
                                  aria-hidden="true"></span>`}
         </button>`;
     }
@@ -309,6 +311,8 @@ class FigureChoiceField {
             button.dataset.value = value;
             const text = button.querySelector(".fb-choice-text");
             if (text && chosen) text.textContent = chosen.short;
+            const icon = button.querySelector(".fb-choice-icon");
+            if (icon && chosen) icon.innerHTML = FigureIcons.anchor(chosen.value);
         });
         state.onPick(value);
     }

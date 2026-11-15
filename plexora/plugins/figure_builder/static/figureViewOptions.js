@@ -34,6 +34,7 @@ class FigureViewOptions {
             grid: false,
             snapGrid: false,
             smartGuides: true,
+            alignGuides: true,
             margins: true,
             units: "mm",
             gridMm: 5,
@@ -157,6 +158,7 @@ class FigureViewOptions {
 
         this.canvas.snapping = {
             guides: this.prefs.smartGuides,
+            showGuides: this.prefs.alignGuides,
             grid: this.prefs.snapGrid,
             gridMm: this.prefs.gridMm,
         };
@@ -224,10 +226,15 @@ class FigureViewOptions {
         const thickness = FigureViewOptions.RULER_SIZE;
         const width = axis === "h" ? lengthPx : thickness;
         const height = axis === "h" ? thickness : lengthPx;
-        element.width = Math.max(1, Math.round(width * dpr));
-        element.height = Math.max(1, Math.round(height * dpr));
-        element.style.width = width + "px";
-        element.style.height = height + "px";
+        // Resized only when the size changes: assigning width or height,
+        // even the same value, reallocates and clears the canvas's buffer,
+        // and this runs on every zoom and scroll.
+        const pixelW = Math.max(1, Math.round(width * dpr));
+        const pixelH = Math.max(1, Math.round(height * dpr));
+        if (element.width !== pixelW) element.width = pixelW;
+        if (element.height !== pixelH) element.height = pixelH;
+        if (element.style.width !== width + "px") element.style.width = width + "px";
+        if (element.style.height !== height + "px") element.style.height = height + "px";
 
         const context = element.getContext("2d");
         if (!context) return;

@@ -43,13 +43,30 @@ class FigureExportUi {
         for (const id of ["fb_export_format", "fb_export_dpi"]) {
             this.el(id)?.addEventListener("change", () => this.preflight());
         }
+        // The resolution is set here and nowhere else: it is the figure's
+        // `dpi_default`, which panels are also checked against (a panel below
+        // three quarters of it is marked low resolution).
+        this.el("fb_export_dpi")?.addEventListener("change", (event) => {
+            const dpi = Math.round(Number(event.target.value));
+            if (!(dpi >= 72 && dpi <= 1200) || dpi === this.state.document.settings.dpi_default) return;
+            this.state.commit([{ op: "set_meta", changes: { settings: { dpi_default: dpi } } }],
+                (draft) => { Object.assign(draft.settings, { dpi_default: dpi }); });
+        });
     }
 
     open() {
         const dialog = this.el("fb_export_dialog");
         if (!dialog) return;
         const dpi = this.el("fb_export_dpi");
-        if (dpi && !dpi.value) dpi.value = String(this.state.document.settings.dpi_default);
+        if (dpi) {
+            // The figure's own resolution, offered even when it is not one of
+            // the listed four (an older figure may be at 400).
+            const current = String(this.state.document.settings.dpi_default);
+            if (!Array.from(dpi.options).some((option) => option.value === current)) {
+                dpi.add(new Option(`${current} DPI`, current));
+            }
+            dpi.value = current;
+        }
         this.setPhase("idle");
         dialog.showModal?.();
         this.preflight();

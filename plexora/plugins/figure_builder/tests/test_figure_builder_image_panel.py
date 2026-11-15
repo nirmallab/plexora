@@ -75,7 +75,11 @@ def test_what_left_the_bar_is_still_reachable():
         assert entry, f"{action_id} is no longer a registered action"
         surfaces = entry.group(1)
         assert '"menu"' in surfaces, f"{action_id} has no way in at all"
-        assert '"bar"' not in surfaces, f"{action_id} is still on the floating bar"
+        # Quick Edit came back to the bar with the 2026-11 redesign, as the
+        # compact bar's Crop: the approved design puts it there, and the bar no
+        # longer opens popovers over the artwork, which is why it left.
+        if action_id != "quick_edit":
+            assert '"bar"' not in surfaces, f"{action_id} is still on the floating bar"
 
     # The sidebar draws its action buttons FROM the registry now, so the ones
     # that come from there are pinned by their `sidebar.section` rather than by

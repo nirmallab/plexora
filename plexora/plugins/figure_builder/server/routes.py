@@ -768,6 +768,13 @@ def _page_data(**values):
         'figure_builder_version': VERSION,
         'loaded_datasource': _loaded_datasource(),
     }
+    # Who answers the page's requests, as core's pages say it: on the website
+    # the app runs in the page's own worker, and services/backend.js sends a
+    # request there only when the page says "browser". Without it every
+    # request a figure page made failed on the website.
+    import os
+    if os.environ.get("PLEXORA_BACKEND"):
+        data['backend'] = os.environ["PLEXORA_BACKEND"]
     data.update(values)
     return data
 

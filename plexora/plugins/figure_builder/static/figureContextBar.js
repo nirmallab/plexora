@@ -38,6 +38,11 @@ class FigureContextBar {
         this.canvas = options.canvas;
         this.state = options.state;
         this.handlers = options.handlers || {};
+        //: The short bar of the three-column editor: a few icons for the
+        //: commonest things done to the object under it, everything else in
+        //: "More". The inspector beside the page holds the numbers and the
+        //: arrangement commands, so the bar no longer has to.
+        this.compact = Boolean(options.compact);
 
         this.el = null;
         this.popover = null;
@@ -228,8 +233,10 @@ class FigureContextBar {
         left = Math.max(8, Math.min(left, host.width - size.width - 8));
 
         let top = box.top - host.top - size.height - FigureContextBar.OFFSET;
-        const below = box.bottom - host.top + FigureContextBar.OFFSET;
-        if (top < 8) top = Math.min(below, host.height - size.height - 8);
+        // No room above: just inside the selection's top edge, still beside
+        // what it acts on, rather than under the whole of a tall selection.
+        const inside = box.top - host.top + FigureContextBar.OFFSET;
+        if (top < 8) top = Math.min(inside, host.height - size.height - 8);
         top = Math.max(8, Math.min(top + this.offset.y, host.height - size.height - 8));
 
         this.el.style.left = Math.round(left) + "px";
@@ -268,14 +275,44 @@ class FigureContextBar {
      * `figureActions.js` exists to stop: what an action is, when it appears and
      * when it can run are declared once and both surfaces read them.
      */
+    /** The actions the compact bar keeps, in the order it shows them. */
+    static get COMPACT() {
+        return ["edit_text", "editpoints", "quick_edit", "replace", "layouts",
+                "group", "ungroup", "duplicate", "delete"];
+    }
+
+    /** The bar's actions, cut to the compact set when there is an inspector
+     *  to hold the rest. Delete stays only for annotations: a panel is put
+     *  away with Delete on the keyboard, and the bar keeps its four icons. */
+    barActions(context) {
+        const all = FigureActions.forSurface("bar", context.sel, context);
+        if (!this.compact) return all;
+        const keep = FigureContextBar.COMPACT;
+        // One object: the design's four (Crop, Replace, Duplicate, More).
+        // Grouping is a several-object verb; for one it is in More.
+        const one = context.ids.length < 2;
+        return all.filter((action) => keep.includes(action.id)
+                && !(action.id === "delete" && context.sel.panels.length)
+                && !(one && (action.id === "group" || action.id === "ungroup")))
+            .sort((a, b) => keep.indexOf(a.id) - keep.indexOf(b.id));
+    }
+
     markup(ids) {
         const context = this.context(ids);
-        const actions = FigureActions.forSurface("bar", context.sel, context);
+        const actions = this.barActions(context);
         if (!actions.length) return "";
 
         // The handle the bar is picked up by. First, and drawn as a grip rather
         // than as another button, so "this whole strip moves" is said by the
         // one part of it that is not a control.
+        // The compact bar is the design's: four line icons in a white pill,
+        // no grip, no dividers, "more" as a horizontal ellipsis.
+        if (this.compact) {
+            return actions.map((action) => this.iconButton(action.id, action.icon, action.label, {
+                shortcut: action.shortcut, danger: Boolean(action.danger),
+                disabled: !action.isEnabled, menu: Boolean(action.popover),
+            })).join("") + this.iconButton("more", "ellipsis", "More", { menu: true });
+        }
         const parts = [`<span class="fb-context-grip" aria-hidden="true"></span>`];
         let group = null;
         for (const action of actions) {
@@ -342,6 +379,11 @@ class FigureContextBar {
         const flags = options || {};
         const word = flags.short || title;
         const name = flags.shortcut ? `${title} (${flags.shortcut})` : title;
+        // The design's line icon, as iconButton draws it; Font Awesome only
+        // for a name the icon set has no counterpart for.
+        const own = FigureIcons.fromFontAwesome(icon);
+        const glyph = own ? FigureIcons.svg(own, 16, "fb-context-icon")
+            : `<span class="fas fa-${icon} fb-context-icon" aria-hidden="true"></span>`;
         return `<button type="button" class="fb-context-button${
                             flags.danger ? " is-danger" : ""}${
                             flags.wordless ? " is-wordless" : ""}"
@@ -349,7 +391,7 @@ class FigureContextBar {
                         aria-label="${FigureSchema.escapeHtml(name)}"
                         ${flags.disabled ? "disabled" : ""}
                         ${flags.menu ? 'aria-haspopup="true"' : ""}>
-            <span class="fas fa-${icon} fb-context-icon" aria-hidden="true"></span>${
+            ${glyph}${
             flags.wordless ? ""
                 : `<span class="fb-context-label">${FigureSchema.escapeHtml(word)}</span>`}
         </button>`;
@@ -358,6 +400,17 @@ class FigureContextBar {
 
     divider() {
         return '<span class="fb-context-divider"></span>';
+    }
+
+    /** One 28px icon button of the compact bar; its name is the tooltip. */
+    iconButton(act, icon, title, options) {
+        const flags = options || {};
+        const name = flags.shortcut ? `${title} (${flags.shortcut})` : title;
+        return `<button type="button" class="fb-context-button is-icon${flags.danger ? " is-danger" : ""}"
+                        data-act="${act}" title="${FigureSchema.escapeHtml(name)}"
+                        aria-label="${FigureSchema.escapeHtml(name)}"
+                        ${flags.disabled ? "disabled" : ""}
+                        ${flags.menu ? 'aria-haspopup="true"' : ""}>${FigureIcons.fa(icon, 16)}</button>`;
     }
 
     // -- acting ------------------------------------------------------------
@@ -802,7 +855,14 @@ class FigureContextBar {
                     source.display_name || source.datasource || "no source")}</div>`);
             }
         }
-        for (const action of FigureActions.forSurface("overflow", context.sel, context)) {
+        // In the compact bar, what it leaves out is here instead -- so a
+        // command that was one press away is never more than two.
+        const shown = new Set(this.barActions(context).map((action) => action.id));
+        const dropped = this.compact
+            ? FigureActions.forSurface("bar", context.sel, context)
+                .filter((action) => !shown.has(action.id) && !String(action.id).startsWith("group:"))
+            : [];
+        for (const action of dropped.concat(FigureActions.forSurface("overflow", context.sel, context))) {
             rows.push(this.menuItem(action.id, action.label,
                                     { danger: action.danger,
                                       disabled: !action.isEnabled,
