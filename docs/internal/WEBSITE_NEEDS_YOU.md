@@ -4,7 +4,7 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.58 (`main` at the release commit after 70a84e16, no tag; since 2026-11-15 23:10 UTC: bug reports and feature requests from the navbar's feedback icon and Help, sent to the BioCognia admin, and the navbar menus' open/close motion; 0.0.57, since 2026-11-15 17:00 UTC: Figure Builder polish -- number fields live as typed, the image toolbar and hover X, Insert tools that open their settings, the dark doc bar, and captures that keep each channel's display curve; 0.0.56, since 2026-11-15 05:00 UTC: the redesigned Figure Builder -- whose pages also work on the website for the first time -- the audit leads, and seven website fixes including shapely on GEOS 3.13.1 in the bundle; 0.0.55, since 2026-11-13 14:00 UTC: a large flat 16-bit image's pyramid copy is compressed on the desktop and servers, the website opens such copies and still builds exact ones; 0.0.54, since 2026-11-12
+00:40 UTC, now 0.0.59 (`main` at the release commit after 24484c28, no tag; since 2026-11-16 05:30 UTC: time series -- a movable timeline pill along the bottom of the image with Play that shows every frame, the frames ahead prefetched, OME-Zarr time axes by type, vendor time steps, a TIFF's time points readable as time, and OME-Zarr / (T, Y, X) masks as per-frame label volumes; 0.0.58, since 2026-11-15 23:10 UTC: bug reports and feature requests from the navbar's feedback icon and Help, sent to the BioCognia admin, and the navbar menus' open/close motion; 0.0.57, since 2026-11-15 17:00 UTC: Figure Builder polish -- number fields live as typed, the image toolbar and hover X, Insert tools that open their settings, the dark doc bar, and captures that keep each channel's display curve; 0.0.56, since 2026-11-15 05:00 UTC: the redesigned Figure Builder -- whose pages also work on the website for the first time -- the audit leads, and seven website fixes including shapely on GEOS 3.13.1 in the bundle; 0.0.55, since 2026-11-13 14:00 UTC: a large flat 16-bit image's pyramid copy is compressed on the desktop and servers, the website opens such copies and still builds exact ones; 0.0.54, since 2026-11-12
 22:00 UTC: a .plexora file's "Smaller images" open in place -- the
 `.approx` held as a link in any store, docs/internal/PROJECT_BUNDLES.md --
 the page the user asked for goes ahead of a left page's reads in Python's
@@ -279,8 +279,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.59 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.58/` are
+  **0.0.60 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.59/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
