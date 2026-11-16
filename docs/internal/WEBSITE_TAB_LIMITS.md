@@ -75,8 +75,15 @@ index is in memory.
   | A mask's Python-built label pyramid | its output, under 512 MB |
   | Missing 2-D pyramid levels | their output, under 512 MB |
   | Missing z-stack levels | their output, and the plane read whole (1 GB) |
-  | 3-D label volumes | their output, and the plane read whole (1 GB) |
+  | 3-D label volumes | their output, and the plane read whole (1 GB); a series of masks by what its first frame took, times the frames |
   | Python-built image pyramids | their output, under 512 MB |
+
+  A time series is not one tall stack (2026-11-16): the stack rule
+  (`image_pyramid.STACK_LEVEL_VOXELS`, `ngff._stack_planes`) counts one
+  frame's planes, since every reader takes a frame at a time. So a series of
+  planes that one plane would not need a pyramid for is read in place -- a
+  300-frame 1024 x 1024 TIFF (1.26 GB) opens and plays in a tab, where it
+  used to be copied, which the tab refused.
 
   Also on the website:
   - whole-mask reads stream past 256 MB;

@@ -13,6 +13,8 @@ level route that refuses what no GPU can draw.
   levels by striding, as a 2-D mask does.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import tifffile
@@ -234,7 +236,56 @@ def test_a_stack_needs_a_pyramid_by_voxels_and_a_flat_image_by_side():
     # 4096 x 4096 x 200 holds at most 64 M voxels a channel at 1/8 scale.
     assert ip.stack_min_levels(200, 4096, 4096) == 4
     assert ip.stack_min_levels(None, 4096, 4096) is None
-    assert ip.stack_planes({"page_axes": [["c", 3], ["z", 50], ["t", 2]]}) == 100
+    # One frame's stack: a time series is read a frame at a time.
+    assert ip.stack_planes({"page_axes": [["c", 3], ["z", 50], ["t", 2]]}) == 50
+    assert ip.stack_planes({"page_axes": [["t", 300], ["c", 2]]}) == 1
+
+
+def test_a_long_series_of_planes_is_imported_without_a_copy(tmp_path, monkeypatch):
+    """A time series counts one frame against the stack rule: 40 frames of
+    256^2 (2.6 M voxels a channel over the whole series) under a 64 k-voxel
+    rule are read in place, as one 256^2 plane would be -- no copy, which on
+    the website was refused for a few hundred frames. A z-stack of the same
+    voxels still gets its levels (the test above)."""
+    from plexora.server.models.project import Project
+    from plexora.server.utils import image_pyramid as ip
+
+    monkeypatch.setattr(ip, "STACK_LEVEL_VOXELS", 2**16)
+    path = tmp_path / "series.tif"
+    data = np.arange(40 * 2 * 256 * 256, dtype=np.uint16).reshape(40, 2, 256, 256)
+    tifffile.imwrite(path, data, imagej=True, metadata={"axes": "TCYX", "finterval": 2.0})
+    register_image_datasource("longseries", path)
+    image = Project.find("longseries").image
+    assert image.frames == 40 and image.depth == 1
+    assert Path(image.src).resolve() == path.resolve(), "read in place, not copied"
+    data_model.load_datasource("longseries")
+    assert data_model.volume_source.volume.frames == 40
+
+
+def test_an_ngff_series_of_planes_needs_no_coarse_levels(tmp_path, monkeypatch):
+    """The OME-Zarr stack rule counts one frame too: a series of planes whose
+    stored levels a plane needs no more of is left as it is."""
+    from plexora.server.utils import image_pyramid as ip
+    from plexora.server.volume.sources import ngff
+
+    monkeypatch.setattr(ip, "STACK_LEVEL_VOXELS", 2**12)
+    path, _ = vf.write_ngff_volume(tmp_path / "s.ome.zarr", frames=30, depth=0, channels=1,
+                                   height=96, width=80, levels=2)
+    source = open_volume(path)
+    try:
+        assert source.volume.frames == 30
+        assert not ngff.needs_volume_extension(source)
+        assert ngff.extension_shapes(source) == []
+    finally:
+        source.close()
+    # A stack of the same frame count still does, for one frame's planes.
+    path, _ = vf.write_ngff_volume(tmp_path / "z.ome.zarr", frames=2, depth=30, channels=1,
+                                   height=96, width=80, levels=2)
+    source = open_volume(path)
+    try:
+        assert ngff.needs_volume_extension(source)
+    finally:
+        source.close()
 
 
 def test_a_single_level_stack_is_imported_with_levels_down_to_one_that_fits(tmp_path,

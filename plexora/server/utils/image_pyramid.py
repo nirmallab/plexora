@@ -52,8 +52,10 @@ from plexora.server.utils.segmentation_pyramid import PyramidError
 FLAT_IMAGE_MAX_SIDE = 4096
 
 #: The most voxels one channel's whole stack may have at a single level
-#: before a z-stack or time series is given a pyramid: 64 M, what the 3-D
-#: view's texture budget holds. A 4096 x 4096 x 200 stack is under the side
+#: before a z-stack is given a pyramid: 64 M, what the 3-D view's texture
+#: budget holds. A time series counts ONE frame's stack: every reader --
+#: the 3-D view, a zoomed-out tile, a profile -- reads a frame at a time, so
+#: 300 frames of 1024 x 1024 need no copy, as one such plane would not. A 4096 x 4096 x 200 stack is under the side
 #: rule above, and with one level its zoomed-out tiles, profiles, 3-D view and
 #: 3-D copy all read level 0 -- 6.7 GB a channel.
 STACK_LEVEL_VOXELS = 2**26
@@ -109,9 +111,10 @@ def pyramid_gaps(shape, levels: int, dtype, threshold: Optional[int] = None,
                  planes: Optional[int] = None) -> list:
     """Why an image of this geometry needs a pyramid; empty when it does not.
 
-    `planes` (depth x frames) makes it a stack: one with a single level also
-    needs one when a channel's whole stack is more than STACK_LEVEL_VOXELS,
-    whatever its side. A planar image keeps the side rule alone.
+    `planes` (one frame's depth, `stack_planes`) makes it a stack: one with a
+    single level also needs one when a channel's stack is more than
+    STACK_LEVEL_VOXELS, whatever its side. A planar image -- or a time series
+    of planes -- keeps the side rule alone.
 
     Empty -- "leave it alone" -- also for anything this module cannot write:
     a rank other than (C, Y, X), an empty image, or a pixel type outside plain
@@ -148,12 +151,14 @@ def stack_min_levels(planes: Optional[int], height: int, width: int) -> Optional
 
 
 def stack_planes(volume_description) -> Optional[int]:
-    """Planes (z x t) of the stack a volume description lays out."""
+    """Planes of one frame's stack (z) a volume description lays out: what
+    the stack rule counts (STACK_LEVEL_VOXELS) -- never the frames, which are
+    read one at a time."""
     if not volume_description:
         return None
     planes = 1
     for name, size in volume_description.get("page_axes") or ():
-        if str(name) in ("z", "t"):
+        if str(name) == "z":
             planes *= max(1, int(size))
     return planes
 
@@ -190,7 +195,7 @@ def flat_image_report(path, threshold: Optional[int] = None,
     """What the import dialog says about a flat image, or None when it is fine.
 
     Header-only: no pixel is decoded. `all_pages` counts every plane of a
-    volume (see `_open_series`); `planes` is its depth x frames, for the
+    volume (see `_open_series`); `planes` is one frame's depth, for the
     stack rule (`pyramid_gaps`) and the level count.
     """
     try:

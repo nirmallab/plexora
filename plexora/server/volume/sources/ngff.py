@@ -343,7 +343,11 @@ class _Multiscale:
 
 
 def _stack_planes(volume) -> int:
-    return max(1, int(volume.depth)) * max(1, int(volume.frames))
+    """One frame's planes: what the stack rule counts. Every reader of a
+    time series -- the 3-D view, a zoomed-out tile -- reads a frame at a
+    time, so a long series of planes needs no coarse levels its planes alone
+    would not (image_pyramid.STACK_LEVEL_VOXELS)."""
+    return max(1, int(volume.depth))
 
 
 def extension_shapes(source: NgffVolumeSource, target: int = ome_zarr.EXTENSION_TARGET,
@@ -376,7 +380,7 @@ def needs_volume_extension(source: NgffVolumeSource,
     info = volume.levels[-1]
     if max(info.height, info.width) > threshold:
         return True
-    planes = stored_depth(volume, len(volume.levels) - 1) * max(1, int(volume.frames))
+    planes = stored_depth(volume, len(volume.levels) - 1)
     return planes > 1 and planes * info.height * info.width > voxels
 
 
@@ -385,7 +389,8 @@ def extension_read_bytes(source: NgffVolumeSource) -> int:
     plane of every channel and frame."""
     volume = source.volume
     height, width = (int(s) for s in source._arrays[source._base_levels - 1].shape[-2:])
-    return (_stack_planes(volume) * max(1, int(volume.channels)) * height * width
+    return (_stack_planes(volume) * max(1, int(volume.frames))
+            * max(1, int(volume.channels)) * height * width
             * np.dtype(volume.dtype).itemsize)
 
 

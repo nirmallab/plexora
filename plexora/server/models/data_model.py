@@ -6794,7 +6794,8 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                 gaps = image_pyramid.pyramid_gaps(
                     (len(channel_io.series[0].pages), volume.height, volume.width),
                     channel_info['maxLevel'], channel_io.series[0].dtype,
-                    planes=volume.depth * volume.frames)
+                    # One frame's stack: frames are read one at a time.
+                    planes=volume.depth)
             elif tiff_series.needs_region_reader(series):
                 # A pyramid that steps by 4, or channels stored as one page's
                 # samples: described as the halving chain the provider serves

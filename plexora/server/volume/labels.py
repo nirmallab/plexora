@@ -233,6 +233,18 @@ def _write_frame(group, array, shapes, progress, done, total):
     return done
 
 
+def _tree_bytes(path) -> int:
+    """Bytes of every file under `path` (what a store took)."""
+    total = 0
+    for root, _dirs, files in os.walk(str(path)):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
 def _is_ims(source) -> bool:
     from plexora.server.utils import segmentation_pyramid
 
@@ -301,10 +313,14 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
         # (server/utils/tab_room.py), before a plane is read. Written as uint32
         # under zarr's default compression, taken (not measured) to keep ids at
         # a sixth of their size, as segmentation_pyramid takes a mask's.
+        # A TIME SERIES is judged by what its first frame took instead:
+        # masks compress far better than a sixth, and the guess refused a
+        # few hundred frames the tab holds easily.
         from plexora.server.utils import tab_room
 
-        tab_room.check_build(frames * depth * sum(h * w for h, w in shapes) * 4 / 6,
-                             "This mask's 3-D label volume")
+        if frames == 1:
+            tab_room.check_build(depth * sum(h * w for h, w in shapes) * 4 / 6,
+                                 "This mask's 3-D label volume")
         tab_room.check_read(height * width * max(4, dtype.itemsize), "This mask's planes")
         group = zarr.open_group(str(tmp), mode="w")
         total = frames * depth * len(shapes)
@@ -316,6 +332,13 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
                 child = group.create_group(f"t{t}")
                 done = _write_frame(child, array[t], shapes, progress, done, total)
                 child.update_attributes({"frame": t, "depth": depth})
+                if t == 0 and tab_room.on_website():
+                    try:
+                        tab_room.check_build(_tree_bytes(tmp / "t0") * frames,
+                                             "This mask's label volume, every frame")
+                    except tab_room.TooLargeForTab:
+                        shutil.rmtree(tmp, ignore_errors=True)
+                        raise
         datasets = [{"path": str(index), "coordinateTransformations": [
             {"type": "scale", "scale": [1.0, float(2 ** index), float(2 ** index)]}]}
             for index in range(len(shapes))]

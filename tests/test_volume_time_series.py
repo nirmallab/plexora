@@ -314,3 +314,27 @@ def test_an_ngff_label_image_with_frames_is_a_label_volume_per_frame(tmp_path, v
     assert volume_labels.label_volume_shape(static) == (DEPTH, SIZE, SIZE)
     flat = _ngff_labels(tmp_path / "flat.zarr", data[:1, :, :1], "tczyx", version)
     assert volume_labels.label_volume_shape(flat) is None
+
+
+def test_on_the_website_a_long_mask_series_is_judged_by_its_first_frame(tmp_path, monkeypatch):
+    """The tab's build budget: a series of masks is measured after its first
+    frame is written, not refused by a guess -- ids compress far better than
+    the sixth the guess takes. One that truly cannot fit is refused after that
+    one frame, and nothing is left behind."""
+    from plexora.server.utils import tab_room
+
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    frames, size = 60, 256
+    sparse = np.zeros((frames, 1, size, size), dtype=np.uint16)
+    sparse[:, 0, 40:80, 40:80] = 7
+    # The guess (frames x 4/6 of uint32 x levels) is ~5.2 MB; the real store
+    # is a small fraction of that.
+    guess = frames * size * size * 4 / 6
+    monkeypatch.setattr(tab_room, "BUILD_BUDGET", int(guess / 4))
+    built = volume_labels.build_label_volume(sparse, tmp_path / "sparse_labels.zarr")
+    assert volume_labels.open_label_volume(built).frames == frames
+    noisy = np.random.default_rng(0).integers(1, 2**15, (frames, 1, size, size)).astype(np.uint16)
+    with pytest.raises(tab_room.TooLargeForTab):
+        volume_labels.build_label_volume(noisy, tmp_path / "noisy_labels.zarr")
+    assert not (tmp_path / "noisy_labels.zarr").exists()
+    assert not (tmp_path / "noisy_labels.zarr.building").exists()

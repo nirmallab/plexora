@@ -185,7 +185,10 @@ the seconds between frames (LSM, LIF, ND2), a TIFF's time points can be read as 
 as cycles from the image's settings (`tSemantics`), (T, Y, X) TIFF masks and OME-Zarr
 labels with planes or frames become label volumes, brick preparation takes the frame,
 and gating's gated ids and QC's hover read the frame on screen. Not done: a frame in
-`viewSnapshot`, a per-frame contrast window, budgets counted per frame on the website.
+`viewSnapshot`, a per-frame contrast window. Long series (2026-11-16, fix/long-series): the stack
+rule counts one frame's planes, so a series of planes is read in place rather than copied (a
+300 x 1024^2 TIFF now opens in the website's tab), and a series of masks is judged on the website
+by its first frame's real size, not a guess.
 
 ## Decisions taken while implementing
 
