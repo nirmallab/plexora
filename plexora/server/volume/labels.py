@@ -61,10 +61,119 @@ def _level_shapes(height: int, width: int, target: int = TARGET,
     return shapes
 
 
+def _frames_of_planes(axes, shape) -> bool:
+    """Whether a 3-D TIFF series of `axes` (tifffile's letters) is a time
+    series of 2-D masks -- (T, Y, X), the file saying T and no Z -- rather
+    than one label volume (Z, Y, X), which is what a 3-D mask is otherwise."""
+    letters = str(axes or "").upper()
+    return len(shape) == 3 and len(letters) == 3 and letters[0] == "T" and "Z" not in letters
+
+
+def _series_axes(handle, series) -> str:
+    """The letters of a TIFF series' axes: tifffile's own, or -- for an
+    OME-TIFF opened without its OME series (`is_ome=False`, as here) -- "TYX"
+    when the OME header says the pages are frames (SizeT) of one plane."""
+    axes = str(getattr(series, "axes", "") or "")
+    if "T" in axes.upper() or "Z" in axes.upper() or len(series.shape) != 3:
+        return axes
+    try:
+        import tifffile as tf
+
+        # The OME header is the first page's description; tifffile hands
+        # it back as `ome_metadata` only when it was opened as OME.
+        ome = handle.ome_metadata or handle.pages[0].description
+        if not ome or "<OME" not in ome[:4096]:
+            return axes
+        image = tf.xml2dict(ome).get("OME", {}).get("Image", {})
+        pixels = (image[0] if isinstance(image, list) else image).get("Pixels", {})
+        size_t, size_z = int(pixels.get("SizeT", 1)), int(pixels.get("SizeZ", 1))
+        if size_t == int(series.shape[0]) and size_t > 1 and size_z == 1:
+            return "TYX"
+    except Exception:  # noqa: BLE001 -- a header that cannot say says nothing
+        pass
+    return axes
+
+
+class _PlanesAsFrames:
+    """A (T, Y, X) array read as (T, 1, Y, X): one plane per frame."""
+
+    def __init__(self, array):
+        self._array = array
+        self.shape = (int(array.shape[0]), 1, int(array.shape[1]), int(array.shape[2]))
+        self.dtype = array.dtype
+
+    def __getitem__(self, t):
+        return np.asarray(self._array[t])[None]
+
+
+def _ngff_label_array(path):
+    """`(array, axes)` of level 0 of an OME-Zarr label image -- a folder here
+    or a store at a web address -- or None for anything else. `axes` are
+    Plexora's letters (`ome_zarr._axes_of`: a time axis by its type too)."""
+    from plexora.server.providers.base import is_remote_locator
+    from plexora.server.utils import ome_zarr
+
+    try:
+        if is_remote_locator(path):
+            node = ome_zarr._open_group(str(path))
+        elif ome_zarr.is_zarr_image_path(path):
+            node = zarr.open(str(path), mode="r")
+        else:
+            return None
+        for _ in range(3):
+            if isinstance(node, zarr.Array):
+                return node, ome_zarr._axes_of({}, node.ndim)
+            multiscale = ome_zarr._multiscale_of(node)
+            if multiscale:
+                array = node[ome_zarr._dataset_paths(multiscale)[0]]
+                return array, ome_zarr._axes_of(multiscale, array.ndim)
+            node = node["0"]                         # a bioformats2raw series
+    except Exception:  # noqa: BLE001 -- not a zarr label image this can read
+        return None
+    return None
+
+
+class _NgffLabels:
+    """An OME-Zarr label image as (T, Z, Y, X): `[t]` is one frame, `[t][z]`
+    one plane. A channel axis (labels have one, of size 1) and any other
+    axis are pinned to their first index; a missing t or z is size 1."""
+
+    def __init__(self, array, axes):
+        self._array = array
+        self._axes = tuple(axes)
+        size = {name: int(array.shape[i]) for i, name in enumerate(self._axes)}
+        self.shape = (size.get("t", 1), size.get("z", 1), int(array.shape[-2]),
+                      int(array.shape[-1]))
+        self.dtype = np.dtype(array.dtype)
+
+    def plane(self, t, z):
+        index = []
+        for name in self._axes[:-2]:
+            index.append(int(t) if name == "t" else int(z) if name == "z" else 0)
+        return np.asarray(self._array[tuple(index) + (slice(None), slice(None))])
+
+    def __getitem__(self, t):
+        return _NgffFrame(self, int(t))
+
+
+class _NgffFrame:
+    """One frame of `_NgffLabels`, (Z, Y, X)."""
+
+    def __init__(self, labels, t):
+        self._labels, self._t = labels, t
+        self.shape = labels.shape[1:]
+        self.dtype = labels.dtype
+
+    def __getitem__(self, z):
+        return self._labels.plane(self._t, int(z))
+
+
 def label_volume_shape(path) -> Optional[tuple]:
     """`(Z, Y, X)` when `path` is a TIFF holding one integer label volume, or
-    `(T, Z, Y, X)` for one label volume per frame; else None. Header only --
-    for an .ims, the header and one window per channel, to find the ids."""
+    `(T, Z, Y, X)` for one label volume per frame -- `(T, 1, Y, X)` for a
+    time series of 2-D masks, which the file's own axes say it is (an ImageJ
+    hyperstack's frames, an OME-TIFF's SizeT); else None. Header only -- for
+    an .ims, the header and one window per channel, to find the ids."""
     import tifffile as tf
 
     from plexora.server.utils import segmentation_pyramid
@@ -73,15 +182,28 @@ def label_volume_shape(path) -> Optional[tuple]:
         from plexora.server.volume.sources import ims
 
         return ims.label_shape(path)
+    ngff = _ngff_label_array(path)
+    if ngff is not None:
+        # An OME-Zarr label image: a volume when its own axes give it planes
+        # or frames (they were flattened to one plane before). A T of 1 on a
+        # longer series is one segmentation drawn on every frame.
+        labels = _NgffLabels(*ngff)
+        frames, depth, height, width = labels.shape
+        if labels.dtype.kind not in "ui" or (frames < 2 and depth < 2):
+            return None
+        return labels.shape if frames > 1 else (depth, height, width)
     try:
         with tf.TiffFile(str(path), is_ome=False) as handle:
             series = handle.series[0]
             shape = tuple(int(s) for s in series.shape)
             dtype = np.dtype(series.dtype)
+            axes = _series_axes(handle, series)
     except Exception:
         return None
     if dtype.kind not in "ui" or shape[-1] in (3, 4):
         return None
+    if _frames_of_planes(axes, shape) and shape[0] >= 2:
+        return (shape[0], 1, shape[1], shape[2])
     if len(shape) == 3 and shape[0] >= 2:
         return shape
     if len(shape) == 4 and shape[0] >= 2:
@@ -120,7 +242,8 @@ def _is_ims(source) -> bool:
 def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
                        target: int = TARGET, min_levels: Optional[int] = None) -> str:
     """Write the label volume at `source` (a (Z, Y, X) or (T, Z, Y, X) TIFF,
-    .ims or array) to `dest`.
+    .ims or array, or a TIFF whose axes say (T, Y, X): a time series of 2-D
+    masks, stored as one plane per frame) to `dest`.
 
     `min_levels` is the level count of the image the mask is drawn on: the
     pyramid goes on halving past `target` until it has that many levels.
@@ -142,6 +265,11 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
     if in_memory:
         array = source
         close = None
+    elif _ngff_label_array(source) is not None:
+        # An OME-Zarr label image, here or at a web address: read a plane at
+        # a time through its own chunks.
+        array = _NgffLabels(*_ngff_label_array(source))
+        close = None
     elif _is_ims(source):
         # One channel of an Imaris file (sources/ims.ImsLabels), read a
         # plane at a time like everything else here -- at a web address too.
@@ -151,7 +279,10 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
         close = array.close
     else:
         handle = tf.TiffFile(str(source), is_ome=False)
-        array = zarr.open(handle.series[0].aszarr(), mode="r")
+        series = handle.series[0]
+        array = zarr.open(series.aszarr(), mode="r")
+        if _frames_of_planes(_series_axes(handle, series), tuple(array.shape)):
+            array = _PlanesAsFrames(array)
         close = handle.close
     try:
         shape = tuple(int(s) for s in array.shape)

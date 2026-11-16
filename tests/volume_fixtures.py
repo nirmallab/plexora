@@ -78,16 +78,22 @@ def write_imagej_volume(path, *, frames=1, channels=3, depth=5, height=64, width
 
 
 def write_ngff_volume(path, *, frames=1, channels=3, depth=5, height=96, width=80,
-                      levels=2, z_scale=2.0, chunks_z=1, version="0.4", z_factor=1):
+                      levels=2, z_scale=2.0, chunks_z=1, version="0.4", z_factor=1,
+                      names=None, t_unit="second"):
     """An OME-Zarr image of `stack(...)` with axes tczyx (or czyx at frames=1).
 
+    `depth=0`: no z axis at all (tcyx), a time series of planes.
+    `names`: other names for the axes in the metadata (`{"t": "time"}`), the
+    types staying the spec's. `t_unit=None`: a time axis with no unit.
     `z_factor=2` halves z in each coarser level too (taking every other plane),
     as some writers do. Returns `(path, stack)` with the stack as written
-    (czyx at frames=1)."""
+    (czyx at frames=1, without z at depth=0)."""
     import zarr
 
-    data = stack(frames, channels, depth, height, width)
-    axes = "tczyx" if frames > 1 else "czyx"
+    data = stack(frames, channels, max(1, depth), height, width)
+    axes = ("t" if frames > 1 else "") + "c" + ("z" if depth else "") + "yx"
+    if not depth:
+        data = data[:, :, 0]
     if frames == 1:
         data = data[0]
     zarr_format = 2 if str(version).startswith("0.4") else 3
@@ -97,7 +103,8 @@ def write_ngff_volume(path, *, frames=1, channels=3, depth=5, height=96, width=8
     for level in range(levels):
         chunks = [1] * (current.ndim - 2) + [min(64, current.shape[-2]),
                                              min(64, current.shape[-1])]
-        chunks[axes.index("z")] = chunks_z
+        if "z" in axes:
+            chunks[axes.index("z")] = chunks_z
         array = group.create_array(str(level), shape=current.shape, dtype=current.dtype,
                                    chunks=tuple(chunks))
         array[:] = current
@@ -114,11 +121,11 @@ def write_ngff_volume(path, *, frames=1, channels=3, depth=5, height=96, width=8
     types = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
     axis_meta = []
     for axis in axes:
-        entry = {"name": axis, "type": types[axis]}
+        entry = {"name": (names or {}).get(axis, axis), "type": types[axis]}
         if axis in "xyz":
             entry["unit"] = "micrometer"
-        if axis == "t":
-            entry["unit"] = "second"
+        if axis == "t" and t_unit:
+            entry["unit"] = t_unit
         axis_meta.append(entry)
     payload = {"multiscales": [{"version": str(version), "axes": axis_meta,
                                 "datasets": datasets}]}

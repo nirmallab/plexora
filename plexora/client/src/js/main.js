@@ -793,8 +793,8 @@ async function init(config, savedViewTransform = null) {
                 sections,
                 extras: depthControlExtras,
             });
-            strip.mount();
-            __plexora.depthStrip = strip;
+            // Not on a series with one plane: its frames are the timeline's.
+            __plexora.depthStrip = strip.mount() ? strip : null;
             // The Area tool: a square on the image that opens as 3-D
             // (views/areaTool.js), where a 3-D view can be drawn.
             if (volume) {
@@ -882,6 +882,15 @@ async function init(config, savedViewTransform = null) {
             }) || null;
         } catch (error) {
             console.error("main: plane fades could not be set up", error);
+        }
+        // A time series' frames: a movable pill along the bottom with Play
+        // (views/timeline.js); nothing for an image with one frame.
+        try {
+            __plexora.timeline = window.PlexoraTimeline?.attach?.(viewState, {
+                viewerManager, prefetch: __plexora.planeMotion?.prefetch || null,
+            }) || null;
+        } catch (error) {
+            console.error("main: the timeline could not be set up", error);
         }
     }
 

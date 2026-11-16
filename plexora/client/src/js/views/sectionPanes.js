@@ -1640,6 +1640,8 @@
                     box: { x: frame.x0, y: frame.y0, width: frame.x1 - frame.x0,
                            height: frame.y1 - frame.y0 },
                     channels: channels.length ? channels : undefined,
+                    // The frame on screen: a time series' areas are per frame.
+                    t: this.viewState.get?.()?.t || 0,
                 }),
             }).catch(() => {});
         }

@@ -83,6 +83,29 @@ def test_a_label_volume_per_frame_is_stored_a_frame_at_a_time(tmp_path):
     assert volume_labels.label_volume_shape(tmp_path / "missing.tif") is None
 
 
+@pytest.mark.parametrize("kind", ["imagej", "ome"])
+def test_a_time_series_of_2d_masks_is_a_frame_each_not_a_z_stack(tmp_path, kind):
+    """A (T, Y, X) mask whose file says its first axis is time -- an ImageJ
+    hyperstack's frames, an OME-TIFF's SizeT -- is one plane per frame, not
+    a label volume of T planes; a 3-D mask that says nothing stays (Z, Y, X)."""
+    labels, _ = _moving_labels()
+    planes = labels[:, 1]                                 # (T, Y, X)
+    path = tmp_path / f"frames_{kind}.tif"
+    if kind == "imagej":
+        tifffile.imwrite(path, planes, imagej=True, metadata={"axes": "TYX"})
+    else:
+        tifffile.imwrite(path, planes, ome=True, metadata={"axes": "TYX"})
+    assert volume_labels.label_volume_shape(path) == (FRAMES, 1, SIZE, SIZE)
+    built = volume_labels.build_label_volume(path, tmp_path / f"frames_{kind}.zarr")
+    volume = volume_labels.open_label_volume(built)
+    assert volume.frames == FRAMES and volume.depth == 1
+    for t in range(FRAMES):
+        np.testing.assert_array_equal(np.asarray(volume.frame(t).plane(0)["0"]), planes[t])
+    plain = tmp_path / "stack.tif"
+    tifffile.imwrite(plain, planes, photometric="minisblack")
+    assert volume_labels.label_volume_shape(plain) == (FRAMES, SIZE, SIZE)
+
+
 def test_label_tiles_follow_the_frame_the_view_names(tmp_path, client):
     labels, _ = _project(tmp_path, "tiles")
     project = Project.find("tiles")
@@ -130,6 +153,34 @@ def test_a_series_is_measured_frame_by_frame_and_linked(tmp_path):
     assert result["tracks"] == 2 and result["full_length"] == 2
     assert result["units"] == "µm" and "divisions and merges" in result["not_done"]
     assert "track" in Project.find("series").dataset.columns.metadata
+
+
+def test_a_gate_on_a_series_names_the_frame_on_screens_cells(tmp_path):
+    """Gating's server-side gated ids (the route the viewer asks when it
+    cannot gate in the browser): each frame numbers its own cells, so with
+    the frame on screen given, only that frame's rows -- not a cell id that
+    belongs to another frame."""
+    import polars as pl
+
+    from plexora.plugins.gating.server import model as gating_model
+    from plexora.server.volume import objects
+
+    labels, ids = _project(tmp_path, "gated")
+    summary = objects.measure_project_objects(Project.find("gated"), units="physical")
+    table = pl.read_parquet(summary["table"])
+    id_key = Project.find("gated").dataset.roles.cell_id
+    every = {"DNA": [-1e9, 1e9]}
+    # Every frame's positives (QC may hold some cells back, on every frame).
+    called = [row[id_key] for row in gating_model.get_gated_cells("gated", every, [id_key])]
+    assert len(called) >= FRAMES
+    seen = []
+    for t in range(FRAMES):
+        got = [row[id_key] for row in gating_model.get_gated_cells("gated", every, [id_key], t=t)]
+        mine = set(table.filter(pl.col("t") == t)[id_key].to_list())
+        assert got and set(got) <= mine, (t, got, mine)
+        assert ids[t][0] in got                       # cell A, by this frame's own id
+        seen += got
+    assert sorted(seen) == sorted(called)
 
 
 def test_a_cap_tighter_than_a_cells_step_breaks_its_track(tmp_path):
@@ -222,3 +273,44 @@ def test_the_viewer_reads_the_frame_on_screens_rows(tmp_path, client):
     assert int(values.headers["X-Cell-Count"]) == 2
     everything = client.get("/plugins/cell_explorer/api/values?datasource=rows&column=n_planes")
     assert int(everything.headers["X-Cell-Count"]) == 2 * FRAMES
+
+
+def _ngff_labels(path, data, axes, version="0.4"):
+    """An OME-Zarr label image of `data` with `axes` (one level)."""
+    import zarr
+
+    zarr_format = 2 if version == "0.4" else 3
+    group = zarr.open_group(str(path), mode="w", zarr_format=zarr_format)
+    array = group.create_array("0", shape=data.shape, dtype=data.dtype,
+                               chunks=(1,) * (data.ndim - 2) + data.shape[-2:])
+    array[:] = data
+    types = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
+    meta = {"multiscales": [{"version": version, "datasets": [{"path": "0", "coordinateTransformations": [
+        {"type": "scale", "scale": [1.0] * data.ndim}]}],
+        "axes": [{"name": name, "type": types[name]} for name in axes]}],
+        "image-label": {"version": version}}
+    group.attrs.update(meta if zarr_format == 2 else {"ome": dict(meta, version=version)})
+    return path
+
+
+@pytest.mark.parametrize("version", ["0.4", "0.5"])
+def test_an_ngff_label_image_with_frames_is_a_label_volume_per_frame(tmp_path, version):
+    """An OME-Zarr label image (t, c, z, y, x), as IDR's time series carry:
+    stored a frame at a time and served per frame -- not flattened to one
+    plane of its first frame, as it was. One with t of 1 is a single
+    segmentation drawn on every frame; one with neither planes nor frames
+    stays a 2-D mask."""
+    labels, _ = _moving_labels()                     # (T, Z, Y, X)
+    data = labels[:, None].astype(np.int8)           # (T, C=1, Z, Y, X), signed as IDR's
+    path = _ngff_labels(tmp_path / f"cells_{version}.zarr", data, "tczyx", version)
+    assert volume_labels.label_volume_shape(path) == (FRAMES, DEPTH, SIZE, SIZE)
+    volume = volume_labels.open_label_volume(
+        volume_labels.build_label_volume(path, tmp_path / f"cells_{version}_labels.zarr"))
+    assert volume.frames == FRAMES and volume.depth == DEPTH
+    for t in range(FRAMES):
+        for z in (1, 3):
+            np.testing.assert_array_equal(np.asarray(volume.frame(t).plane(z)["0"]), labels[t, z])
+    static = _ngff_labels(tmp_path / "static.zarr", data[:1], "tczyx", version)
+    assert volume_labels.label_volume_shape(static) == (DEPTH, SIZE, SIZE)
+    flat = _ngff_labels(tmp_path / "flat.zarr", data[:1, :, :1], "tczyx", version)
+    assert volume_labels.label_volume_shape(flat) is None

@@ -1,10 +1,10 @@
 ---
 title: "Image viewer (2-D and 3-D)"
-description: "Pan and zoom a whole slide, rotate and flip it, save views, walk a dataset, and look through a z-stack in 2-D or 3-D."
-aliases: ["pan", "zoom", "3d", "z-stack", "volume", "rotate", "flip", "bookmark", "saved views", "projection"]
+description: "Pan and zoom a whole slide, rotate and flip it, save views, walk a dataset, look through a z-stack in 2-D or 3-D, and play a time series."
+aliases: ["pan", "zoom", "3d", "z-stack", "volume", "rotate", "flip", "bookmark", "saved views", "projection", "time series", "time-lapse", "timeline", "frames"]
 ---
 
-The viewer draws the whole image at every zoom level. A z-stack or a time series adds a depth strip along the bottom, where you switch between one plane, a projection and the stack in 3-D.
+The viewer draws the whole image at every zoom level. A z-stack adds a depth strip, where you switch between one plane, a projection and the stack in 3-D. A time series adds a timeline along the bottom of the image.
 
 <Media src="/media/features/viewer-depth-strip.webp" alt="A z-stack in the viewer with the depth strip along the bottom: buttons for One plane, Projection and The stack in 3-D, the Cut and Crop tools, Sections and a plane slider" caption="A z-stack: the depth strip runs along the bottom of the image." />
 
@@ -29,7 +29,16 @@ Press **M** to save what is on screen: position, zoom, channels and contrast. **
 <Step>
 ### Look through a z-stack
 
-On the depth strip, choose **One plane**, **Projection of a range of planes** or **The stack in 3-D** (**V**). Step planes with **]** and **[** (with Shift, ten at a time), and frames with **.** and **,**. **Sections** adds XZ and YZ views beside the image.
+On the depth strip, choose **One plane**, **Projection of a range of planes** or **The stack in 3-D** (**V**). Step planes with **]** and **[** (with Shift, ten at a time). **Sections** adds XZ and YZ views beside the image.
+</Step>
+<Step>
+### Play a time series
+
+The timeline along the bottom of the image shows which frame is on screen and, when the file records the interval, the time since the first frame. Press **Play** (**Shift+Space**) to play the frames, drag the slider to move to a frame, or step one frame with **.** and **,**. The frame changes; the zoom, the plane and the channels stay as they are. Plane and frame are independent, so in a z-stack over time you can step planes on the depth strip and frames on the timeline.
+
+The rate button sets how many frames a second Play shows and whether it starts again at the end (**Loop**). Every frame is shown: when frames load slower than the rate, playback slows down and the button shows the rate it reaches. Drag the timeline by the dots at its left end to move it anywhere on the image; its **×** puts it back.
+
+A TIFF that does not record a time interval opens with its time points as extra channels. To read them as frames, open the image's settings and set **Time points** to **Time**.
 </Step>
 <Step>
 ### Open up the stack in 3-D

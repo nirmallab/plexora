@@ -115,3 +115,34 @@ def test_the_browser_and_the_export_spell_a_view_the_same_way():
         for state in TOKEN_CASES]
     assert browser == server
     assert browser[0] == "z12" and browser[4] == "z4-19p90" and browser[-1] == ""
+
+
+def test_a_series_of_one_plane_is_spelled_two_ways_that_name_one_view():
+    """A time series with one plane: the browser writes the frame alone
+    (`t3`, `t0`, as the viewer's ViewState.spec does) and the export, which
+    does not know the depth, writes `t3z0`. Both name the same frame of the
+    same plane, and the cache keys are the canonical spelling of either."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.figure_builder.server import export
+    from plexora.server.volume import viewspec
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    scene = REPO_ROOT / "plexora" / "client" / "src" / "js" / "services" / "viewerScene.js"
+    cases = [{"mode": "plane", "z": 0, "t": 3}, {"mode": "plane", "z": 0, "t": 0}]
+    script = TOKEN_SCRIPT.replace("{ depth: 40, frames: 5 }", "{ depth: 1, frames: 5 }")
+    proc = subprocess.run([node, "-e", script, str(scene), json.dumps(cases)],
+                          capture_output=True, text=True, cwd=REPO_ROOT, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    browser = json.loads(proc.stdout)
+    server = [export.panel_view_token(
+        {"scene": {"plugins": {"volume": {"version": 1, "state": state}}}}) for state in cases]
+    assert browser == ["t3", "t0"]
+    volume = SimpleNamespace(depth=1, frames=5, width=64, height=64,
+                             default_view=viewspec.ViewSpec(kind="plane", t=0, z=0))
+    for ours, theirs in zip(browser, server):
+        one, two = viewspec.parse(ours, volume), viewspec.parse(theirs, volume)
+        assert (one.kind, one.t, one.z) == (two.kind, two.t, two.z)
+        assert viewspec.canonical_token(ours, volume) == viewspec.canonical_token(theirs, volume)

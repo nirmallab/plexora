@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261114_audit_leads2"
+VERSION = "20261115_timeline"
 
 
 def _blueprint():

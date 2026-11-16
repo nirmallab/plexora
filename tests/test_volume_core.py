@@ -276,6 +276,26 @@ def test_an_ngff_volume_serves_any_plane(tmp_path, version):
         source.close()
 
 
+@pytest.mark.parametrize("version", ["0.4", "0.5"])
+def test_an_ngff_time_series_of_planes_serves_every_frame(tmp_path, version):
+    """TCYX, its time axis called "time": known by its type, it is the
+    series' frames -- not an unknown axis pinned to its first frame."""
+    path, data = vf.write_ngff_volume(tmp_path / "s.ome.zarr", frames=4, depth=0, channels=2,
+                                      version=version, names={"t": "time", "c": "ch"},
+                                      t_unit="minute")
+    source = open_volume(path)
+    try:
+        volume = source.volume
+        assert (volume.frames, volume.channels, volume.depth) == (4, 2, 1)
+        assert volume.spacing.t.value == pytest.approx(1.0)
+        assert volume.spacing.t.unit == "min"
+        for t in (0, 3):
+            level = source.level_array(t, 0, 0)
+            assert np.array_equal(np.asarray(level[1, :8, :8]), data[t, 1, :8, :8])
+    finally:
+        source.close()
+
+
 def test_a_z_chunked_ngff_slab_is_one_read(tmp_path):
     path, data = vf.write_ngff_volume(tmp_path / "v.ome.zarr", depth=6, chunks_z=6)
     source = open_volume(path)

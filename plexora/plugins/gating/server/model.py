@@ -32,15 +32,25 @@ def _store(datasource_name):
     return api.store(datasource_name, PLUGIN_NAME, legacy_state_table=LEGACY_STATE_TABLE)
 
 
-def get_gated_cells(datasource_name, gates, start_keys):
+def get_gated_cells(datasource_name, gates, start_keys, t=None):
     """The cells the gates call positive -- never a cell QC says cannot be
-    called for one of the gated markers (`ProjectData.calls`)."""
+    called for one of the gated markers (`ProjectData.calls`). `t`: the frame
+    on screen of a time series, whose table holds a row per cell per frame
+    and whose ids are each frame's own -- only that frame's cells."""
+    import numpy as np
+
     ds = api.project_data(datasource_name)
     table = ds.table
     if not gates:
         return []
     id_key = start_keys[0]
-    values = table.geometry()[id_key].to_numpy()[ds.calls(gates) == 1].tolist()
+    keep = ds.calls(gates) == 1
+    frame_column = ds.schema.get("t") if (ds.schema and t is not None) else None
+    if frame_column:
+        frames = np.asarray(table.metadata_values(frame_column).values)
+        if frames.size == keep.size:
+            keep = keep & (frames == int(t))
+    values = table.geometry()[id_key].to_numpy()[keep].tolist()
     return [{id_key: v} for v in values]
 
 

@@ -42,7 +42,17 @@
  * `plexora:plane-hover`): a far jump is a click on the rail, and the moment
  * between the pointer arriving there and the click is time the plane can
  * spend loading. It joins the neighbours as one more standby plane, last in
- * line like them, and is let go when the pointer leaves the rail.
+ * line like them, and is let go when the pointer leaves the rail. The
+ * timeline does the same for the frame under the pointer
+ * (`plexora:frame-hover`, views/timeline.js).
+ *
+ * ALONG Z OR ALONG T. A time series moves through frames the way a stack
+ * moves through planes, so the neighbours are taken along whichever axis
+ * the hand last moved (a step of t is a frame, of z a plane); a series with
+ * one plane only ever moves in time. While the timeline plays it says so
+ * (`lead({rate, loop})`): the pace is the rate it plays at, from its first
+ * frame, and a looping series has the first frames ready as it nears the
+ * last.
  *
  * VolumeGhost: the same opaque crossfade for the 3-D view's canvas
  * (views/volumeRenderer.js draw), held when what the volume is drawn WITH
@@ -425,6 +435,11 @@
             this.limit = limit;
             this.direction = 1;
             this.lastZ = null;
+            this.lastT = null;
+            //: "z" or "t": the axis the hand last moved along (axis()).
+            this.moved = null;
+            //: The player's rate and loop while it plays (lead), or null.
+            this.led = null;
             //: The hand's pace, planes a second (a moving average), and when
             //: it last asked for a plane.
             this.rate = 0;
@@ -434,6 +449,8 @@
             this.lastRequestAt = null;
             //: The plane the pointer rests on along the Z strip, or null.
             this.hoverZ = null;
+            //: The frame the pointer rests on along the timeline, or null.
+            this.hoverT = null;
             this.timer = 0;
             this.controller = null;
             this.done = new Set();
@@ -445,6 +462,7 @@
             // A channel or the tile quality changed under prefetched planes.
             global.addEventListener?.("plexora:standby-dropped", () => this.onSettled());
             global.addEventListener?.("plexora:plane-hover", (event) => this.hover(event?.detail?.z));
+            global.addEventListener?.("plexora:frame-hover", (event) => this.hoverFrame(event?.detail?.t));
             // The hand let go (viewState.endScrub): what the scheduler held
             // while it moved goes now, not SCRUB_HOLD_MS after its last request.
             global.addEventListener?.("plexora:scrub-ended", () => this.onScrubEnded());
@@ -463,35 +481,81 @@
             this.onSettled();
         }
 
+        /** The frame the pointer rests on along the timeline (null: it left). */
+        hoverFrame(t) {
+            const next = Number.isFinite(t) ? Math.round(t) : null;
+            if (next === this.hoverT) return;
+            this.hoverT = next;
+            this.onSettled();
+        }
+
+        /**
+         * The timeline is playing at `rate` frames a second (looping or
+         * not), or stopped (null): while it plays the frames ahead are the
+         * ones to have ready, as many as it reaches in STANDBY_LOOKAHEAD_MS.
+         */
+        lead(playing) {
+            this.led = playing && Number(playing.rate) > 0
+                ? { rate: Number(playing.rate), loop: Boolean(playing.loop) } : null;
+            if (this.led) {
+                this.moved = "t";
+                this.direction = 1;
+            }
+            this.onSettled();
+        }
+
+        /** "z" or "t": the axis the neighbours are taken along. */
+        axis() {
+            const vs = this.viewState;
+            if (!(vs?.frames >= 2)) return "z";
+            if (vs.depth < 2) return "t";
+            return this.moved || "z";
+        }
+
         onRequested(event) {
             const at = now();
             const still = this.lastRequestAt === null ? Infinity : at - this.lastRequestAt;
             this.lastRequestAt = at;
             const z = event?.detail?.state?.z;
-            if (Number.isFinite(z)) {
-                if (this.lastZ !== null && z !== this.lastZ) {
-                    this.direction = Math.sign(z - this.lastZ);
-                    const gap = this.lastAt === null ? Infinity : at - this.lastAt;
-                    // Far AND after the hand was still: a dragged rail moves
-                    // five planes or more an event, which is travel. Timed
-                    // from the last request, not the last paced one, so a
-                    // drag that starts with a far click is travel from its
-                    // next event on.
-                    const jump = Math.abs(z - this.lastZ) > JUMP_PLANES && still >= SCRUB_GAP_MS;
-                    if (!jump && gap < RATE_GAP_MS && gap > 0) {
-                        const pace = (Math.abs(z - this.lastZ) * 1000) / gap;
-                        this.rate = this.rate ? this.rate * 0.6 + pace * 0.4 : pace;
-                    } else {
-                        this.rate = 0;
-                    }
-                    // A jump measures nothing about the hand: a click 50
-                    // planes away 100 ms after a step read as a held key and
-                    // sent six planes ahead of the destination before it had
-                    // sharpened.
-                    this.lastAt = jump ? null : at;
+            const t = event?.detail?.state?.t;
+            // One axis moved: which, and by how much (a frame or a plane).
+            let delta = null;
+            if (Number.isFinite(t) && this.lastT !== null && t !== this.lastT) {
+                this.moved = "t";
+                delta = t - this.lastT;
+                // The player wrapping round from the last frame to the first
+                // is one step forward, not a jump back.
+                const frames = this.viewState?.frames || 0;
+                if (this.led?.loop && frames > 1 && Math.abs(delta) > frames / 2) {
+                    delta -= Math.sign(delta) * frames;
                 }
-                this.lastZ = z;
+            } else if (Number.isFinite(z) && this.lastZ !== null && z !== this.lastZ) {
+                this.moved = "z";
+                delta = z - this.lastZ;
             }
+            if (delta !== null) {
+                this.direction = Math.sign(delta);
+                const gap = this.lastAt === null ? Infinity : at - this.lastAt;
+                // Far AND after the hand was still: a dragged rail moves
+                // five planes or more an event, which is travel. Timed
+                // from the last request, not the last paced one, so a
+                // drag that starts with a far click is travel from its
+                // next event on.
+                const jump = Math.abs(delta) > JUMP_PLANES && still >= SCRUB_GAP_MS;
+                if (!jump && gap < RATE_GAP_MS && gap > 0) {
+                    const pace = (Math.abs(delta) * 1000) / gap;
+                    this.rate = this.rate ? this.rate * 0.6 + pace * 0.4 : pace;
+                } else {
+                    this.rate = 0;
+                }
+                // A jump measures nothing about the hand: a click 50
+                // planes away 100 ms after a step read as a held key and
+                // sent six planes ahead of the destination before it had
+                // sharpened.
+                this.lastAt = jump ? null : at;
+            }
+            if (Number.isFinite(z)) this.lastZ = z;
+            if (Number.isFinite(t)) this.lastT = t;
             // While the hand moves the scheduler keeps standby planes to their
             // coarsest levels (tileFetch.js), so six planes ahead cost a tile
             // a channel each. viewState says (`scrub`); otherwise, the gap.
@@ -503,6 +567,9 @@
 
         /** The hand's pace now: none once it has been still a while. */
         pace() {
+            // Playing: the rate it plays at, from its first frame -- however
+            // slowly the frames have actually arrived, the next ones are due.
+            if (this.led) return this.led.rate;
             if (this.lastAt === null || now() - this.lastAt > RATE_GAP_MS) return 0;
             return this.rate;
         }
@@ -556,15 +623,18 @@
         plan() {
             const vs = this.viewState;
             const state = vs?.get?.();
-            if (!state || state.mode !== "plane" || vs.depth < 2) return [];
+            if (!state || state.mode !== "plane") return [];
+            const key = this.axis();
+            const extent = key === "t" ? vs.frames : vs.depth;
+            if (extent < 2) return [];
             const current = vs.spec(state);
             const shown = this.visible(current);
             if (!shown.length) return [];
             const out = [];
-            for (const dz of [this.direction || 1, -(this.direction || 1)]) {
-                const z = state.z + dz;
-                if (z < 0 || z >= vs.depth) continue;
-                const token = vs.spec({ ...state, z });
+            for (const step of [this.direction || 1, -(this.direction || 1)]) {
+                const at = state[key] + step;
+                if (at < 0 || at >= extent) continue;
+                const token = vs.spec({ ...state, [key]: at });
                 for (const address of shown) {
                     const next = withView(address, token);
                     if (next && !this.done.has(next)) out.push(next);
@@ -580,8 +650,10 @@
         neighbourStates() {
             const vs = this.viewState;
             const state = vs?.get?.();
+            if (!state) return [];
+            if (this.axis() === "t") return this.frameStates(state);
             const follows = state?.mode === "slab" && state.slab?.follow;
-            if (!state || (state.mode !== "plane" && !follows) || vs.depth < 2) return [];
+            if ((state.mode !== "plane" && !follows) || vs.depth < 2) return [];
             const dir = this.direction || 1;
             const steps = [];
             for (let k = 1; k <= this.ahead(); k += 1) steps.push(k * dir);
@@ -596,6 +668,32 @@
                 if (z < 0 || z >= vs.depth) continue;
                 out.push(follows && vs.movedTo ? vs.movedTo(z, state) : { ...state, z });
             }
+            return out;
+        }
+
+        /** The same along T: the frames ahead at the pace (wrapping round
+         *  while a looping player nears the end), one behind, and the frame
+         *  under the pointer on the timeline -- for a plane or a projection,
+         *  which keeps its planes from frame to frame. */
+        frameStates(state) {
+            const vs = this.viewState;
+            const frames = vs.frames;
+            if (!(frames >= 2) || (state.mode !== "plane" && state.mode !== "slab")) return [];
+            const dir = this.direction || 1;
+            const steps = [];
+            for (let k = 1; k <= this.ahead(); k += 1) steps.push(k * dir);
+            if (!this.led) steps.push(-dir);
+            const wrap = Boolean(this.led?.loop);
+            const out = [];
+            const seen = new Set([state.t]);
+            const add = (t) => {
+                if (wrap) t = ((t % frames) + frames) % frames;
+                if (t < 0 || t >= frames || seen.has(t)) return;
+                seen.add(t);
+                out.push({ ...state, t });
+            };
+            for (const dt of steps) add(state.t + dt);
+            if (this.hoverT !== null && !this.led) add(this.hoverT);
             return out;
         }
 
@@ -669,9 +767,9 @@
         }
     }
 
-    /** Wire both to the viewer; nothing for a planar image. */
+    /** Wire both to the viewer; nothing for a planar image (one plane, one frame). */
     function attach({ viewer, viewState, viewerManager, prefs = global.PlexoraViewerPrefs } = {}) {
-        if (!viewState?.enabled?.() || viewState.depth < 2 || !viewer) return null;
+        if (!viewState?.enabled?.() || (viewState.depth < 2 && viewState.frames < 2) || !viewer) return null;
         const wrapper = document.getElementById("openseadragon_wrapper");
         const fade = new PlaneFade(viewer, { prefs, wrapper });
         if (viewerManager) viewerManager.planeFade = fade;

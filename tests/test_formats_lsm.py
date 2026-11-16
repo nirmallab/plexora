@@ -9,8 +9,7 @@ so a plane taken from the wrong page, a thumbnail, or the wrong strip cannot
 pass.
 
 Not covered here: files over 4 GB (the strip-offset unwrapping is
-tifffile's, and a test file would have to be that big), and the time
-interval, which `base.Reader` does not carry.
+tifffile's, and a test file would have to be that big).
 """
 
 import random
@@ -384,5 +383,35 @@ def test_through_the_package_functions(tmp_path):
         np.testing.assert_array_equal(np.asarray(pyramid["0"][1]), lsm_plane(0, 0, 2, 1, H, W))
         np.testing.assert_array_equal(np.asarray(pyramid.plane(4, 0)["0"][0]),
                                       lsm_plane(0, 0, 4, 0, H, W))
+    finally:
+        pyramid.close()
+
+
+@pytest.mark.parametrize("stamps,interval,expected", [
+    ([0.0, 2.5, 5.0], 0.0, 2.5),          # from the time stamps
+    (None, 4.0, 4.0),                      # from the stated interval
+    (None, 0.0, None),                     # stated nowhere
+], ids=["stamps", "interval", "none"])
+def test_a_time_series_says_how_far_apart_its_frames_are(tmp_path, stamps, interval, expected):
+    """The seconds between frames reach the volume's T spacing, so the
+    timeline reads time since the first frame; none stated, none invented."""
+    from plexora.server.volume.sources import formats as format_volume
+
+    path = write_lsm(tmp_path / "s.lsm", channels=2, z=1, t=3, scan_type=3,
+                     time_stamps=None if stamps is None else np.array(stamps),
+                     time_interval=interval)
+    reader = _open(path)
+    try:
+        assert reader.t_step == (pytest.approx(expected) if expected else None)
+    finally:
+        reader.close()
+    pyramid = formats.open_image(path)
+    try:
+        volume = format_volume.describe_volume(pyramid)
+        assert volume is not None and volume.frames == 3
+        if expected:
+            assert volume.spacing.t.value == pytest.approx(expected) and volume.spacing.t.unit == "s"
+        else:
+            assert volume.spacing.t is None
     finally:
         pyramid.close()

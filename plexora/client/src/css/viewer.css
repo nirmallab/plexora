@@ -5731,24 +5731,6 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 0.58;
 }
 
-/* A time series' frame: a step back, the frame, a step on. */
-.depth-strip-frame {
-    align-items: center;
-    border-top: 1px solid var(--border-subtle);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding-top: 4px;
-    width: 100%;
-}
-
-.depth-strip-frame-text {
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-}
-
 .depth-strip-button.is-small {
     font-size: 10px;
     height: 20px;
@@ -6134,6 +6116,395 @@ html.plx-moving-control * {
    caption's own brightfield rule names it too). */
 #openseadragon_wrapper .plx-canvas-free > .viewer-caption-line {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+/* ------------------------------------------------------------------------
+   THE TIMELINE (views/timeline.js): a time series' frames, a glass pill in
+   the bottom-centre dock above the bookmark tray, movable anywhere on the
+   canvas by any part that is not a button or the slider.
+
+     grip  [play]  track ───●═══─────  12 / 100  0:55  [10 fps]  (x)
+
+   The lighter stretch after the thumb is the frames already loaded; a hollow,
+   breathing thumb is a frame still on its way; the chip turns amber with the
+   rate achieved when frames arrive slower than asked for.
+   ------------------------------------------------------------------------ */
+.viewer-timeline {
+    align-items: center;
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    background: linear-gradient(180deg, rgba(30, 36, 48, 0.78), rgba(10, 14, 20, 0.74) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                0 10px 28px rgba(0, 0, 0, 0.36);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    display: flex;
+    gap: 10px;
+    height: 44px;
+    max-width: 100%;
+    padding: 0 12px 0 8px;
+    pointer-events: auto;
+    width: 620px;
+}
+
+.viewer-timeline[hidden] {
+    display: none;
+}
+
+/* Its own grip, drawn in the pill: core's sits in a gutter the dock does
+   not have. */
+.viewer-timeline.plx-movable-handle::before {
+    content: none;
+}
+
+.viewer-timeline-grip {
+    background: radial-gradient(circle, currentColor 1.1px, transparent 1.6px) 0 0 / 5px 6px;
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    height: 18px;
+    opacity: 0.5;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    width: 10px;
+}
+
+.viewer-timeline:hover .viewer-timeline-grip,
+.viewer-timeline.is-moving .viewer-timeline-grip {
+    opacity: 0.85;
+}
+
+.viewer-timeline-play {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.07);
+    border: 0;
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 30px;
+    justify-content: center;
+    padding: 0;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+    width: 30px;
+}
+
+.viewer-timeline-play:hover {
+    background: rgba(255, 255, 255, 0.13);
+}
+
+.viewer-timeline-play:focus-visible,
+.viewer-timeline-rate:focus-visible,
+.viewer-timeline-rate-choice:focus-visible,
+.viewer-timeline-loop:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* The slider: the whole height of the pill is its target. */
+.viewer-timeline-slider {
+    cursor: pointer;
+    flex: 1 1 auto;
+    height: 42px;
+    min-width: 48px;
+    outline: none;
+    position: relative;
+    touch-action: none;
+}
+
+.viewer-timeline-track {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+    height: 4px;
+    left: 0;
+    position: absolute;
+    right: 0;
+    top: 50%;
+    translate: 0 -50%;
+    transition: height var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-timeline.is-hovering .viewer-timeline-track,
+.viewer-timeline.is-scrubbing .viewer-timeline-track,
+.viewer-timeline-slider:focus-visible .viewer-timeline-track {
+    height: 6px;
+}
+
+.viewer-timeline-slider:focus-visible .viewer-timeline-track {
+    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+}
+
+.viewer-timeline-fill,
+.viewer-timeline-ahead {
+    border-radius: inherit;
+    height: 100%;
+    left: 0;
+    position: absolute;
+    top: 0;
+}
+
+.viewer-timeline-fill {
+    background: var(--accent-channel);
+}
+
+.viewer-timeline-ahead {
+    background: rgba(255, 255, 255, 0.3);
+    transition: width var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-timeline-thumb {
+    background: var(--text-primary);
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    height: 14px;
+    position: absolute;
+    top: 50%;
+    translate: -50% -50%;
+    transition: width var(--duration-fast) var(--ease-standard),
+                height var(--duration-fast) var(--ease-standard);
+    width: 14px;
+}
+
+.viewer-timeline.is-scrubbing .viewer-timeline-thumb {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--accent-channel-soft);
+    height: 18px;
+    width: 18px;
+}
+
+/* A frame asked for and still on its way: the old frame stays on screen,
+   the thumb is hollow on the new one and breathes until it lands. */
+.viewer-timeline.is-waiting .viewer-timeline-thumb {
+    animation: timeline-thumb-breathe 1.1s ease-in-out infinite;
+    background: var(--surface-1);
+    box-shadow: inset 0 0 0 2px var(--text-primary), 0 0 0 0 rgba(248, 250, 252, 0.16);
+}
+
+@keyframes timeline-thumb-breathe {
+    0%, 100% { box-shadow: inset 0 0 0 2px var(--text-primary), 0 0 0 0 rgba(248, 250, 252, 0.16); }
+    50% { box-shadow: inset 0 0 0 2px var(--text-primary), 0 0 0 5px rgba(248, 250, 252, 0.16); }
+}
+
+.plx-reduced-motion .viewer-timeline.is-waiting .viewer-timeline-thumb {
+    animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .viewer-timeline.is-waiting .viewer-timeline-thumb {
+        animation: none;
+    }
+}
+
+/* Where a click would land, and that frame's number and time. */
+.viewer-timeline-hover {
+    background: rgba(255, 255, 255, 0.5);
+    height: 20px;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    translate: -50% -50%;
+    width: 1px;
+}
+
+.viewer-timeline.is-hovering .viewer-timeline-hover {
+    opacity: 1;
+}
+
+.viewer-timeline-tip {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    bottom: calc(100% + 6px);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    left: 50%;
+    padding: 3px 7px;
+    position: absolute;
+    translate: -50% 0;
+    white-space: nowrap;
+}
+
+.viewer-timeline-readout {
+    align-items: baseline;
+    display: flex;
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.viewer-timeline-frame {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 58px;
+    text-align: right;
+}
+
+.viewer-timeline-time {
+    color: var(--text-muted);
+    font-size: 12px;
+    min-width: 40px;
+}
+
+.viewer-timeline-time[hidden] {
+    display: none;
+}
+
+.viewer-timeline-rates {
+    flex: 0 0 auto;
+    position: relative;
+}
+
+.viewer-timeline-rate {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    height: 26px;
+    padding: 0 9px;
+    white-space: nowrap;
+}
+
+.viewer-timeline-rate:hover,
+.viewer-timeline-rate[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border-strong);
+}
+
+.viewer-timeline-rate.is-slow {
+    background: var(--accent-warning-soft);
+    border-color: rgba(243, 184, 69, 0.4);
+    color: var(--accent-warning);
+}
+
+.viewer-timeline-popover {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    bottom: calc(100% + 12px);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    position: absolute;
+    right: -4px;
+    width: 176px;
+    z-index: 2;
+}
+
+.viewer-timeline-popover[hidden] {
+    display: none;
+}
+
+.viewer-timeline-popover-title {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.viewer-timeline-rate-grid {
+    display: grid;
+    gap: 4px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.viewer-timeline-rate-choice {
+    background: rgba(255, 255, 255, 0.06);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    height: 26px;
+    padding: 0;
+}
+
+.viewer-timeline-rate-choice:hover {
+    background: rgba(255, 255, 255, 0.11);
+}
+
+.viewer-timeline-rate-choice.is-active {
+    background: rgba(56, 189, 248, 0.18);
+    color: #7dd3fc;
+}
+
+.viewer-timeline-loop {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    font-weight: 500;
+    height: 26px;
+    justify-content: space-between;
+    padding: 0 2px;
+}
+
+.viewer-timeline-switch {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    height: 16px;
+    position: relative;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.viewer-timeline-switch::after {
+    background: var(--text-primary);
+    border-radius: 50%;
+    content: "";
+    height: 12px;
+    left: 2px;
+    position: absolute;
+    top: 2px;
+    transition: left var(--duration-fast) var(--ease-standard);
+    width: 12px;
+}
+
+.viewer-timeline-loop[aria-checked="true"] .viewer-timeline-switch {
+    background: #0ea5e9;
+}
+
+.viewer-timeline-loop[aria-checked="true"] .viewer-timeline-switch::after {
+    left: 14px;
+}
+
+/* The x that puts a moved pill back: at its end, as quiet as the readout. */
+.viewer-timeline > .plx-movable-reset {
+    margin-left: -4px;
+}
+
+/* Narrow (timeline.js `is-narrow`): the elapsed time goes, the chip keeps
+   only its number. */
+.viewer-timeline.is-narrow {
+    gap: 8px;
+    padding-right: 10px;
+}
+
+.viewer-timeline.is-narrow .viewer-timeline-time {
+    display: none;
+}
+
+.viewer-timeline.is-narrow .viewer-timeline-frame {
+    min-width: 0;
 }
 
 /* The 3-D view (views/volumeRenderer.js): its own canvas over the tiles,

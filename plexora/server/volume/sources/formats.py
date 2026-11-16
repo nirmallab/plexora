@@ -87,10 +87,15 @@ def describe_volume(pyramid, *, color: bool | None = None) -> Volume | None:
           if mpp and mpp[0] else MISSING)
     z = (AxisSpacing(value=round(float(pyramid.z_step), 6), unit="µm", source="metadata")
          if pyramid.z_step else MISSING)
+    # Seconds between frames, where the file states it (an LSM's time
+    # stamps, a LIF's T coordinate, an ND2's time loop).
+    t_step = getattr(pyramid, "t_step", None)
+    t = (AxisSpacing(value=round(float(t_step), 6), unit="s", source="metadata")
+         if frames > 1 and t_step else None)
     volume = Volume(
         channels=int(level0.shape[0]), depth=depth, frames=frames,
         height=int(level0.shape[1]), width=int(level0.shape[2]),
-        dtype=str(np.dtype(dtype)), spacing=Spacing(x=xy, y=yy, z=z),
+        dtype=str(np.dtype(dtype)), spacing=Spacing(x=xy, y=yy, z=z, t=t),
         levels=level_infos(pyramid.level_shapes, (brightfield.TILE_SIZE, brightfield.TILE_SIZE)),
         source_kind="vendor", z_semantics="depth", t_semantics="time",
         channel_names=tuple(pyramid.channel_names) if pyramid.channel_names else None,

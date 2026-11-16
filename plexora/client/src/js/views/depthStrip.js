@@ -32,8 +32,12 @@
  *
  * Keys, only on a volume and never while typing: `]` / `[` one plane (in 3-D
  * and in a fixed projection, the range one plane), Shift ten, Alt to the last
- * / first; `.` / `,` one frame. Shift+wheel over the image does what `]` / `[`
- * do. One bare letter: `V` goes to 3-D and back (with the Area tool armed
+ * / first. Shift+wheel over the image does what `]` / `[` do.
+ *
+ * TIME IS NOT HERE. A time series' frames -- which one, a step either way,
+ * Play, `.` and `,` -- are the timeline's (views/timeline.js), a pill along
+ * the bottom; z and t move independently. A series with one plane has no
+ * strip at all. One bare letter: `V` goes to 3-D and back (with the Area tool armed
  * and the pointer on the image, it places the square there first;
  * views/areaTool.js) -- except while the ROI tool, whose V is its own, is
  * open. The cut panel's `O` turns a cut on and off (views/volumeDock.js).
@@ -49,7 +53,6 @@
     const PLAY_WORDS = {
         planes: ["Step through the planes", "Stop stepping"],
         band: ["Slide the range through the stack", "Stop sliding"],
-        frames: ["Play the frames", "Stop"],
         rotate: ["Rotate the stack (Esc stops)", "Stop rotating"],
     };
 
@@ -121,7 +124,8 @@
 
         mount() {
             const vs = this.viewState;
-            if (!vs?.enabled() || this.root) return false;
+            // A series with one plane has nothing to move through in z.
+            if (!vs?.enabled() || vs.depth < 2 || this.root) return false;
             const wrapper = document.getElementById("openseadragon_wrapper");
             if (!wrapper) return false;
             wrapper.classList.add("has-depth-strip");
@@ -289,25 +293,6 @@
 
             root.append(this.modes, this.areaButton, this.cutTools, this.sectionsButton, this.playButton,
                         this.rail, this.cog);
-            // A time series: which frame, and a step either way. Below the
-            // rail because z is what the rail moves; `.` and `,` do the same
-            // from the keyboard.
-            if (vs.frames > 1) {
-                this.frame = el("div", "depth-strip-frame", { role: "group",
-                    "aria-label": "Frame" });
-                this.framePrev = el("button", "depth-strip-button is-small", {
-                    type: "button", title: "Previous frame (,)", "aria-label": "Previous frame" });
-                this.framePrev.appendChild(icon("backward-step"));
-                this.framePrev.addEventListener("click", () => vs.stepTime(-1));
-                this.frameText = el("span", "depth-strip-frame-text");
-                this.frameNext = el("button", "depth-strip-button is-small", {
-                    type: "button", title: "Next frame (.)", "aria-label": "Next frame" });
-                this.frameNext.appendChild(icon("forward-step"));
-                this.frameNext.addEventListener("click", () => vs.stepTime(1));
-                this.frame.append(this.framePrev, this.frameText, this.frameNext);
-                root.append(this.frame);
-                this.nodes.frame = this.frame;
-            }
             return root;
         }
 
@@ -463,12 +448,6 @@
             this.band.classList.toggle("is-movable", Boolean(this.railConfig.bandMove));
             this.rail.setAttribute("aria-valuenow", String(state.z));
             this.rail.setAttribute("aria-valuetext", vs.label());
-            if (this.frameText) {
-                this.frameText.textContent = `t ${state.t + 1}`;
-                this.frameText.title = `Frame ${state.t + 1} of ${vs.frames}`;
-                this.framePrev.disabled = state.t <= 0;
-                this.frameNext.disabled = state.t >= vs.frames - 1;
-            }
             this.paintPlay();
             // Whether the plane asked for is still on its way: the plane's
             // status once it has one (views/paneStatus.js), so the thumb and
@@ -660,9 +639,10 @@
 
         /**
          * Play, as the mode has it (viewControls "play" config): step through
-         * the planes; slide a fixed projection's range; play the frames of a
-         * single-plane series; or in 3-D turn the stack, at the speed and
-         * about the axis of the settings (services/viewerPrefs.js `rotate`).
+         * the planes; slide a fixed projection's range; or in 3-D turn the
+         * stack, at the speed and about the axis of the settings
+         * (services/viewerPrefs.js `rotate`). A series' frames are the
+         * timeline's Play (views/timeline.js).
          */
         play() {
             const vs = this.viewState;
@@ -676,9 +656,7 @@
             this.playingKind = kind;
             this.playing = setInterval(() => {
                 const state = vs.get();
-                if (kind === "frames") {
-                    vs.set({ t: (state.t + 1) % vs.frames }, { save: false });
-                } else if (kind === "band") {
+                if (kind === "band") {
                     const width = state.slab.z1 - state.slab.z0;
                     const start = state.slab.z1 >= vs.depth - 1 ? 0 : state.slab.z0 + 1;
                     vs.set({ slab: { z0: start, z1: start + width } }, { save: false });
@@ -722,11 +700,6 @@
                     this.stepKey = event.code;
                     vs.step(sign * (event.shiftKey ? 10 : 1));
                 }
-            } else if ((event.code === "Period" || event.code === "Comma") && vs.frames > 1
-                       && !event.altKey) {
-                event.preventDefault();
-                this.stepKey = event.code;
-                vs.stepTime(event.code === "Period" ? 1 : -1);
             } else if (event.code === "KeyV" && !event.altKey && !event.shiftKey && !event.repeat) {
                 this.toggleVolume(event);
             }
@@ -751,7 +724,7 @@
             return true;
         }
 
-        /** A step key let go (`]`, `[`, `.`, `,`, or the rail's arrows and
+        /** A step key let go (`]`, `[`, or the rail's arrows and
          *  pages): the hand stopped (viewState.endScrub) -- a held key has no
          *  other end than this. Any other key's keyup is not the hand's. */
         onKeyUp(event) {

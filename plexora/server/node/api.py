@@ -1822,7 +1822,8 @@ def _tiles_ahead(resource, generation, view, base, index, level, tile, width, he
     from plexora.server.models import data_model
     from plexora.server.volume.bricks import z_decode
     from plexora.server.volume.plane_view import plane_pyramid
-    from plexora.server.volume.prefetch import TILE_PREFETCHER, levels_pending, planes_ahead
+    from plexora.server.volume.prefetch import (
+        FRAME_AHEAD, TILE_PREFETCHER, levels_pending, planes_ahead)
 
     spec = view.spec
     if spec.kind != "plane" or spec.default:
@@ -1830,37 +1831,42 @@ def _tiles_ahead(resource, generation, view, base, index, level, tile, width, he
     try:
         ahead = planes_ahead(z_decode(view.base), len(view.base.volume.levels), level,
                              levels_pending(view.base))
-        if ahead is None:
+        frames = int(getattr(view.base.volume, "frames", 1) or 1)
+        frame_ahead = FRAME_AHEAD if frames > 1 else 0
+        if ahead is None and not frame_ahead:
             return
         depth = int(view.base.volume.depth)
     except Exception:  # noqa: BLE001 -- a source that cannot say makes nothing ahead
         return
     zs, ts = view.zs, view.ts
 
-    def key_at(z):
-        return base + (replace(spec, z=int(z)).token(), zs or "", ts or "", "")
+    def at(place):
+        return replace(spec, t=int(place[0]), z=int(place[1]))
 
-    def held(z):
+    def key_at(place):
+        return base + (at(place).token(), zs or "", ts or "", "")
+
+    def held(place):
         with _tile_cache_lock:
-            return key_at(z) in _tile_cache
+            return key_at(place) in _tile_cache
 
-    def encode(z):
-        if held(z):
+    def encode(place):
+        if held(place):
             return False
         with _reading(resource):
             source = _volume_source(resource, zs, ts)
             if source is None or getattr(resource, "generation", 0) != generation:
                 return False
-            pyramid = plane_pyramid(source, replace(spec, z=int(z)), served=True)
+            pyramid = plane_pyramid(source, at(place), served=True)
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
-        _store_tile(key_at(z), data_model.encode_tile_array(array, False, quality, qmin, qmax))
+        _store_tile(key_at(place), data_model.encode_tile_array(array, False, quality, qmin, qmax))
         return True
 
-    region = (resource.id, generation, view.reading, spec.t, index, str(level), str(tile),
+    region = (resource.id, generation, view.reading, index, str(level), str(tile),
               quality, width, height, qmin, qmax)
     try:
-        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit,
-                                         ahead=ahead)
+        TILE_PREFETCHER.after_view_tile(region, spec.t, spec.z, frames, depth, encode, held,
+                                        hit=hit, ahead=ahead, frame_ahead=frame_ahead)
     except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
         pass
 

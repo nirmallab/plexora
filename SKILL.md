@@ -244,7 +244,11 @@ Entry points:
   that), it must NOT have `.shape` (`node/api.py` reads `hasattr(pyramid,
   "shape")` as "single plane"), and level order comes from
   `multiscales[0].datasets[i].path` — spatialdata names its arrays `s0`/`s1`,
-  never `0`/`1`. `open_image` also **drops every level past a break in the
+  never `0`/`1`. An axis is named by `axis_name` (also used by
+  `ngff_transform.py`), which reads a 0.4+ axis by its `type` -- `time` is
+  `t`, `channel` is `c`, whatever it is called -- because a time axis named
+  "time" or "frame" read as unknown, was pinned to its first index, and one
+  frame of a series showed as the whole image. `open_image` also **drops every level past a break in the
   halving chain** (`dyadic_prefix`): the client's tile source computes a level's
   size as `size >> level`, so a 4x-step level draws the wrong rectangle at the
   wrong zoom with nothing to say so, and `len(pyramid)` — which is what
@@ -1073,7 +1077,10 @@ Entry points:
   now said only where one image is taken (a file added as a layer). Node
   resources carry the index (`nodes.resource_id_for(path, index)`), and the
   brick/surface cache identities include it (`volume/serve.source_identity`).
-  The z-stack side is `server/volume/sources/formats.py`. On the website the
+  The z-stack side is `server/volume/sources/formats.py`, which puts a
+  reader's `t_step` (seconds between frames, on `Reader`, the pyramid and
+  `Description`; stated by LSM, LIF and ND2, else None) into the volume's
+  `spacing.t`, so a series' elapsed time is the file's own. On the website the
   package readers load as the `microscope` stage (`plexora/browser/stages.py`)
   and `readimc` as its own `imc` stage, because it imports imageio and pandas
   at module level and a CZI should not load pandas; nd2 and readimc fall back
@@ -4842,7 +4849,7 @@ deliberately left out and what should be built next.
   /clear, /regions/write]` and `/plugins/qc/artifacts[, /objects, /run, /set,
   /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
   check that runs as a job, and `GET /plugins/qc/cell_at?datasource=&x=&y=
-  &radius=[&z0=&z1=]` -> `viewer_data.cell_at`: the mask label at the point, or the
+  &radius=[&z0=&z1=][&t=]` -> `viewer_data.cell_at`: the mask label at the point, or the
   nearest within `radius` (capped at `MAX_HOVER_RADIUS_PX = 64`), read
   through `propagate._mask_provider` (the middle of `z0..z1` for a 3-D
   mask, the plane the viewer draws labels of), falling back to the nearest
@@ -7798,6 +7805,37 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `server/routes/volume_routes.py`). Whether it is turning is never stored.
   The 3-D reference grid (`volumeRenderer.js`, drawn on the box's far faces so
   it is always behind the data) is the `grid` pref in the same record.
+- Timeline: a time series' frames are NOT the depth strip's, because z and t
+  move independently. The strip (`depthStrip.js`) is z only, and a series
+  with one plane builds no strip at all (`mount()` refuses; `main.js` leaves
+  `__plexora.depthStrip` null). `views/timeline.js` (`window.PlexoraTimeline`,
+  `attach(viewState, {viewerManager, prefetch})`, loaded from `index.html`
+  after `planeMotion.js`, built by `main.js` as `__plexora.timeline`, nothing
+  on an image with one frame) is a pill in canvasLayout's `bottom-center`
+  dock (`canvasLayout.place`), movable (Movable id `"timeline"`), in every
+  mode, 3-D included. **Play shows every frame**: it asks for the next only
+  once `viewState.appliedSpec()`/`busy()` say the last is on screen and the
+  rate allows, so a slow series plays slower (the chip says "6 of 10 fps")
+  rather than skipping, and it sets `t` with `set(..., {steady: true})`,
+  which is never a scrub, so prefetched frames load in full. Rate and loop
+  are the `playback` viewer pref `{fps, loop}` (`viewerPrefs.js`
+  `mergePlayback`, `volume_routes.normalize_playback`, `PLAYBACK_DEFAULTS`
+  `{fps: 10, loop: true}`, bounds 1–60). Keys `.`/`,` (one frame) and
+  Shift+Space (play, not while the ROI tool is open); it steps aside and
+  stops while Video Studio's `timeline` band is reserved, because that
+  timeline's Space and T are its own. The registry entry is `timeline`
+  (surface `timeline`, needs `frames`); the strip's `frame` entry, the
+  `depthOrFrames` need and the `frames` Play kind are gone. A time series
+  also gets a stack's OSD `blendTime` and `maxTilesPerFrame`
+  (`imageViewer.js` `stackedImage`), and `imageViewer.placeScaleBar`/
+  `scaleBarLift` lift the scale bar over the bottom-center dock only while
+  the bar would sit under it, because lifted always it ran into the legend.
+  The project edit page's "Time points" (`tSemantics`, `project_routes._t_axis`,
+  `Project.image.t_semantics`) reads a TIFF's T axis as `time` (frames) or
+  `cycle` (more channels, the default for a file that states no time step),
+  and re-reads the image. The frame on screen reaches plugins through
+  `ctx.view.tableFrame()`: gating's `get_gated_cell_ids` and QC's `cell_at`
+  take `t`, since each frame of a series numbers its own cells.
 - Section panes (`sectionPanes.js`) resize both ways. A pane larger than the
   stack stretches z by a CSS scale and says so in its label ("z ×2.4"). Panes
   are clamped to leave `MIN_XY_PX` (240 px) of the main view. `MAX_SHARE` is
@@ -7866,7 +7904,8 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `.copies`) and `FALLBACK_BUDGET`, past which `coarse_levels` returns
   nothing; `data_model._with_bricks` pools z-chunked stacks when
   `worth_pooling` says so, and the prepare route refuses a source that does
-  not `copies`. **`_evict` never touches a level the background copy holds or
+  not `copies` (it takes `t`, a series' frame, default the first, passed to
+  `bricks.prepare(..., t=)`). **`_evict` never touches a level the background copy holds or
   will hold** (`coarse_levels`), and `build_coarse` hands a finished level's
   prepared shards over to the copy, because a prepared area at a level the
   copy later finished stayed in the prepared-area cache, and evicting it (or
@@ -7972,7 +8011,15 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   (`planes_ahead`; `coarse_level` is the `COARSE_LEVELS` (2) coarsest of a
   pyramid, never while `levels_pending` says they are stand-ins for levels
   yet to be derived; `data_model.tiles_ahead_of(..., level)` returns
-  `(spec, depth, ahead)`). z-chunked OME-Zarr planes read
+  `(spec, depth, ahead, frames, frame_ahead)`). Frames are planes too: a
+  series is stored a frame at a time in every format, so
+  `after_view_tile(region, t, z, frames, depth, ...)` (which
+  `after_plane_tile` now wraps) makes tiles ahead along whichever of t/z the
+  region last moved on, `FRAME_AHEAD` (2) frames at every level, a looping
+  wrap from last to first counting as a step forward; the client's
+  `planeMotion.NeighbourPrefetch` does the same (`axis()`, `frameStates`,
+  `lead({rate, loop})` from the playing timeline, `plexora:frame-hover`).
+  z-chunked OME-Zarr planes read
   through the chunk cache (`sources/ngff.py`). The primary's encoded tile
   cache is budgeted in bytes by `PLEXORA_TILE_CACHE_MB` (the node's rule).
   Tests: `tests/test_volume_plane_read_ahead.py`. On a data node
@@ -8034,7 +8081,10 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `test_viewer_3d_client.py` wrapper).
   The depth controls have `tests/js/view_controls_probe.mjs` and
   `tests/js/depth_strip_probe.mjs`, both run by `tests/test_view_state_client.py`,
-  whose floors are plane_swap 40, viewer_motion 111, depth_strip 39. On
+  whose floors are plane_swap 40, viewer_motion 111, depth_strip 39; the
+  timeline has `tests/js/timeline_probe.mjs` in the same wrapper
+  (`test_the_timeline_probe_passes`, floor 38), and T itself
+  `tests/test_volume_time_series.py`. On
   Windows two of `nav_revision_probe.mjs`'s 35 checks fail on timer
   resolution ("but only up to its hold", "a scrub of thirty steps is a few
   revisions"), so `test_every_surface_draws_one_navigation_revision` fails
@@ -10709,7 +10759,13 @@ in **5.6 s**.
   says mask, no id channel is False. A single-plane `.ims` takes the 2-D
   pyramid path (`ims.ImsPlane`, the middle plane of frame 0); a 3-D or
   time-series one becomes a label volume like a 3-D TIFF, through
-  `volume/labels.py` (`label_volume_shape`, `build_label_volume`).
+  `volume/labels.py` (`label_volume_shape`, `build_label_volume`). So does a
+  (T, Y, X) TIFF mask whose own axes say frames (an ImageJ hyperstack's T,
+  an OME-TIFF's SizeT with SizeZ 1: `_series_axes`, `_frames_of_planes`,
+  stored one plane per frame), because otherwise a 3-D mask is (Z, Y, X); and
+  an OME-Zarr label image with planes or frames (`_ngff_label_array`,
+  `_NgffLabels`), here or at a web address, which
+  `data_model._resolve_label_volume` now accepts beside a remote `.ims`.
   **A data node serves a 3-D mask as a label volume too.**
   `resolve_label_volume(source, folders, progress, stage)` is the one
   adopt-or-build rule (`<stem>_labels_v1.zarr`, adopted by source path plus the

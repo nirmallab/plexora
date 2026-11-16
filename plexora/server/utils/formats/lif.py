@@ -41,6 +41,23 @@ def _step(coords, name):
     return step * 1e6 if step else None       # metres -> µm
 
 
+def _seconds(coords, name="T"):
+    """Seconds between the first two values of a time coordinate (floats in
+    seconds, or datetimes / durations), or None."""
+    values = coords.get(name) if coords else None
+    if values is None or len(values) < 2:
+        return None
+    try:
+        first, second = np.asarray(values[0]), np.asarray(values[1])
+        if np.issubdtype(first.dtype, np.datetime64) or np.issubdtype(first.dtype, np.timedelta64):
+            step = float((second - first) / np.timedelta64(1, "ms")) / 1000.0
+        else:
+            step = float(second) - float(first)
+    except (TypeError, ValueError):
+        return None
+    return abs(step) if step and np.isfinite(step) else None
+
+
 class LifReader(Reader):
     format_name = "Leica LIF"
 
@@ -84,6 +101,8 @@ class LifReader(Reader):
             self.pixel_size = (x_um, y_um or x_um)
         if self.z_count > 1:
             self.z_step = _step(coords, "Z")
+        if self.t_count > 1:
+            self.t_step = _seconds(coords, "T")
         names = [str(name) for name in coords.get("C", [])] if "C" in coords else []
         self.channel_names = (["Red", "Green", "Blue"] if self.rgb
                               else names_or_numbered(names, self.channels))

@@ -723,11 +723,12 @@ def _shape(labels, label, x0, y0):
             "bits": base64.b64encode(np.packbits(patch.ravel())).decode("ascii")}
 
 
-def _label_at(ds, x, y, radius, planes=None):
+def _label_at(ds, x, y, radius, planes=None, t=None):
     """(label or None, "mask", shape or None) from the mask, or (None, None,
     None) when there is no mask to read or it could not be read. `planes`
     (first, last) of a 3-D mask: read the middle one, the plane the viewer
-    draws the labels of (a provider that reads one plane only ignores it)."""
+    draws the labels of (a provider that reads one plane only ignores it);
+    `t` the frame of a time series' mask (likewise)."""
     import inspect
 
     import numpy as np
@@ -760,6 +761,8 @@ def _label_at(ds, x, y, radius, planes=None):
         kwargs["timeout"] = HOVER_READ_TIMEOUT_S
     if planes is not None and "z" in accepts:
         kwargs["z"] = (int(min(planes)) + int(max(planes))) // 2
+    if t is not None and "t" in accepts:
+        kwargs["t"] = int(t)
     try:
         labels = np.asarray(provider.read_region(extra, (x0, y0, x1, y1), **kwargs))
     except Exception:
@@ -833,12 +836,12 @@ def _centroids(ds, project):
     return held
 
 
-def _nearest_centroid(ds, project, x, y, radius, planes=None):
+def _nearest_centroid(ds, project, x, y, radius, planes=None, t=None):
     held = _centroids(ds, project)
     if held is None:
         return None
     ids, index, reach = held
-    found = index.nearest(x, y, planes=planes, radius=max(radius, reach, 1.0))
+    found = index.nearest(x, y, t=t, planes=planes, radius=max(radius, reach, 1.0))
     if found is None:
         return None
     row, distance = found
@@ -869,7 +872,7 @@ def cell_by_id(ds, project, cell_id) -> dict | None:
         reason_colors=held["reason_colors"])
 
 
-def cell_at(ds, project, x, y, *, radius=0.0, planes=None) -> dict:
+def cell_at(ds, project, x, y, *, radius=0.0, planes=None, t=None) -> dict:
     """{cell, method, result_id}: QC's record of the cell at full-resolution
     pixel (x, y) (`provenance.cell_record`), or None. `method` is "mask" (the
     label there, or the nearest within `radius`), "centroid" (no mask, or it
@@ -884,10 +887,10 @@ def cell_at(ds, project, x, y, *, radius=0.0, planes=None) -> dict:
     if x < 0 or y < 0 or (width and x >= width) or (height and y >= height):
         return {"cell": None, "method": "out_of_bounds", "result_id": None}
     radius = max(0.0, min(float(radius or 0.0), float(MAX_HOVER_RADIUS_PX)))
-    cell_id, method, shape = _label_at(ds, x, y, radius, planes)
+    cell_id, method, shape = _label_at(ds, x, y, radius, planes, t)
     if method is None:
         try:
-            cell_id = _nearest_centroid(ds, project, x, y, radius, planes)
+            cell_id = _nearest_centroid(ds, project, x, y, radius, planes, t)
         except Exception:  # a table on a node that is asleep
             cell_id = None
             method = "none"

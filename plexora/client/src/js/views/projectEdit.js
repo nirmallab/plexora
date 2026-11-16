@@ -258,7 +258,7 @@
             const editor = row?.querySelector(".config-layer-editor");
             if (!editor) return;
             const fields = () => [...editor.querySelectorAll(
-                "[data-field], #edit_image_type, #edit_z_semantics")];
+                "[data-field], #edit_image_type, #edit_z_semantics, #edit_t_semantics")];
             const reset = () => fields().forEach((field) => {
                 field.value = field.dataset.stored ?? "";
             });
@@ -281,12 +281,16 @@
                     // The reference image's two readings: its type, and how a
                     // stack's Z axis is read. Sent together, applied together.
                     const zSemantics = editor.querySelector("#edit_z_semantics");
+                    const tSemantics = editor.querySelector("#edit_t_semantics");
                     const body = {};
                     if (imageType.value !== (imageType.dataset.stored || "")) {
                         body.imageType = imageType.value;
                     }
                     if (zSemantics && zSemantics.value !== (zSemantics.dataset.stored || "")) {
                         body.zSemantics = zSemantics.value;
+                    }
+                    if (tSemantics && tSemantics.value !== (tSemantics.dataset.stored || "")) {
+                        body.tSemantics = tSemantics.value;
                     }
                     if (!Object.keys(body).length) {
                         toggle(false);

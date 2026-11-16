@@ -28,6 +28,29 @@ from plexora.server.utils.formats.base import Reader, TileCache, chosen, names_o
 _LOOPS = ("T", "P", "Z")
 
 
+
+def _time_loop_seconds(handle):
+    """Seconds between frames from the file's time loop (its period, else its
+    average period), or None when it states none."""
+    try:
+        loops = list(getattr(handle, "experiment", None) or [])
+    except Exception:  # noqa: BLE001 -- a file without readable loops states none
+        return None
+    for loop in loops:
+        if str(getattr(loop, "type", "")) not in ("TimeLoop", "NETimeLoop"):
+            continue
+        parameters = getattr(loop, "parameters", None)
+        for name in ("periodMs", "periodDiff"):
+            value = getattr(parameters, name, None)
+            value = getattr(value, "avg", value)
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if value > 0 and np.isfinite(value):
+                return value / 1000.0
+    return None
+
 class Nd2Reader(Reader):
     format_name = "Nikon ND2"
 
@@ -77,6 +100,8 @@ class Nd2Reader(Reader):
             self.z_step = float(voxel.z)
         self.channel_names = (["Red", "Green", "Blue"] if self.rgb
                               else names_or_numbered(names, self.channels))
+        if self.t_count > 1:
+            self.t_step = _time_loop_seconds(handle)
         self._frames = TileCache(capacity=4)
 
     def _frame(self, z: int, t: int) -> np.ndarray:

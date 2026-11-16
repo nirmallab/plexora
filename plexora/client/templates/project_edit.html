@@ -312,6 +312,26 @@
                                 is read as its own channels, the way an Akoya or CODEX export
                                 stores them.</span>
                             {% endif %}
+                            {% if project.tAxis %}
+                            {# A TIFF's T axis: a time series to play through, or
+                               imaging cycles folded into channels. A file that
+                               states no time step is read as cycles until told. #}
+                            <label class="config-layer-field">
+                                <span>Time points</span>
+                                <select id="edit_t_semantics" class="form-select"
+                                        data-stored="{{ project.tAxis.reading }}">
+                                    <option value="time" {% if project.tAxis.reading == 'time' %}selected{% endif %}>
+                                        Time — a series of {{ project.tAxis.frames }} frames
+                                    </option>
+                                    <option value="cycle" {% if project.tAxis.reading == 'cycle' %}selected{% endif %}>
+                                        Imaging cycles — more channels
+                                    </option>
+                                </select>
+                            </label>
+                            <span class="field-hint">The file stores {{ project.tAxis.frames }} time points.
+                                As time they are frames to play through along the bottom of the image;
+                                as cycles each is read as its own channels.</span>
+                            {% endif %}
                             {% else %}
                             <label class="config-layer-field">
                                 <span>Name</span>
@@ -426,5 +446,5 @@
 {# projectEdit.js also starts the page's pixel-size control (ScaleCalibration,
    loaded in base.html, not deferred). No inline script: the website's
    Content-Security-Policy runs none. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261114_audit_leads2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261115_timeline" defer></script>
 {% endblock %}

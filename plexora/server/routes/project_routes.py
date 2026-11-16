@@ -235,6 +235,36 @@ def project_thumbnail(name):
 # merges. There is no code path here that can drop a key it did not name.
 # --------------------------------------------------------------------------
 
+def _t_axis(project):
+    """`{frames, reading}` for a TIFF storing more than one time point, else
+    None: `reading` is "time" (frames to play through) or "cycle" (each time
+    point read as more channels, what a file that states no time step gets)."""
+    sizes = _tiff_sizes(project)
+    if sizes is None or sizes["t"] < 2:
+        return None
+    reading = project.image.t_semantics or ("time" if project.image.frames > 1 else "cycle")
+    return {"frames": int(sizes["t"]), "reading": reading}
+
+
+def _tiff_sizes(project):
+    """`{t, c, z}` a TIFF image stores, or None for anything else."""
+    src = project.image.src
+    if not src or project.image.is_blank:
+        return None
+    try:
+        from plexora.server.volume.sources import tiff as tiff_volume
+
+        if not str(src).lower().endswith((".tif", ".tiff", ".qptiff")):
+            return None
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        with ImageTiff(str(src)) as handle:
+            found = tiff_volume.page_layout(handle, handle.series[0])
+        return None if found is None else tiff_volume.sizes_of(found[0])
+    except Exception:
+        return None
+
+
 def _z_axis(project):
     """`{planes, reading}` for an image file storing planes on Z, else None."""
     src = project.image.src
@@ -359,6 +389,9 @@ def _describe(project):
         # they are read as depth (a z-stack to move through) or as imaging
         # cycles folded into channels. None when the file stores no Z axis.
         "zAxis": _z_axis(project),
+        # A TIFF's time points: frames to play through, or imaging cycles
+        # folded into channels. None when the file stores one time point.
+        "tAxis": _t_axis(project),
         "segmentation": {
             # The node address when the mask is on one, because this is the
             # value the field posts back: showing a blank here would make
@@ -1028,6 +1061,19 @@ def _apply_edit(project, payload):
             Project.mutate(project.name,
                            lambda current: current.patch(image=replace(
                                current.image, z_semantics=wanted)))
+            reregister_image(project.name)
+            changed = True
+
+    # How a TIFF's T axis is read: time (frames, the timeline) or imaging
+    # cycles folded into channels -- the default for a file that states no
+    # time step. As for Z, the image is re-read.
+    if payload.get("tSemantics") in ("time", "cycle"):
+        wanted = payload["tSemantics"]
+        axis = _t_axis(project)
+        if axis is not None and wanted != axis["reading"]:
+            Project.mutate(project.name,
+                           lambda current: current.patch(image=replace(
+                               current.image, t_semantics=wanted)))
             reregister_image(project.name)
             changed = True
 

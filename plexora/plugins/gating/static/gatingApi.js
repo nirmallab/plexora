@@ -328,13 +328,18 @@ class GatingApi {
         }
     }
 
-    async getGatedCellIds(filter, start_keys) {
+    async getGatedCellIds(filter, start_keys, frame = null) {
         try {
-            let response = await fetch(this.url('plugins/gating/get_gated_cell_ids') + '?' + new URLSearchParams({
+            const query = {
                 filter: JSON.stringify(filter),
                 start_keys: start_keys,
                 datasource: this.datasource
-            }))
+            };
+            // The frame on screen of a time series (ctx.view.tableFrame()):
+            // each frame numbers its own cells.
+            if (Number.isFinite(frame)) query.t = String(frame);
+            let response = await fetch(this.url('plugins/gating/get_gated_cell_ids') + '?'
+                + new URLSearchParams(query))
             let cellIds = await response.json();
             return cellIds;
         } catch (e) {

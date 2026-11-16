@@ -979,21 +979,36 @@ def prefetch_level(level, channels=None) -> None:
 
 
 
+def axis_name(entry) -> str:
+    """One NGFF axis's name as Plexora reads it, lowercased: a 0.4+ axis whose
+    `type` is "time" is `t` and one whose type is "channel" is `c`, whatever
+    it is called (`_axes_of`)."""
+    if isinstance(entry, Mapping):
+        kind = str(entry.get("type", "") or "").lower()
+        if kind == "time":
+            return "t"
+        if kind == "channel":
+            return "c"
+        return str(entry.get("name", "")).lower()
+    return str(entry).lower()
+
+
 def _axes_of(multiscale: Mapping[str, Any], ndim: int) -> tuple[str, ...]:
     """The axis names of a multiscale's arrays, lowercased, one per dimension.
 
     NGFF 0.4+ lists them as dicts, 0.3 as bare strings, and earlier versions not
     at all -- in which case the shape is the only evidence, and the canonical
     t,c,z,y,x ordering says which axes a given ndim must have.
+
+    A 0.4+ axis is known by its `type` as much as its name: the spec names
+    only the types, so a time axis called "time" or "frame" reads as `t` and
+    a channel axis called "ch" as `c` -- not as an unknown axis pinned to its
+    first index, which showed one frame of a series as the whole image.
     """
     raw = multiscale.get("axes")
     names: list[str] = []
     if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
-        for entry in raw:
-            if isinstance(entry, Mapping):
-                names.append(str(entry.get("name", "")).lower())
-            else:
-                names.append(str(entry).lower())
+        names = [axis_name(entry) for entry in raw]
     if len(names) == ndim:
         return tuple(names)
     fallback = {2: ("y", "x"), 3: ("c", "y", "x"), 4: ("c", "z", "y", "x"),
@@ -1113,8 +1128,7 @@ def physical_metadata(pyramid) -> dict:
     if not isinstance(axes, Sequence) or isinstance(axes, (str, bytes)):
         return {}
     try:
-        names = [str(a.get("name", "")).lower() if isinstance(a, Mapping) else str(a).lower()
-                 for a in axes]
+        names = [axis_name(a) for a in axes]
         units = [str(a.get("unit", "")).lower() if isinstance(a, Mapping) else ""
                  for a in axes]
     except Exception:
@@ -1158,6 +1172,7 @@ def physical_metadata(pyramid) -> dict:
 
 #: NGFF time units the volume layer understands, by the name the spec uses.
 _TIME_UNITS = {"second": "s", "millisecond": "ms", "minute": "min", "hour": "h",
+               "microsecond": "µs", "nanosecond": "ns", "day": "d",
                "s": "s", "ms": "ms", "min": "min", "h": "h"}
 
 

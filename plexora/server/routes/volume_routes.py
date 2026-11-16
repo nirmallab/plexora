@@ -116,8 +116,9 @@ def volume_prepare(datasource):
 
     POST `{box: {x, y, width, height}}` in full-resolution pixels, optionally
     `level` (default: the finest at which the area's every plane fits the
-    preparation budget) and `channels` (names; default all). Runs in the
-    background: 202, then GET says how it went.
+    preparation budget), `channels` (names; default all) and `t`, the frame
+    of a time series (default the first). Runs in the background: 202, then
+    GET says how it went.
     """
     _project_or_404(datasource)
     from plexora.server.models import data_model, layer_jobs, views
@@ -137,6 +138,12 @@ def volume_prepare(datasource):
     except (KeyError, TypeError, ValueError):
         return jsonify(error="box is {x, y, width, height} in full-resolution pixels"), 400
     volume = source.volume
+    try:
+        t = int(body.get("t") or 0)
+    except (TypeError, ValueError):
+        return jsonify(error="t is a frame index"), 400
+    if not 0 <= t < max(1, int(volume.frames)):
+        return jsonify(error=f"frame {t} does not exist"), 400
     names = body.get("channels")
     try:
         channels = (None if not names else
@@ -164,12 +171,12 @@ def volume_prepare(datasource):
 
     def work(stage, report, cancel):
         stage("preparing")
-        bricks.prepare(store, source.base, level, level_box, channels=channels,
+        bricks.prepare(store, source.base, level, level_box, channels=channels, t=t,
                        report=lambda percent, _text: report(percent, 100), cancel=cancel)
 
     record = layer_jobs.start_task(datasource, PREPARE_TASK, work, stages=PREPARE_STAGES,
                                    message="Preparing the area in 3-D")
-    return jsonify(level=level, task=record), 202
+    return jsonify(level=level, t=t, task=record), 202
 
 
 def _segmentation_info(project):
@@ -568,6 +575,27 @@ def normalize_area(value):
     return {"screen": int(round(min(AREA_SCREEN[1], max(AREA_SCREEN[0], screen))))}
 
 
+#: A time series' Play (views/timeline.js): frames a second asked for, and
+#: whether it starts over at the last frame.
+PLAYBACK_DEFAULTS = {"fps": 10, "loop": True}
+PLAYBACK_FPS = (1, 60)
+
+
+def normalize_playback(value):
+    """Play's rate and loop, repaired (viewerPrefs.js's `mergePlayback` keeps
+    the same bounds)."""
+    playback = value if isinstance(value, dict) else {}
+    fps = playback.get("fps")
+    try:
+        fps = None if isinstance(fps, bool) or fps is None else float(fps)
+    except (TypeError, ValueError):
+        fps = None
+    loop = playback.get("loop")
+    return {"fps": (int(round(min(PLAYBACK_FPS[1], max(PLAYBACK_FPS[0], fps))))
+                    if fps is not None and math.isfinite(fps) else PLAYBACK_DEFAULTS["fps"]),
+            "loop": loop if isinstance(loop, bool) else PLAYBACK_DEFAULTS["loop"]}
+
+
 def normalize_viewer_prefs(value):
     """The viewer's preferences, repaired: a share outside its bounds is
     clamped, and anything that does not parse reads as its default."""
@@ -588,7 +616,8 @@ def normalize_viewer_prefs(value):
             "grid": normalize_grid(value.get("grid")),
             "rotate": normalize_rotate(value.get("rotate")),
             "handles": normalize_handles(value.get("handles")),
-            "area": normalize_area(value.get("area"))}
+            "area": normalize_area(value.get("area")),
+            "playback": normalize_playback(value.get("playback"))}
 
 
 @app.route('/viewer_prefs', methods=['GET'])
@@ -627,8 +656,12 @@ def put_viewer_prefs():
         area = current.get("area") if isinstance(current.get("area"), dict) else {}
         if isinstance(payload.get("area"), dict):
             area = {**area, **payload["area"]}
+        playback = current.get("playback") if isinstance(current.get("playback"), dict) else {}
+        if isinstance(payload.get("playback"), dict):
+            playback = {**playback, **payload["playback"]}
         stored = normalize_viewer_prefs({**current, **payload, "sections": sections, "grid": grid,
-                                         "rotate": rotate, "handles": handles, "area": area})
+                                         "rotate": rotate, "handles": handles, "area": area,
+                                         "playback": playback})
         settings["viewer"] = stored
         paths.write_settings(settings)
     return jsonify(success=True, prefs=stored)

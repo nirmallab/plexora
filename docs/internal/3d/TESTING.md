@@ -240,9 +240,17 @@ range) limits it to those planes, "On every plane" undoes that. A limited region
 dashed outline on other planes, its row says `z 12`, and mapping regions onto cells counts
 only cells on its planes (needs a table with a z column, e.g. the measured one).
 
-**Time series.** A T×Z OME-TIFF: `.` / `,` or the step buttons under the strip's readout move
-between frames, the Depth card has a Frame field, the badge reads `t 3/3 · 60 s · z 2/4`. A
-region limited on one frame is faint on the others.
+**Time series.** A T×Z OME-TIFF: the timeline pill sits bottom-centre above the bookmark tray
+(not on the strip, which is about z only and absent on a series with one plane). Play
+(Shift+Space) plays the frames and loops; drag the slider, or `.` / `,`, to move between
+frames; the readout says `n / N` and the time since the first frame. Play on a cold or remote
+series slows rather than skipping (the rate chip turns amber, "6 of 10 fps"); the lighter
+stretch after the thumb is frames already loaded. Drag the pill by its readout or grip
+anywhere on the canvas; its × glides it home. Open Video Studio: the pill hides and Play stops.
+Step z on the strip while t stays, and t on the timeline while z stays; zoom, pan, channels
+and contrast hold. The Depth card has a Frame field, the badge reads `t 3/3 · 60 s · z 2/4`.
+A region limited on one frame is faint on the others. An ImageJ time series without a frame
+interval imports as cycles; its settings' **Time points** reads it as time.
 
 *Cells through time.* Add a mask with one label volume per frame (a T×Z×Y×X label TIFF), or one
 3-D mask for every frame. "Measure cells" now measures every frame: one row per cell per frame,

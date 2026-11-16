@@ -329,6 +329,48 @@ def test_after_plane_tile_follows_the_hand_nearest_first():
     assert {11, 9, 12, 13, 14, 15, 18, 19, 10} <= set(made)
 
 
+def test_after_view_tile_reads_ahead_along_the_axis_that_moved():
+    """A time series: frames are made ahead the way planes are, along
+    whichever axis the tile last moved; a series with one plane moves in time
+    from its first tile; the timeline looping round is a step forward."""
+    ahead = prefetch_module.PlanePrefetcher(workers=1, min_budget=0)
+    made = []
+
+    def encode(place):
+        made.append(place)
+        return True
+
+    # One plane, 30 frames: frames either side of the first tile served.
+    assert ahead.after_view_tile("flat", 5, 0, 30, 1, encode, frame_ahead=2) == [(6, 0), (4, 0)]
+    # A frame on: the next two frames, nothing along z.
+    assert ahead.after_view_tile("flat", 6, 0, 30, 1, encode, frame_ahead=2) == [(7, 0), (8, 0)]
+    # Round from the last frame to the first: forward, not a jump back.
+    ahead.after_view_tile("flat", 29, 0, 30, 1, encode, frame_ahead=2)
+    assert ahead.after_view_tile("flat", 0, 0, 30, 1, encode, frame_ahead=2) == [(1, 0), (2, 0)]
+    assert ahead.drain()
+    # A stack with frames: planes until a frame moves, then frames at the
+    # plane on screen; a plane moved again, planes at the frame on screen.
+    assert ahead.after_view_tile("deep", 3, 10, 8, 40, encode, ahead=2,
+                                 frame_ahead=2) == [(3, 11), (3, 9)]
+    assert ahead.after_view_tile("deep", 4, 10, 8, 40, encode, ahead=2,
+                                 frame_ahead=2) == [(5, 10), (6, 10)]
+    assert ahead.after_view_tile("deep", 4, 11, 8, 40, encode, ahead=2,
+                                 frame_ahead=2) == [(4, 12), (4, 13)]
+    # The last frame without a loop to wrap into: nothing past the end.
+    assert ahead.after_view_tile("deep", 5, 11, 8, 40, encode, ahead=2,
+                                 frame_ahead=2) == [(6, 11), (7, 11)]
+    assert ahead.after_view_tile("deep", 7, 11, 8, 40, encode, ahead=2, frame_ahead=2) == []
+    # Planes not made ahead at this level (a chunked stack's fine level):
+    # frames still are; neither for a single frame.
+    assert ahead.after_view_tile("fine", 2, 5, 8, 40, encode, ahead=None,
+                                 frame_ahead=2) == []
+    assert ahead.after_view_tile("fine", 3, 5, 8, 40, encode, ahead=None,
+                                 frame_ahead=2) == [(4, 5), (5, 5)]
+    assert ahead.after_view_tile("still", 0, 3, 1, 40, encode, ahead=None, frame_ahead=0) == []
+    assert ahead.drain()
+    assert (1, 0) in made and (5, 10) in made and (4, 12) in made
+
+
 def _plane_major(tmp_path, name="pm", depth=8):
     path, data = vf.write_ome_volume(tmp_path / f"{name}.ome.tif", axes="CZYX", channels=2,
                                      depth=depth, height=96, width=80)

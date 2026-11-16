@@ -66,14 +66,17 @@ class QcApi {
      *  to `radius` pixels away: `{cell, method, result_id}`, `cell` null on
      *  glass (the viewer's hover card). */
     /** `planes`: `[first, last]` on screen of a z-stack (`ctx.view.planes()`),
-     *  so a 3-D mask is read on the plane drawn; null for a flat image. */
-    async cellAt(x, y, radius, planes = null) {
+     *  so a 3-D mask is read on the plane drawn; null for a flat image.
+     *  `frame`: the frame on screen of a time series (`ctx.view.tableFrame()`),
+     *  whose mask and cells are each frame's own; null otherwise. */
+    async cellAt(x, y, radius, planes = null, frame = null) {
         const query = { datasource: this.datasource, x: String(x), y: String(y),
                         radius: String(radius || 0) };
         if (Array.isArray(planes) && planes.length === 2) {
             query.z0 = String(planes[0]);
             query.z1 = String(planes[1]);
         }
+        if (Number.isFinite(frame)) query.t = String(frame);
         const response = await fetch(this.url("plugins/qc/cell_at") + "?"
             + new URLSearchParams(query));
         return this._read(response);

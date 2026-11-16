@@ -72,7 +72,13 @@ def get_gated_cell_ids():
     datasource = request.args.get('datasource')
     filter = json.loads(request.args.get('filter'))
     start_keys = list(request.args.get('start_keys').split(','))
-    resp = gating_model.get_gated_cells(datasource, filter, start_keys)
+    # The frame on screen of a time series: its cells only.
+    frame = request.args.get('t')
+    try:
+        frame = int(frame) if frame not in (None, "") else None
+    except ValueError:
+        return api.json_response({"error": "t is a frame index"}), 400
+    resp = gating_model.get_gated_cells(datasource, filter, start_keys, t=frame)
     return api.json_response(resp)
 
 

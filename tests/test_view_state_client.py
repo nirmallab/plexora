@@ -243,3 +243,14 @@ def test_the_depth_ui_uses_icons_font_awesome_ships():
     assert {"square", "layer-group", "play", "pause", "gear", "rotate-left", "arrows-up-down",
             "ruler-combined", "cubes", "file-arrow-up"} <= used
     assert used <= shipped, used - shipped
+
+
+def test_the_timeline_probe_passes():
+    """A time series' frames in a movable pill: only on a series; Play asks
+    for the next frame only once the last is on screen and the rate allows,
+    so none is skipped, says when it plays slower than asked, loops or stops
+    at the end and tells the prefetch its rate; a hand or a key stops it; it
+    steps aside for Video Studio's timeline (tests/js/timeline_probe.mjs)."""
+    out = _run("timeline_probe.mjs")
+    assert "all " in out and "checks passed" in out
+    assert out.count("ok - ") >= 38

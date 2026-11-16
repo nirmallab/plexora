@@ -78,7 +78,9 @@ The strip repaints on view-state changes, `plexora:viewer-prefs-changed`,
 ## The matrix
 
 P plane, S fixed projection, F projection following the plane, V 3-D, T a time series.
-Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs`.
+Pinned by `tests/js/view_controls_probe.mjs`, `tests/js/depth_strip_probe.mjs` and
+`tests/js/timeline_probe.mjs`. The strip is about z only and is not built for a series
+with one plane; a series' frames are the timeline's (below).
 
 | Control | P | S | F | V | Needs |
 |---|---|---|---|---|---|
@@ -86,12 +88,11 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Area (`tool.area`: a square to place, opened in 3-D as a crop of the whole stack; V) | ✓ | ✓ | ✓ | – | depth, not colour, WebGL2 |
 | Sections | ✓ | ✓ | ✓ | – | the panes exist, not colour |
 | Cut, Crop (open the cut panel) | – | – | – | ✓ | depth, cut |
-| Play | planes | slides the range | planes | **turns the stack** | depth or frames (single plane: frames) |
+| Play | planes | slides the range | planes | **turns the stack** | depth |
 | Rail | picks a plane | range moves/resizes | range resizes | – (the cut is the panel's and the handles') | depth |
 | Band | – | ✓ | ✓ | – | depth |
 | Thumb, hover mark | ✓ | ✓ | ✓ | – | depth |
-| Cog | ✓ | ✓ | ✓ | ✓ | depth or frames |
-| Frame steps | T | T | T | T | frames |
+| Cog | ✓ | ✓ | ✓ | ✓ | depth |
 | Keys `]` `[`, Shift+wheel | plane | range | plane | **the cut along Z** (`viewState.step`) | depth |
 | Popover: Show (one plane, or an operation) | ✓ | ✓ | ✓ | – | not colour |
 | Popover: Percentile | – | when pct | when pct | – | |
@@ -103,6 +104,7 @@ Pinned by `tests/js/view_controls_probe.mjs` and `tests/js/depth_strip_probe.mjs
 | Popover: Grid (on, where, labels); Lines (spacing, strength) while on | – | – | – | ✓ | the 3-D view's grid |
 | Popover: Surfaces (show once there is one; New, Import with Plexora 3D), Light | – | – | – | ✓ | `surfaceRow`; Light: a surface |
 | Thresholding's View Plane/Slab row (`gating.view`) | ✓ | ✓ | ✓ | – | registered by the plugin |
+| **Timeline** (surface `timeline`, `views/timeline.js`): Play/Pause, the frame slider, `n / N` and time since the first frame, the rate chip (fps, Loop) | T | T | T | T | frames |
 
 In 3-D the strip has no rail (2026-10-13) and is only as tall as its buttons: the mode
 buttons, Cut and Crop, Play and the cog. `]`/`[` and Shift+wheel still move a cut along Z.
@@ -166,3 +168,25 @@ Thresholding is the plugin example. Its View row (Plane / Slab, `gatingPlanes.js
 registers `gating.view` with `surfaces: ["gating"]`, `modes: ["plane", "slab"]` and
 `needs: ["depth"]`. It then asks `ctx.view.controls.visible("view")`, and falls back to its
 own mode check on a core without the registry.
+
+## The timeline
+
+A time series' frames are a pill of their own (`views/timeline.js`), docked bottom-centre
+above the bookmark tray and movable anywhere on the canvas (canvasLayout `Movable`, id
+`timeline`, kept for the tab). It changes `t` and nothing else, so z (the strip) and t move
+independently, and the viewport, channels and contrast stay. It shows in every mode,
+3-D included. It is hidden, and Play stops, while Video Studio's own timeline band
+(`timeline`) is up.
+
+Play shows every frame. It asks for frame t+1 only once frame t is on screen
+(`viewState.appliedSpec() === spec()` and nothing in flight) and the rate allows it, with
+`set(..., {steady: true})` so a fast rate never counts as a scrub. Frames that arrive slower
+than asked slow it down rather than being skipped; the chip then says what it achieves
+("6 of 10 fps"). Meanwhile `planeMotion.NeighbourPrefetch.lead({rate, loop})` keeps the
+frames it will reach in `STANDBY_LOOKAHEAD_MS` built off screen (wrapping round when it
+loops), and the server makes the next frames' tiles ahead
+(`prefetch.after_view_tile`, along whichever axis moved). The rate and Loop are viewer
+preferences (`playback: {fps, loop}`).
+
+Keys: `.` / `,` one frame; Shift+Space Play/Pause (not while the ROI tool, whose Space
+pans, is open).

@@ -1406,12 +1406,12 @@ def tile_cache_stats() -> dict:
 
 
 def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, window, hit):
-    """Make this tile at the planes ahead of the hand (prefetch.py
+    """Make this tile at the planes or frames ahead of the hand (prefetch.py
     `TILE_PREFETCHER`) when it is a plane of a stack decoded a plane at a time,
-    or a coarse level's tile of any stack (`data_model.tiles_ahead_of`):
-    encoded in the background and filed under the key this route would file
-    it under, so the browser's standby request for the next plane is answered
-    from memory. Never waited on."""
+    a coarse level's tile of any stack, or a frame of a time series
+    (`data_model.tiles_ahead_of`): encoded in the background and filed under
+    the key this route would file it under, so the browser's standby request
+    for the next plane or frame is answered from memory. Never waited on."""
     from dataclasses import replace
 
     from plexora.server.volume.prefetch import TILE_PREFETCHER
@@ -1419,20 +1419,20 @@ def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, wi
     plan = data_model.tiles_ahead_of(datasource, channel, view, level)
     if plan is None:
         return
-    spec, depth, ahead = plan
+    spec, depth, ahead, frames, frame_ahead = plan
 
-    def view_at(z):
-        return replace(spec, z=int(z)).token()
+    def view_at(place):
+        return replace(spec, t=int(place[0]), z=int(place[1])).token()
 
-    def held(z):
-        key = _tile_key(generation, datasource, channel, level, tile, quality, view_at(z), window)
+    def held(place):
+        key = _tile_key(generation, datasource, channel, level, tile, quality, view_at(place), window)
         with _tile_png_cache_lock:
             return key in _tile_png_cache
 
-    def encode(z):
-        at = view_at(z)
+    def encode(place):
+        at = view_at(place)
         key = _tile_key(generation, datasource, channel, level, tile, quality, at, window)
-        if held(z) or data_model.load_generation != generation:
+        if held(place) or data_model.load_generation != generation:
             return False
         try:
             with data_model.reading_ahead():
@@ -1445,10 +1445,10 @@ def _tiles_ahead(generation, datasource, channel, level, tile, quality, view, wi
         _keep_tile(key, value)
         return True
 
-    region = (generation, datasource, channel, level, tile, quality, window, spec.t)
+    region = (generation, datasource, channel, level, tile, quality, window)
     try:
-        TILE_PREFETCHER.after_plane_tile(region, spec.z, depth, encode, held, hit=hit,
-                                         ahead=ahead)
+        TILE_PREFETCHER.after_view_tile(region, spec.t, spec.z, frames, depth, encode, held,
+                                        hit=hit, ahead=ahead, frame_ahead=frame_ahead)
     except Exception:  # noqa: BLE001 -- a read ahead is never the tile's error
         _log.debug("tile read-ahead not queued", exc_info=True)
 

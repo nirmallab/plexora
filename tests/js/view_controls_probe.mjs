@@ -87,19 +87,25 @@ check("without WebGL2 there is no 3-D button",
       !strip(stack(), { ...page, volumeSupported: false }).includes("mode.volume"));
 check("without section panes there is no Sections button",
       !strip(stack(), { ...page, sectionsSupported: false }).includes("sections"));
-check("a single-plane time series: play its frames, the cog, the frame steps; nothing about z",
-      same(strip(stack({ depth: 1, frames: 12 })), ["play", "cog", "frame"]));
-check("a time series of stacks has the frame steps beside everything else",
-      strip(stack({ frames: 5 })).at(-1) === "frame");
+check("a single-plane time series has no strip: its frames are the timeline's",
+      strip(stack({ depth: 1, frames: 12 })).length === 0, strip(stack({ depth: 1, frames: 12 })).join());
+check("a time series of stacks: the strip is about z only, nothing about frames",
+      !strip(stack({ frames: 5 })).includes("frame") && strip(stack({ frames: 5 })).includes("rail"));
+const timeline = (vs) => R.resolve(R.context(vs, page), { surface: "timeline" }).map((entry) => entry.id);
+check("the timeline on a time series, in every mode, and on nothing else",
+      same(timeline(stack({ depth: 1, frames: 12 })), ["timeline"])
+      && same(timeline(stack({ frames: 5, mode: "volume" })), ["timeline"])
+      && same(timeline(stack({ frames: 5, mode: "slab" })), ["timeline"])
+      && timeline(stack()).length === 0);
 
 // -- what each does -----------------------------------------------------------------
 
 const config = (vs, id) => R.configOf(id, R.context(vs, page));
-check("Play steps planes; slides a fixed projection's range; plays frames; turns the stack in 3-D",
+check("Play steps planes; slides a fixed projection's range; turns the stack in 3-D",
       config(stack(), "play").kind === "planes"
       && config(stack({ mode: "slab", follow: true }), "play").kind === "planes"
       && config(stack({ mode: "slab", follow: false }), "play").kind === "band"
-      && config(stack({ depth: 1, frames: 9 }), "play").kind === "frames"
+      && config(stack({ frames: 9 }), "play").kind === "planes"
       && config(stack({ mode: "volume" }), "play").kind === "rotate");
 const railIn = (vs) => config(vs, "rail");
 check("the rail picks a plane over a plane and a projection; a band only over a projection",

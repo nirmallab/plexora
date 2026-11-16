@@ -977,6 +977,9 @@ def _focal_note(path) -> str:
         if sizes["z"] > 1 and sizes["c"] > 1:
             return (f"{sizes['z']} planes on Z read as imaging cycles "
                     "(the file states no z step)")
+        if sizes["t"] > 1:
+            return (f"{sizes['t']} time points read as imaging cycles (the file states "
+                    "no time step); read them as time in the image's settings")
     return ""
 
 

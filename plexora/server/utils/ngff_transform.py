@@ -95,13 +95,9 @@ def is_identity(t: Sequence[float] | None, tol: float = 1e-9) -> bool:
 def _axis_names(axes) -> list[str]:
     if not isinstance(axes, Sequence) or isinstance(axes, (str, bytes)):
         return []
-    out = []
-    for axis in axes:
-        if isinstance(axis, Mapping):
-            out.append(str(axis.get("name", "")).lower())
-        else:
-            out.append(str(axis).lower())
-    return out
+    from plexora.server.utils.ome_zarr import axis_name
+
+    return [axis_name(axis) for axis in axes]
 
 
 def _xy_positions(names: Sequence[str]) -> tuple[int, int] | None:

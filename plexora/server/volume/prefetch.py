@@ -40,6 +40,15 @@ next `COARSE_TILE_AHEAD` planes' previews encoded before anybody asks -- but
 not while its coarse levels are stand-ins for levels yet to be derived
 (`levels_pending`), each a read of a far larger area.
 
+FRAMES ARE PLANES TOO. A time series is stored a frame at a time in every
+format Plexora reads -- an OME-Zarr chunk one timepoint deep, an Imaris
+`TimePoint` group, a TIFF's pages -- so along T nothing a frame's read decodes
+holds the next frame, and the tile itself is what is made ahead, at every
+level (`after_view_tile`, `FRAME_AHEAD`). Which way the hand moves is read
+per tile from the last (t, z) it was served at: a step of t is a frame, of z
+a plane; a series with one plane only ever moves in time, and the timeline's
+Play wrapping round from the last frame to the first is a step forward.
+
 A read ahead never reads ahead of itself: a tile read in the background lane
 (`chunk_cache.background`) moves no hand and queues nothing.
 
@@ -79,6 +88,9 @@ TILE_AHEAD = 2
 #: Planes whose coarse tiles are made ahead of any other stack's: a coarse
 #: tile costs a few chunks, so a drag's next planes can all be previews.
 COARSE_TILE_AHEAD = 4
+#: Frames whose tiles are made ahead of a tile of a time series, along T: a
+#: frame is decoded on its own in every format, so at every level.
+FRAME_AHEAD = 2
 #: The coarsest levels of a pyramid that count as coarse: what the browser
 #: draws first while the hand moves, before it refines in place.
 COARSE_LEVELS = 2
@@ -133,7 +145,9 @@ class PlanePrefetcher:
         self._jobs: OrderedDict = OrderedDict()
         self._done: OrderedDict = OrderedDict()
         self._last: OrderedDict = OrderedDict()
-        #: (region, z) of the tiles `after_plane_tile` made, for the hit rate.
+        #: region -> "t" or "z": the axis its tiles last moved along.
+        self._axis: OrderedDict = OrderedDict()
+        #: (region, (t, z)) of the tiles `after_view_tile` made, for the hit rate.
         self._made: OrderedDict = OrderedDict()
         self._threads: list[threading.Thread] = []
         self._workers = max(1, int(workers))
@@ -148,7 +162,7 @@ class PlanePrefetcher:
                       "served": 0, "made": 0, "skipped": 0, "tiles_warmed": 0}
 
     def _moved(self, region, z):
-        """The plane `region` was last served at, now that it is `z`."""
+        """Where `region` was last served (a plane, or a (t, z)), now that it is `z`."""
         with self._lock:
             last = self._last.pop(region, None)
             self._last[region] = z
@@ -190,36 +204,75 @@ class PlanePrefetcher:
 
     def after_plane_tile(self, region, z: int, depth: int, encode, held=None, hit=None,
                          ahead: int = TILE_AHEAD) -> list[int]:
-        """A tile of `region` was served at plane `z` of a stack decoded a plane
-        at a time, or at a coarse level of any stack (`planes_ahead` says how
-        far): queue the same tile, encoded, at the next `ahead` planes in
-        the direction of travel (the planes either side until one is known).
+        """`after_view_tile` along z alone, for a `region` that names its
+        frame: `encode(z)`, `held(z)`; returns the planes queued."""
+        queued = self.after_view_tile(
+            region, 0, z, 1, depth, lambda at: encode(at[1]),
+            held=None if held is None else (lambda at: held(at[1])), hit=hit, ahead=ahead,
+            frame_ahead=0)
+        return [at[1] for at in queued]
 
-        `encode(z)` reads and encodes the tile at plane `z` into the cache the
-        route answers from, under the key the route would use, and returns
-        whether it did (False when it was already there, or the project has
-        changed since). `held(z)`, when given, says whether the cache already
-        has it, so a tile held is never queued. `hit` is whether this tile
-        came from that cache, for the hit rate. Returns the planes queued
-        nearest first (for a test to read)."""
-        z, depth = int(z), int(depth)
-        if depth <= 1 or int(ahead) <= 0 or chunk_cache.in_background():
+    def _axis_of(self, region, last, t, z, frames, depth):
+        """("t" or "z", direction) for a tile of `region` served at (t, z)
+        after `last`: the axis that moved and which way (0: not known)."""
+        if last is None or tuple(last) == (t, z):
+            with self._lock:
+                axis = self._axis.get(region)
+            if axis is None:
+                axis = "t" if depth <= 1 < frames else "z"
+            return axis, 0
+        if last[0] != t:
+            step = t - last[0]
+            # Round from the last frame to the first (or back): a step, not a jump.
+            if frames > 2 and abs(step) > frames // 2:
+                step = -step
+            axis, direction = "t", (1 if step > 0 else -1)
+        else:
+            axis, direction = "z", (1 if z > last[1] else -1)
+        with self._lock:
+            self._axis.pop(region, None)
+            self._axis[region] = axis
+            while len(self._axis) > REGIONS_MAX:
+                self._axis.popitem(last=False)
+        return axis, direction
+
+    def after_view_tile(self, region, t: int, z: int, frames: int, depth: int, encode,
+                        held=None, hit=None, ahead=TILE_AHEAD,
+                        frame_ahead: int = FRAME_AHEAD) -> list[tuple[int, int]]:
+        """A tile of `region` was served at frame `t`, plane `z`: queue the
+        same tile, encoded, at the next places along the axis it moved on --
+        `frame_ahead` frames along T, `ahead` planes along z (None or 0:
+        none; `planes_ahead` says how many for z) -- either side until a
+        direction is known.
+
+        `region` names the tile WITHOUT its frame or plane. `encode((t, z))`
+        reads and encodes the tile there into the cache the route answers
+        from and returns whether it did; `held((t, z))` says whether that
+        cache already has it; `hit` whether this tile came from it. Returns
+        the (t, z) queued, nearest first (for a test to read)."""
+        t, z, frames, depth = int(t), int(z), max(1, int(frames)), max(1, int(depth))
+        if chunk_cache.in_background():
             return []
-        last = self._moved(region, z)
+        last = self._moved(region, (t, z))
         with self._lock:
             self.stats["served"] += 1
-            if hit and (region, z) in self._made:
+            if hit and (region, (t, z)) in self._made:
                 self.stats["tiles_warmed"] += 1
-        direction = 0 if last is None or last == z else (1 if z > last else -1)
+        axis, direction = self._axis_of(region, last, t, z, frames, depth)
+        extent, here, count = ((frames, t, frame_ahead) if axis == "t"
+                               else (depth, z, ahead))
+        count = int(count or 0)
+        if extent <= 1 or count <= 0:
+            return []
         if direction:
-            targets = [z + direction * step for step in range(1, max(1, int(ahead)) + 1)]
+            steps = [here + direction * step for step in range(1, count + 1)]
         else:
-            targets = [z + 1, z - 1]
-        targets = [target for target in targets if 0 <= target < depth
-                   and not (held is not None and held(target))]
+            steps = [here + 1, here - 1]
+        targets = [(at, z) if axis == "t" else (t, at) for at in steps if 0 <= at < extent]
+        targets = [target for target in targets if not (held is not None and held(target))]
         queued = []
-        # Farthest first: the newest job runs first, so the nearest plane is
-        # made before the one after it.
+        # Farthest first: the newest job runs first, so the nearest is made
+        # before the one after it.
         for target in reversed(targets):
             def job(target=target):
                 made = encode(target)
@@ -309,6 +362,7 @@ class PlanePrefetcher:
             self._jobs.clear()
             self._done.clear()
             self._last.clear()
+            self._axis.clear()
             self._made.clear()
 
     def snapshot(self) -> dict:

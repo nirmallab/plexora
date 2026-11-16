@@ -832,7 +832,10 @@ class CSVGatingList {
         // The role, from ctx.dataset -- the last place this plugin reached into
         // the raw config entry. What the id column is called is core's to know.
         const idField = this.dataset.schema.cellId;
-        const rows = await this.api.getGatedCellIds(gates, [idField]);
+        // The frame on screen of a time series, or null.
+        const frame = this.ctx?.view?.tableFrame?.();
+        const rows = await this.api.getGatedCellIds(gates, [idField],
+                                                    Number.isFinite(frame) ? frame : null);
         if (!Array.isArray(rows)) return new Set();
         return new Set(rows.map((row) => Number(row[idField] ?? row.id)));
     }

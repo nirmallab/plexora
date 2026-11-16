@@ -208,12 +208,39 @@ def test_the_edit_page_reads_planes_on_z_either_way(tmp_path, client):
     assert project.image.z_semantics == "cycle" and project.image.num_channels == 15
 
 
+def test_the_edit_page_reads_time_points_either_way(tmp_path, client):
+    """An ImageJ time series that states no frame interval: its time points
+    import as cycles (2 x 4 = 8 channels), the import says so, and the edit
+    page offers time -- which re-reads it as 2 channels over 4 frames, the
+    timeline's -- and back again."""
+    from plexora.server.models.project import Project
+
+    path = tmp_path / "tl.tif"
+    data = np.arange(4 * 2 * 32 * 32, dtype=np.uint16).reshape(4, 2, 32, 32)
+    tifffile.imwrite(path, data, imagej=True, metadata={"axes": "TCYX"})
+    register_image_datasource("tl", path)
+    project = Project.find("tl")
+    assert project.image.frames == 1 and project.image.num_channels == 8
+    page = client.get("/edit_config/tl").get_data(as_text=True)
+    assert 'id="edit_t_semantics"' in page and "a series of 4 frames" in page
+
+    assert client.post("/project/tl", json={"tSemantics": "time"}).status_code == 200
+    project = Project.find("tl")
+    assert project.image.t_semantics == "time"
+    assert project.image.num_channels == 2 and project.image.frames == 4
+    assert client.get("/volume/tl/info").get_json()["frames"] == 4
+
+    assert client.post("/project/tl", json={"tSemantics": "cycle"}).status_code == 200
+    project = Project.find("tl")
+    assert project.image.frames == 1 and project.image.num_channels == 8
+
+
 def test_a_flat_image_offers_no_planes_choice(tmp_path, client):
     path = tmp_path / "flat.ome.tif"
     tifffile.imwrite(path, np.zeros((3, 32, 32), dtype=np.uint16), ome=True)
     register_image_datasource("flat", path)
     page = client.get("/edit_config/flat").get_data(as_text=True)
-    assert "edit_z_semantics" not in page
+    assert "edit_z_semantics" not in page and "edit_t_semantics" not in page
     # And a stray value changes nothing.
     assert client.post("/project/flat", json={"zSemantics": "depth"}).status_code == 200
 
@@ -254,20 +281,24 @@ def test_viewer_prefs_are_the_users_merged_and_clamped(client):
     turn = {"speed": 30.0, "axis": "screen", "direction": 1}
     handles = {"visible": True, "opacity": 0.55}
     area = {"screen": 320}
+    playback = {"fps": 10, "loop": True}
     paths.write_settings({"data_dir": "/somewhere"})
     grid = {"on": False, "faces": "walls", "step": "auto", "opacity": 0.18, "labels": True}
     assert client.get("/viewer_prefs").get_json() == {
         "sections": {"xz": None, "yz": None}, "motion": "on", "grid": grid, "rotate": turn,
-        "handles": handles, "area": area}
+        "handles": handles, "area": area,
+        "playback": playback}
     client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
     stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off", "grid": grid,
-                      "rotate": turn, "handles": handles, "area": area}
+                      "rotate": turn, "handles": handles, "area": area,
+        "playback": playback}
     # Out of bounds is clamped; nonsense reads as the default.
     stored = client.put("/viewer_prefs", json={
         "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
     assert stored == {"sections": {"xz": None, "yz": 0.9}, "motion": "on", "grid": grid,
-                      "rotate": turn, "handles": handles, "area": area}
+                      "rotate": turn, "handles": handles, "area": area,
+        "playback": playback}
     client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
     assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
     # The rest of the settings file is left alone.
@@ -394,6 +425,27 @@ def test_the_area_preference_is_a_side_on_screen_kept_in_bounds(client):
     for bad in ({"screen": "lots"}, {"screen": True}, {"um": 150, "px": 1024}, "everything"):
         stored = client.put("/viewer_prefs", json={"area": bad}).get_json()["prefs"]
         assert stored["area"] == {"screen": 320}, bad
+
+
+def test_viewer_prefs_keep_plays_rate_and_loop(client):
+    """A time series' Play: the rate asked for, rounded and clamped to
+    1-60, and whether it loops; each PUT merged over what is there."""
+    from plexora import paths
+
+    paths.write_settings({})
+    assert client.get("/viewer_prefs").get_json()["playback"] == {"fps": 10, "loop": True}
+    stored = client.put("/viewer_prefs", json={"playback": {"fps": 20.4}}).get_json()["prefs"]
+    assert stored["playback"] == {"fps": 20, "loop": True}
+    stored = client.put("/viewer_prefs", json={"playback": {"loop": False}}).get_json()["prefs"]
+    assert stored["playback"] == {"fps": 20, "loop": False}
+    stored = client.put("/viewer_prefs", json={"playback": {"fps": 500}}).get_json()["prefs"]
+    assert stored["playback"]["fps"] == 60
+    stored = client.put("/viewer_prefs", json={"playback": {"fps": 0}}).get_json()["prefs"]
+    assert stored["playback"]["fps"] == 1
+    for bad in ({"fps": "fast", "loop": "yes"}, {"fps": True}, "always"):
+        paths.write_settings({})
+        stored = client.put("/viewer_prefs", json={"playback": bad}).get_json()["prefs"]
+        assert stored["playback"] == {"fps": 10, "loop": True}, bad
 
 
 def test_the_3d_area_is_kept_and_saved_areas_are_not(tmp_path, client):

@@ -252,6 +252,7 @@ class LsmReader(Reader):
                 self.time_interval = step_s if step_s > 0 else None
             if self.time_interval is None:
                 self.time_interval = _positive(metadata.get("TimeIntervall"))
+            self.t_step = self.time_interval
 
         plane_bytes = max(1, height * width * self.dtype.itemsize)
         self._planes = TileCache(capacity=max(4, min(256, _CACHE_BYTES // plane_bytes)))

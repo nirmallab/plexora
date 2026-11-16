@@ -1098,6 +1098,62 @@ function runFrames(box, renderer, ms, hz) {
         shows.length === 1 && owner.resizing === null && near(shares.xz, (startSize + 200) / 800));
 }
 
+{
+    // Along T: a series with one plane only moves in time, so its neighbours
+    // are frames; a series of stacks takes them along the axis last moved;
+    // and while the timeline plays (`lead`) the frames ahead come at its rate,
+    // wrapping round at the end when it loops.
+    const box = sandbox();
+    load(box, "views/planeMotion.js");
+    const { NeighbourPrefetch } = box.PlexoraPlaneMotion;
+    const state = { mode: "plane", z: 0, t: 10 };
+    const viewState = { depth: 1, frames: 20, get: () => ({ ...state }), spec: (s) => `t${s.t}z${s.z}` };
+    const prefetch = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState);
+    const frames = () => prefetch.neighbourStates().map((s) => s.t);
+    check("a series with one plane at rest: the next two frames and the one behind",
+        frames().join() === "11,12,9" && prefetch.neighbourStates().every((s) => s.z === 0), frames().join());
+    prefetch.hoverFrame(3);
+    check("...and the frame under the pointer on the timeline", frames().join() === "11,12,9,3");
+    prefetch.hoverFrame(null);
+    prefetch.lead({ rate: 10, loop: true });
+    state.t = 18;
+    check("playing at 10 a second: four ahead (0.4 s), none behind, round past the end when it loops",
+        frames().join() === "19,0,1,2", frames().join());
+    prefetch.lead({ rate: 10, loop: false });
+    check("...and not round when it does not", frames().join() === "19");
+    prefetch.lead(null);
+    check("stopped: back to the hand's pace", prefetch.pace() === 0);
+    // A stack with frames: whichever axis moved last.
+    const deep = { mode: "plane", z: 5, t: 2 };
+    const stackState = { depth: 30, frames: 8, get: () => ({ ...deep }), spec: (s) => `t${s.t}z${s.z}` };
+    const both = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, stackState);
+    const ask = (patch) => {
+        Object.assign(deep, patch);
+        both.onRequested({ detail: { state: { ...deep } } });
+        box.clock.now += 400;
+    };
+    ask({});
+    check("a stack with frames, before anything moved: planes", both.axis() === "z"
+        && both.neighbourStates().every((s) => s.t === 2));
+    ask({ t: 3 });
+    check("a frame stepped: frames, at the plane on screen", both.axis() === "t"
+        && both.neighbourStates().map((s) => s.t).join() === "4,5,2"
+        && both.neighbourStates().every((s) => s.z === 5));
+    ask({ z: 6 });
+    check("a plane stepped: planes again, at the frame on screen", both.axis() === "z"
+        && both.neighbourStates().map((s) => s.z).join() === "7,8,5"
+        && both.neighbourStates().every((s) => s.t === 3));
+    const looping = new NeighbourPrefetch({ world: { getItemCount: () => 0 } }, viewState);
+    looping.lead({ rate: 10, loop: true });
+    state.t = 19;
+    looping.onRequested({ detail: { state: { ...state } } });
+    box.clock.now += 100;
+    state.t = 0;
+    looping.onRequested({ detail: { state: { ...state } } });
+    check("the player wrapping from the last frame to the first is a step forward",
+        looping.direction === 1, String(looping.direction));
+}
+
 console.log(failures.length ? `\n${failures.length} of ${checks} check(s) failed`
                             : `\nall ${checks} checks passed`);
 if (failures.length) {

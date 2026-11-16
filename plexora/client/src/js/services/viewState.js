@@ -612,8 +612,12 @@
          *
          * `save: false` for a change nobody chose (boot, an agent replaying a
          * capture); `recentre` recentres a following slab on the new z.
+         * `steady: true` for a change made on a clock rather than by a hand
+         * (the timeline's Play, views/timeline.js): however close it comes to
+         * the last, it is never a scrub, so the frames prefetched ahead of it
+         * load in full and it lands sharp.
          */
-        set(patch, { save = true } = {}) {
+        set(patch, { save = true, steady = false } = {}) {
             if (!this.enabled() || !patch) return this.get();
             const before = this.state;
             const merged = {
@@ -645,7 +649,7 @@
             const wasVolume = before.mode === "volume";
             this.state = this._clean(merged);
             const at = now();
-            const close = at - (this._lastSetAt ?? -Infinity) < SCRUB_GAP_MS;
+            const close = !steady && at - (this._lastSetAt ?? -Infinity) < SCRUB_GAP_MS;
             this._jump = this._far(before, this.state) && !close;
             if (close) this._scrubUntil = at + SCRUB_HOLD_MS;
             //: Whether the newest request was made while the hand moved: the
@@ -1055,6 +1059,11 @@
                 ? new Promise((resolve) => setTimeout(resolve, 20)).then(wait)
                 : Promise.resolve(this.get()));
             return wait();
+        }
+
+        /** Whether a revision is on its way to the screen now. */
+        busy() {
+            return Boolean(this._applying || this._frame);
         }
 
         /** How many surfaces of past revisions are still to commit late. */

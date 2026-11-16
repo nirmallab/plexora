@@ -175,6 +175,18 @@ frame on screen (`dataLayer.tableFrame`, `ctx.view.tableFrame()`). Not done: div
 closing; the gating plugin's server-side gated-id route ignores the frame (the viewer's local
 gate does not).
 
+Timeline (2026-11-15, feature/timeline): a time series' frames moved out of the Z strip into
+a movable glass pill along the bottom (`views/timeline.js`; design canvas
+https://claude.ai/artifact/LaGv3jYGavGy7bxDKNjiHi). Play waits for each frame to land and
+never skips; the chip says the rate achieved when frames arrive slower than asked. The
+neighbour prefetch and the server's tile read-ahead go along T as well as z. Also: an
+NGFF axis is known by its `type` (a time axis called "time" is t), vendor readers carry
+the seconds between frames (LSM, LIF, ND2), a TIFF's time points can be read as time or
+as cycles from the image's settings (`tSemantics`), (T, Y, X) TIFF masks and OME-Zarr
+labels with planes or frames become label volumes, brick preparation takes the frame,
+and gating's gated ids and QC's hover read the frame on screen. Not done: a frame in
+`viewSnapshot`, a per-frame contrast window, budgets counted per frame on the website.
+
 ## Decisions taken while implementing
 
 - A volume's window is exact (every plane, level 0) while one channel's level-0 stack is

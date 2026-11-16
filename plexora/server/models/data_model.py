@@ -414,9 +414,12 @@ def _resolve_label_volume(segmentation_path, dataDirectory=None, progress_callba
     from plexora.server.volume.sources import ims as _ims
 
     remote = providers.is_remote_locator(segmentation_path)
-    # At a web address only an .ims is streamed into a label volume, and only
-    # into the project's own folder: there is no writing beside a URL.
-    if remote and not (_ims.is_remote_ims(segmentation_path) and dataDirectory):
+    # At a web address an .ims or an OME-Zarr label image is streamed into a
+    # label volume, and only into the project's own folder: there is no
+    # writing beside a URL.
+    if remote and not (dataDirectory and (
+            _ims.is_remote_ims(segmentation_path)
+            or volume_labels._ngff_label_array(segmentation_path) is not None)):
         return None
     if not remote and volume_labels.is_label_volume(segmentation_path):
         return str(segmentation_path)
@@ -4879,9 +4882,13 @@ def _read_ahead(datasource_name, channel_num, level, tile, view):
 
 
 def tiles_ahead_of(datasource_name, channel, view, level=None):
-    """`(spec, depth, ahead)` when the tiles of `view` at `level` should be
-    encoded ahead of the hand, at the next `ahead` planes
-    (`prefetch.TILE_PREFETCHER`, fed by the tile route), else None.
+    """`(spec, depth, ahead, frames, frame_ahead)` when the tiles of `view`
+    at `level` should be encoded ahead of the hand -- at the next `ahead`
+    planes along z (None: not along z) or the next `frame_ahead` frames along
+    T (`prefetch.TILE_PREFETCHER`, fed by the tile route) -- else None.
+
+    A frame of a time series is decoded on its own in every format, so its
+    tiles are made ahead at every level (`prefetch.FRAME_AHEAD`).
 
     A plane of a local stack whose reads decode one plane at a time -- a TIFF
     stored plane by plane, a zarr store chunked one plane deep: nothing a
@@ -4895,7 +4902,7 @@ def tiles_ahead_of(datasource_name, channel, view, level=None):
     link twice."""
     from plexora.server.models import views
     from plexora.server.volume.bricks import z_decode
-    from plexora.server.volume.prefetch import levels_pending, planes_ahead
+    from plexora.server.volume.prefetch import FRAME_AHEAD, levels_pending, planes_ahead
 
     if not view or _parse_channel(channel)[1] or _remote_image() is not None:
         return None
@@ -4906,9 +4913,11 @@ def tiles_ahead_of(datasource_name, channel, view, level=None):
             return None
         ahead = planes_ahead(z_decode(source), len(source.volume.levels), level,
                              levels_pending(source))
-        if ahead is None:
+        frames = int(getattr(source.volume, "frames", 1) or 1)
+        frame_ahead = FRAME_AHEAD if frames > 1 else 0
+        if ahead is None and not frame_ahead:
             return None
-        return spec, int(source.volume.depth), ahead
+        return spec, int(source.volume.depth), ahead, frames, frame_ahead
     except Exception:  # noqa: BLE001 -- nothing to encode ahead of
         return None
 

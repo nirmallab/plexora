@@ -234,6 +234,10 @@ def test_a_loaded_large_stack_is_copied_in_the_background(tmp_path, small_levels
             time.sleep(0.05)
         assert state["prepare"]["status"] == "ready" and state["cached_levels"] == [0]
         assert client.post("/volume/big/prepare", json={"box": {}}).status_code == 400
+        # A frame the image does not have (it has one): refused, not read as frame 0.
+        box = {"x": 0, "y": 0, "width": 100, "height": 80}
+        assert client.post("/volume/big/prepare", json={"box": box, "t": 3}).status_code == 400
+        assert client.post("/volume/big/prepare", json={"box": box, "t": "x"}).status_code == 400
     finally:
         layer_jobs.forget("big")
 

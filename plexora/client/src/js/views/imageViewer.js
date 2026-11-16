@@ -84,6 +84,13 @@ function tileCachePlanes(config) {
     return reference + layers;
 }
 
+/** Whether the image swaps whole pictures as you move through it: a stack
+ *  of planes, or a series of frames (imageShape is `{t, c, z, y, x}`). */
+function stackedImage(config) {
+    const shape = config?.imageShape || {};
+    return Number(shape.z) > 1 || Number(shape.t) > 1;
+}
+
 
 /**
  * Keep OpenSeadragon's tile canvases on the GPU.
@@ -596,7 +603,8 @@ class ImageViewer {
             // as the picture coming into focus instead of a checkerboard of
             // sharp squares. Planar images keep the instant draw they have
             // always had.
-            blendTime: Number(config?.imageShape?.z) > 1 ? 0.18 : 0,
+            // A time series swaps whole frames the way a stack swaps planes.
+            blendTime: stackedImage(config) ? 0.18 : 0,
             // How many tiles one update of an item may ask for: a volume's,
             // 32; OSD's default (kept for planar images) is 1. OSD caps each
             // update's load candidates at `_currentMaxTilesPerFrame` -- ten
@@ -612,7 +620,7 @@ class ImageViewer {
             // finer ones over it are already on their way. OSD itself ranks
             // the coarsest levels first (level visibility); the scheduler
             // then decides.
-            maxTilesPerFrame: Number(config?.imageShape?.z) > 1 ? 32 : 1,
+            maxTilesPerFrame: stackedImage(config) ? 32 : 1,
             // OpenSeadragon 6 creates ONE TileCache on the viewer and hands the
             // same instance to every TiledImage, so this budget has to cover
             // (visible tiles x active channels), not just visible tiles. At
@@ -705,11 +713,22 @@ class ImageViewer {
         this.addScaleBar();
         // The scale bar is drawn inside #openseadragon, out of reach of the
         // canvas layout's docks (services/canvasLayout.js); it steps clear of
-        // the bands -- the depth strip, the section panes -- by its offsets.
+        // the bands -- the depth strip, the section panes -- by its offsets,
+        // and up over what is docked along the bottom centre (the timeline,
+        // the bookmark tray) while it would sit under it (scaleBarLift).
         window.addEventListener("plexora:canvas-layout", (event) => {
             const insets = event.detail?.insets;
-            if (!insets || !this.viewer?.scalebarInstance) return;
-            this.viewer.scalebar({ xOffset: 5 + insets.right, yOffset: 5 + insets.bottom });
+            if (!insets) return;
+            this.scaleBarInsets = insets;
+            this.placeScaleBar();
+        });
+        // It sits at the image's corner, which moves with the view.
+        this.viewer.addHandler("update-viewport", () => {
+            if (this._scaleBarFrame) return;
+            this._scaleBarFrame = requestAnimationFrame(() => {
+                this._scaleBarFrame = 0;
+                this.placeScaleBar();
+            });
         });
         this.selectionPolygonToDraw = [];
 
@@ -3506,6 +3525,44 @@ class ImageViewer {
     // vector shapes/text exactly where the same overlay appears on screen
     // (canvas.width/height is the backing-store pixel size; getBoundingClientRect
     // is CSS layout size -- the ratio between them is the scale factor).
+    /**
+     * The scale bar's offsets: clear of the bands, and lifted over the
+     * bottom-centre dock while the bar would sit under what is in it. Only
+     * when the bar overlaps it across: lifted always, a bar in the image's
+     * bottom-right corner would run into the legend docked above it. Asked
+     * of OSD only when the answer changes.
+     */
+    placeScaleBar() {
+        if (!this.viewer?.scalebarInstance) return;
+        const insets = this.scaleBarInsets || { right: 0, bottom: 0 };
+        const lift = this.scaleBarLift();
+        const xOffset = 5 + (insets.right || 0);
+        const yOffset = 5 + (insets.bottom || 0) + lift;
+        const held = this._scaleBarOffsets;
+        if (held && held.x === xOffset && held.y === yOffset) return;
+        this._scaleBarOffsets = { x: xOffset, y: yOffset };
+        this.viewer.scalebar({ xOffset, yOffset });
+    }
+
+    /** px to lift the scale bar by: the bottom-centre dock's height and a
+     *  gap while the bar's span across overlaps the dock's, else 0. */
+    scaleBarLift() {
+        const bar = this.viewer?.scalebarInstance?.divElt;
+        const dock = document.querySelector("#openseadragon_wrapper .plx-canvas-dock.is-bottom-center");
+        if (!bar || !dock) return 0;
+        const shown = [...dock.children].some((child) => !child.hidden && child.offsetWidth);
+        if (!shown) return 0;
+        const b = bar.getBoundingClientRect();
+        const d = dock.getBoundingClientRect();
+        if (!b.width || !d.width || !d.height) return 0;
+        const lifted = this._scaleBarOffsets ? this._scaleBarOffsets.y - 5 - (this.scaleBarInsets?.bottom || 0) : 0;
+        // Where the bar would be with no lift: as drawn, moved back down.
+        const bottom = b.bottom + lifted;
+        const across = b.left < d.right && b.right > d.left;
+        const under = bottom > d.top;
+        return across && under ? Math.ceil(d.height) + 8 : 0;
+    }
+
     getOverlayRectInCanvasSpace(el) {
         const canvasEl = this.viewer?.drawer?.canvas;
         if (!canvasEl || !el) return null;

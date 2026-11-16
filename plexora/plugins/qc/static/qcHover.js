@@ -713,6 +713,16 @@ class QcHoverProbe {
         }
     }
 
+    /** The frame on screen of a time series, or null. */
+    frame() {
+        try {
+            const t = this.ctx.view?.tableFrame?.();
+            return Number.isFinite(t) ? t : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     disarm() {
         this.clear();
         this.tracker?.destroy?.();
@@ -860,7 +870,7 @@ class QcHoverProbe {
         const radius = Math.min(64, Math.max(1, scale * 5));
         let request;
         try {
-            request = Promise.resolve(this.deps.api.cellAt(x, y, radius, this.planes()));
+            request = Promise.resolve(this.deps.api.cellAt(x, y, radius, this.planes(), this.frame()));
         } catch (error) {
             request = Promise.resolve(null);
         }

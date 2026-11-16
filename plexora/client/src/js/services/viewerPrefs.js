@@ -47,8 +47,25 @@
     //: its side ON SCREEN, CSS pixels, so zooming in selects less tissue.
     const AREA = { screen: 320 };
     const AREA_SCREEN = [64, 4096];
+    //: A time series' Play (views/timeline.js; server/routes/volume_routes.py
+    //: PLAYBACK_DEFAULTS): frames a second asked for, and whether it loops.
+    const PLAYBACK = { fps: 10, loop: true };
+    const PLAYBACK_FPS = [1, 60];
     const DEFAULTS = { sections: { xz: null, yz: null }, motion: "on", grid: GRID,
-                       rotate: ROTATE, handles: HANDLES, area: AREA };
+                       rotate: ROTATE, handles: HANDLES, area: AREA, playback: PLAYBACK };
+
+    /** Play's rate and loop, repaired over `base` (the server's
+     *  `normalize_playback` keeps the same bounds). */
+    function mergePlayback(base, patch) {
+        const out = { fps: Number(base?.fps) > 0 ? base.fps : PLAYBACK.fps,
+                      loop: typeof base?.loop === "boolean" ? base.loop : PLAYBACK.loop };
+        if (!patch || typeof patch !== "object") return out;
+        if (typeof patch.fps === "number" && Number.isFinite(patch.fps)) {
+            out.fps = Math.min(PLAYBACK_FPS[1], Math.max(PLAYBACK_FPS[0], Math.round(patch.fps)));
+        }
+        if (typeof patch.loop === "boolean") out.loop = patch.loop;
+        return out;
+    }
 
     /** The Area tool's square, repaired over `base` (the server's
      *  `normalize_area` keeps the same bounds). */
@@ -180,6 +197,11 @@
             return mergeArea(this.prefs.area || AREA, null);
         }
 
+        /** A time series' Play: `{fps, loop}`. */
+        playback() {
+            return mergePlayback(this.prefs.playback || PLAYBACK, null);
+        }
+
         /** Whether planes may fade and the 3-D view may coast. */
         smoothMotion() {
             if (this._holds > 0) return false;
@@ -229,6 +251,8 @@
                 ? { handles: { ...(this._pending.handles || {}), ...(patch.handles || {}) } } : {};
             const area = patch.area || this._pending.area
                 ? { area: { ...(this._pending.area || {}), ...(patch.area || {}) } } : {};
+            const playback = patch.playback || this._pending.playback
+                ? { playback: { ...(this._pending.playback || {}), ...(patch.playback || {}) } } : {};
             this._pending = {
                 ...this._pending, ...patch,
                 sections: { ...(this._pending.sections || {}), ...(patch.sections || {}) },
@@ -236,6 +260,7 @@
                 ...rotate,
                 ...handles,
                 ...area,
+                ...playback,
             };
             this._paintRoot();
             this._announce();
@@ -258,6 +283,7 @@
                 rotate: mergeRotate(this.prefs.rotate || ROTATE, patch?.rotate),
                 handles: mergeHandles(this.prefs.handles || HANDLES, patch?.handles),
                 area: mergeArea(this.prefs.area || AREA, patch?.area),
+                playback: mergePlayback(this.prefs.playback || PLAYBACK, patch?.playback),
             };
         }
 

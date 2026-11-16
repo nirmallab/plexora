@@ -378,10 +378,9 @@
         { id: "sections", surfaces: ["strip"], modes: ["plane", "slab"],
           needs: ["depth", "sections", "colourless"], group: "sections",
           doc: "XZ and YZ sections beside the plane. Not in 3-D, which is its own view." },
-        { id: "play", surfaces: ["strip"], needs: ["depthOrFrames"], group: "play",
+        { id: "play", surfaces: ["strip"], needs: ["depth"], group: "play",
           config: (ctx) => ({
-              kind: ctx.mode === "volume" ? "rotate"
-                  : (ctx.depth < 2 ? "frames" : (ctx.mode === "slab" && !ctx.follow ? "band" : "planes")),
+              kind: ctx.mode === "volume" ? "rotate" : (ctx.mode === "slab" && !ctx.follow ? "band" : "planes"),
           }),
           doc: "Step through the planes (a fixed projection: slide its range; 3-D: turn the stack)." },
         // Not in 3-D: the cut there is the panel's and the handles' (views/volumeDock.js).
@@ -398,10 +397,13 @@
           doc: "The plane on screen." },
         { id: "hover", surfaces: ["strip"], modes: ["plane", "slab"], needs: ["depth"], group: "rail", order: 40,
           doc: "The plane a click would choose, which starts loading under the pointer." },
-        { id: "cog", surfaces: ["strip"], needs: ["depthOrFrames"], group: "cog",
+        { id: "cog", surfaces: ["strip"], needs: ["depth"], group: "cog",
           doc: "The settings that apply to what is drawn now." },
-        { id: "frame", surfaces: ["strip"], needs: ["frames"], group: "frame",
-          doc: "Which frame of a time series, and a step either way." },
+        // A time series' frames: the pill along the bottom (views/timeline.js),
+        // in every mode -- 3-D included, where each frame is fetched as a
+        // volume. Independent of the strip, so z and t move apart.
+        { id: "timeline", surfaces: ["timeline"], needs: ["frames"], group: "frame",
+          doc: "The frames of a time series: Play, the frame, and the rate it plays at." },
 
         { id: "projection.op", surfaces: ["popover"], modes: ["plane", "slab"],
           needs: ["depth", "colourless"], group: "projection", order: 10,

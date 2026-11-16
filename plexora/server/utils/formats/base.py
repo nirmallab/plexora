@@ -70,6 +70,8 @@ class Reader:
     t_count: int = 1
     #: µm between planes, or None.
     z_step: Optional[float] = None
+    #: Seconds between frames of a time series, or None when the file states none.
+    t_step: Optional[float] = None
     #: Every image the file holds, by name, and which of them this reader shows.
     #: Only images of the tissue (not a slide scan's overview or label), in a
     #: fixed order: `image_index` is a position in this list, and it is what a
@@ -238,6 +240,7 @@ class FormatPyramid:
         self.mpp = tuple(reader.pixel_size) if reader.pixel_size else None
         self.z_count, self.t_count = int(reader.z_count), int(reader.t_count)
         self.z_step = reader.z_step
+        self.t_step = getattr(reader, "t_step", None)
         self.image_index = int(reader.image_index)
         self.note = reader.note()
 
@@ -376,6 +379,7 @@ class Description:
     z_count: int = 1
     t_count: int = 1
     z_step: Optional[float] = None
+    t_step: Optional[float] = None
     level_shapes: list = field(default_factory=list)
     images: list = field(default_factory=list)
     image_index: int = 0
@@ -390,7 +394,7 @@ class Description:
                    rgb=bool(reader.rgb), channel_names=list(reader.channel_names),
                    pixel_size=tuple(reader.pixel_size) if reader.pixel_size else None,
                    z_count=int(reader.z_count), t_count=int(reader.t_count),
-                   z_step=reader.z_step,
+                   z_step=reader.z_step, t_step=getattr(reader, "t_step", None),
                    level_shapes=[[int(h), int(w)] for h, w in reader.levels],
                    images=list(reader.images), image_index=int(reader.image_index),
                    note=reader.note())
