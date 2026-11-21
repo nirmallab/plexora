@@ -879,6 +879,72 @@ def apply_strip(engine, packet, answer):
     return {"units": outcomes}
 
 
+def _take_panel(engine, panel):
+    """The session's marker order and each unit's context from `panel`."""
+    engine.record["order"] = [m for m in panel["order"] if m in engine.record["order"]] + \
+        [m for m in engine.record["order"] if m not in panel["order"]]
+    for unit in engine.record["units"].values():
+        entry = panel["entries"].get(unit["marker"])
+        if entry:
+            unit["context"] = {k: entry.get(k) for k in ("canonical", "role", "compartment",
+                                                         "lineage", "binary", "caveats",
+                                                         "expected_fraction", "source",
+                                                         "partners", "named")}
+
+
+def apply_naming(engine, packet, answer):
+    """Round one's names, looked up (`context.apply_names`): a marker whose
+    name the vocabulary knows -- and no other marker of the panel has --
+    gets its entry and partners; the rest go on to be described
+    (`panel_context`). Every asked marker is recorded, `unknown` as None,
+    so none is asked its name twice."""
+    from plexora.plugins.gating.server.autogate import answers, context
+
+    from plexora.ai import vocabulary
+
+    asked = list((packet.get("evidence") or {}).get("unresolved") or ())
+    said, refused = {m: None for m in asked}, []
+    for item in answer.names:
+        if item.marker not in said:
+            refused.append({"marker": item.marker, "reason": "not a marker this packet asked"})
+            continue
+        spellings = [n.strip() for n in (item.name, *item.aliases)
+                     if n.strip() and n.strip().lower() != answers.UNKNOWN_NAME]
+        found = {}
+        for spelling in spellings:
+            hit = vocabulary.canonical(spelling)
+            if hit:
+                found.setdefault(hit, spelling)
+        if len(found) > 1:
+            # The names point to different markers: none of them is used.
+            refused.append({"marker": item.marker, "name": spellings,
+                            "reason": "its names are different markers: "
+                                      + ", ".join(sorted(found))})
+            said[item.marker] = None
+            continue
+        # The spelling the vocabulary knows, else the first given.
+        said[item.marker] = next(iter(found.values()), spellings[0] if spellings else None)
+    project = engine.record["images"][0]
+    panel = context.apply_names(engine.call.session.data(project), said)
+    named = {m: panel["named"][m]["canonical"] for m in asked if m in panel["named"]}
+    for item in panel.get("naming_refused") or ():
+        if item["marker"] in asked:
+            refused.append({"marker": item["marker"], "name": item.get("said"),
+                            "reason": item["reason"]})
+    unknown = [m for m in asked if m not in named and said[m] is None]
+    not_found = [m for m in asked if m not in named and said[m] is not None
+                 and not any(r["marker"] == m for r in refused)]
+    engine.record["naming_pending"] = False
+    engine.record["named"] = {**(engine.record.get("named") or {}), **named}
+    engine.record["unresolved"] = [m for m in panel["unresolved"]
+                                   if m in engine.record["order"]]
+    engine.record["panel_pending"] = bool(engine.record["unresolved"])
+    _take_panel(engine, panel)
+    return {"named": named, "unknown": unknown, "not_in_vocabulary": not_found,
+            "refused": refused, "still_unresolved": engine.record["unresolved"],
+            "order": engine.record["order"]}
+
+
 def apply_panel(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import context
 
@@ -896,15 +962,7 @@ def apply_panel(engine, packet, answer):
             refused.append({"marker": marker, "reason": str(exc)})
     context.save(panel)
     engine.record["panel_pending"] = False
-    engine.record["order"] = [m for m in panel["order"] if m in engine.record["order"]] + \
-        [m for m in engine.record["order"] if m not in panel["order"]]
-    for unit in engine.record["units"].values():
-        entry = panel["entries"].get(unit["marker"])
-        if entry:
-            unit["context"] = {k: entry.get(k) for k in ("canonical", "role", "compartment",
-                                                         "lineage", "binary", "caveats",
-                                                         "expected_fraction", "source",
-                                                         "partners")}
+    _take_panel(engine, panel)
     # A reader's account of the panel is not a fact for every later panel:
     # the vocabulary learns it only once a person confirms it
     # (`set_panel_context`, `context.learn_from`).
@@ -1222,7 +1280,7 @@ def apply_transfer(engine, packet, answer):
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "absence_check": apply_absence,
          "regression_confirm": apply_regression,
-         "t1_strip": apply_strip, "panel_context": apply_panel,
+         "t1_strip": apply_strip, "marker_naming": apply_naming, "panel_context": apply_panel,
          "partner_review": apply_review, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "display_setup": apply_display}

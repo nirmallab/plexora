@@ -450,10 +450,12 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
         jobs.drain(60)
         packet = invoke(session, "gating_next", {"session_id": sid}, link=served)["result"]["packet"]
         while packet["kind"] != "display_setup":
-            assert packet["kind"] in ("panel_context", "partner_review"), packet["kind"]
+            assert packet["kind"] in ("marker_naming", "panel_context", "partner_review"), \
+                packet["kind"]
+            field = "names" if packet["kind"] == "marker_naming" else "entries"
             packet = invoke(session, "gating_answer", {
                 "session_id": sid, "packet_id": packet["packet_id"],
-                "answer": {"kind": packet["kind"], "entries": []}},
+                "answer": {"kind": packet["kind"], field: []}},
                 link=served)["result"]["next"]["packet"]
         rows = [r["marker"] for r in packet["evidence"]["rows"]]
         before = len(tab.seen)

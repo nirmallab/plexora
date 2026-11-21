@@ -2281,6 +2281,7 @@ class Engine(BaseEngine):
         for kind, pending in (
                 ("expression_setup", (record.get("expression") or {}).get("status") == "pending"),
                 ("pixel_setup", (record.get("pixel") or {}).get("status") == "pending"),
+                ("marker_naming", bool(record.get("naming_pending"))),
                 ("panel_context", bool(record.get("panel_pending"))),
                 ("partner_review", bool(record.get("review_pending"))),
                 ("display_setup", bool(display_due)),
@@ -2499,6 +2500,8 @@ class Engine(BaseEngine):
             return "expression_setup", []
         if (record.get("pixel") or {}).get("status") == "pending":
             return "pixel_setup", []
+        if record.get("naming_pending"):
+            return "marker_naming", []
         if record.get("panel_pending"):
             return "panel_context", []
         if record.get("review_pending"):
@@ -2718,6 +2721,7 @@ def phase_for(record, *, mirroring=False) -> str:
         return "summarizing"
     kind = record.get("outstanding_kind")
     if kind in schemas.SETUP_KINDS or kind in schemas.PLAN_KINDS or record.get("panel_pending") \
+            or record.get("naming_pending") \
             or record.get("review_pending") or record.get("state") == "needs_setup":
         return "planning"
     if kind in schemas.LOOK_KINDS:

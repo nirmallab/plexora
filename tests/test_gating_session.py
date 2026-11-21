@@ -144,6 +144,8 @@ class Oracle:
                                                 else direction}}
         if kind in ("panel_context", "partner_review"):
             return {"kind": kind, "entries": []}
+        if kind == "marker_naming":
+            return {"kind": kind, "names": []}
         if kind == "display_setup":
             # The darker half of the ladder for both questions: the rule's own
             # column wherever the numbers allow it.
@@ -1838,6 +1840,10 @@ def test_a_panel_answer_is_not_learned_until_confirmed(tmp_path, monkeypatch):
     session = AgentSession()
     started = start(session, markers=["CD3", "CD8", "Mystery1"])
     assert started["unresolved_markers"] == ["Mystery1"]
+    packet, _ = next_packet(session, started["session_id"])
+    assert packet["kind"] == "marker_naming"
+    answer(session, started["session_id"], packet, {
+        "kind": "marker_naming", "names": [{"marker": "Mystery1", "name": "unknown"}]})
     packet, _ = next_packet(session, started["session_id"])
     assert packet["kind"] == "panel_context"
     outcome = answer(session, started["session_id"], packet, {

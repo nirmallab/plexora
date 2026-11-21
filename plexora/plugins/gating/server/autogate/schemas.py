@@ -109,8 +109,8 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: with what it settles. `partner_review` (the planner's review of every
 #: marker's partners for a stated tissue or disease, each batch asked twice:
 #: `context.settle_review`) comes after the panel context too.
-SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "partner_review",
-                                  "display_setup")
+SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "marker_naming", "panel_context",
+                                  "partner_review", "display_setup")
 #: Re-planning after failures (`replan`): the planning task's, out alone,
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
@@ -160,6 +160,8 @@ NARRATION = {
                      "tissue before trusting any threshold.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
+    "marker_naming": "Working out the standard names of {n} markers the vocabulary does not "
+                     "recognise.",
     "panel_context": "Reading the panel to learn which markers belong together.",
     "partner_review": "Checking which markers belong together in this sample's tissue and "
                       "disease.",

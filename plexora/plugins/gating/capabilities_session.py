@@ -707,6 +707,9 @@ def _plan_fields(call, inp, images, plan) -> dict:
                                   "judges every gate on the pixels")
             units[engines.unit_key(project, marker)] = unit
     unresolved = [m for m in panel["unresolved"] if m in order]
+    # Round one names the markers no spelling or close match resolved
+    # (`marker_naming`); round two describes what that leaves (`panel_context`).
+    naming = [m for m in context.naming_due(panel) if m in order]
     # The planner reviews every marker's partners (`context.review_markers`,
     # each batch twice): it fills empty partner slots whatever the context,
     # and changes a stated relation only for a tissue or disease named or
@@ -719,7 +722,10 @@ def _plan_fields(call, inp, images, plan) -> dict:
     settled = context.review_for(panel, biology_record) if reviewed and not queue else {}
     return {"order": order, "skipped_markers": plan["skipped"], "units": units,
             "panel_hash": panel["panel_hash"], "biology": biology_record,
-            "panel_pending": bool(unresolved), "unresolved": unresolved,
+            "naming_pending": bool(naming), "panel_pending": bool(unresolved),
+            "unresolved": unresolved,
+            "named": {m: n["canonical"] for m, n in (panel.get("named") or {}).items()
+                      if m in order},
             "review_queue": queue, "review_pending": bool(queue),
             "review_batches": len({q["batch"] for q in queue}),
             "partner_review": context.review_brief(settled) if settled.get("done") else None,
@@ -733,7 +739,8 @@ def _unplanned_fields() -> dict:
     """A session waiting on a column it cannot plan without: planned at
     `_settle_setup`."""
     return {"order": [], "skipped_markers": [], "units": {}, "panel_hash": None,
-            "biology": None, "panel_pending": False, "unresolved": [],
+            "biology": None, "naming_pending": False, "panel_pending": False, "unresolved": [],
+            "named": {},
             "review_queue": [], "review_pending": False,
             "review_batches": 0, "partner_review": None, "channel_match": None,
             "pixel": {}, "display": {}, "qc_exclusion": {}, "qc_missing": []}
@@ -1963,6 +1970,8 @@ def _subject(packet):
     kind = packet.get("kind")
     if kind == "expression_setup":
         return "expression source"
+    if kind == "marker_naming":
+        return "marker names"
     if kind == "panel_context":
         return "panel context"
     if kind == "partner_review":

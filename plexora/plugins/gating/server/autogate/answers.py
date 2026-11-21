@@ -214,6 +214,30 @@ class PanelEntry(AgentModel):
                           "`cell` when it belongs to one cell's outline, cytoplasm or nucleus.")
 
 
+#: What a reader says for a marker name it does not recognise.
+UNKNOWN_NAME = "unknown"
+
+
+class MarkerName(AgentModel):
+    marker: str = Field(description="A marker of `unresolved`, exactly as the panel spells it.")
+    name: Annotated[str, clipped(40)] = Field(
+        max_length=40,
+        description="The marker's standard name -- the antibody target as papers name it "
+                    "(FOXP3, CD45RO, E-cadherin), with no fluorophore, cycle or position -- "
+                    f"or `{UNKNOWN_NAME}` when the name does not tell you which marker it is. "
+                    "Never a guess.")
+    aliases: list[Annotated[str, clipped(40)]] = Field(
+        default_factory=list, max_length=3,
+        description="Up to three other names of the same marker -- its gene symbol, CD "
+                    "number or protein name (CDH1, E-cadherin; PTPRC, CD45) -- tried when the "
+                    "first is not found. [] for unknown.")
+
+
+class MarkerNamingAnswer(_Base):
+    kind: Literal["marker_naming"] = "marker_naming"
+    names: list[MarkerName] = Field(max_length=context.MAX_ENTRIES)
+
+
 class PanelContextAnswer(_Base):
     kind: Literal["panel_context"] = "panel_context"
     entries: list[PanelEntry] = Field(max_length=context.MAX_ENTRIES)
@@ -298,8 +322,8 @@ class ReplanAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer, PartnerReviewAnswer, ExpressionSetupAnswer,
-          PixelSetupAnswer, ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
+          TransferAnswer, MarkerNamingAnswer, PanelContextAnswer, PartnerReviewAnswer,
+          ExpressionSetupAnswer, PixelSetupAnswer, ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

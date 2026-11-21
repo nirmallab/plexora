@@ -41,7 +41,7 @@ proposed, or flags an artifact.
 | T4 | The rows said which way: the lattice points that way, nearest first (a capped chain keeps the nearest, never a far anchor), and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once; a mixed row wider than two background sds is split and looked at again (§2d), a narrower one keeps the gate at moderate at most | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
-| Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`), and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
+| Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers -- a close match in code (`vocabulary.close_match`), then their names (`marker_naming`: the standard name or `unknown`, looked up by code), then a description of what is still unknown (`panel_context`) --, and per image how bright each marker is drawn (`display_setup`: a contrast grid, below) | ~0 / ~400 / ~0 / ~850 per 8 markers |
 
 Every look's context sheet draws its tissue fields at `SessionOptions.field_um`
 (400 µm by default, 300-500; `presets.PRESETS["gating_context"]`) converted
@@ -647,6 +647,23 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
+- **A marker is named before it is described.** A panel marker no spelling
+  resolves is tried as a typing slip from one vocabulary marker
+  (`vocabulary.close_match`: a confusable `0`/`O` or `1`/`l`/`I`, a doubled
+  character, two neighbours swapped where one is a letter; one letter
+  inserted, deleted or replaced only on a name of six or more characters and
+  only when the stronger edits found nothing; never a changed digit; two
+  candidates is no match). What is left goes out as one `marker_naming`
+  packet (task `gating.marker_naming`), which asks only for each marker's
+  standard name or `unknown`. A name counts only when `vocabulary.canonical`
+  knows it. A guess, by either route, is refused when the panel already has
+  that marker under its own name or when two markers are guessed as one (DNA
+  and blanks excepted), so a wrong guess cannot take another channel's
+  identity (`context.name_unresolved`). The names are kept with the panel
+  context (`ai_names`) and each marker is asked once; a named entry is the
+  vocabulary's, marked `named: {canonical, by: close_match | ai}`, and is
+  never written to the learned layer. Only what is still unresolved is
+  described in a `panel_context` packet.
 - **A marker is asked about once, anywhere.** What a `panel_context` answer
   (or `set_panel_context`) says about a marker the shipped vocabulary does
   not know is written to the vocabulary's learned layer

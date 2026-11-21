@@ -19,6 +19,18 @@ partners you know (`HLA-DR` for a dendritic or macrophage marker, `CD163` for
 partner misleads the start, so skip what you do not know; never invent one.
 `source: "user"` is for what the user said.
 
+A marker no spelling resolves is first tried as a typing slip from one
+vocabulary marker: a doubled character, a zero typed for an O, the digit
+one, l and I typed for one another, two letters swapped, a letter dropped
+or changed in a long name --
+never a changed digit, never two candidates). What that leaves comes as one
+`marker_naming` packet: give each marker's standard name, or `unknown`. Code
+looks the name up; a name the vocabulary knows, and that no other marker of
+the panel has, gives the marker the vocabulary's entry and partners. Only
+what is still unknown comes as `panel_context`. Each name is asked once per
+panel; the outcome lists `named`, `unknown`, `not_in_vocabulary` and
+`refused`.
+
 What a reader answers in a `panel_context` packet is used by this session
 and listed in the status as `unconfirmed_context`; the vocabulary learns it
 only once the user confirms it (`set_panel_context`, `source: "user"`).
@@ -80,6 +92,8 @@ the markers it cannot place in the panel context.
     `estimate_confirmed`, `adjusted` with your `microns_per_pixel`, or
     `user_stated` with the user's value; only that one is written to the
     project (as `set_pixel_size` would).
+  - `marker_naming`: every marker in `unresolved`, its standard name or
+    `unknown`. A wrong name gives the marker another's partners: never guess.
   - `panel_context`: as above, only what you know.
   - `partner_review`: as above; nothing to change is an empty answer.
   - `display_setup`: how bright each marker is drawn, once per image (the

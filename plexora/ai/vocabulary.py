@@ -531,6 +531,89 @@ def synonym(name, *, learned=True) -> str | None:
     return None
 
 
+#: Characters a keyboard or a font swaps for one another: a typed `0` for an
+#: `O` (`CD45R0`), a `1`, an `l` and an `I` for one another (`E-cadherln`).
+#: Tried one position at a time.
+CONFUSABLE = {"0": "o", "o": "0", "1": "li", "l": "1i", "i": "1l"}
+#: [cal] The shortest folded name a one-letter edit is tried on: shorter
+#: names sit one letter from too many real markers (CD3E, CD8A; HLA-DR,
+#: -DQ and -DP) to guess.
+MIN_LETTER_EDIT = 6
+
+
+def _strong_edits(key):
+    """Keys one typing slip from `key` that never change a marker's number:
+    a confusable swapped (`CD45R0` -> `cd45ro`), a doubled character dropped
+    (`FOXP33`, `Vimmentin`), two neighbours swapped where one is a letter
+    (`FXOP3`). Two digits swapped are not tried: CD146 and CD164 are both
+    markers."""
+    for i, ch in enumerate(key):
+        for other in CONFUSABLE.get(ch, ""):
+            yield key[:i] + other + key[i + 1:]
+        if i and key[i - 1] == ch:
+            yield key[:i] + key[i + 1:]
+        if i and key[i - 1] != ch and not (ch.isdigit() and key[i - 1].isdigit()):
+            yield key[:i - 1] + ch + key[i - 1] + key[i + 1:]
+
+
+def _one_letter_apart(a, b) -> bool:
+    """`a` and `b` differ by one letter inserted, deleted or replaced -- never
+    by a digit, which names another marker (CD4 and CD8)."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [(x, y) for x, y in zip(a, b) if x != y]
+        return len(diff) == 1 and diff[0][0].isalpha() and diff[0][1].isalpha()
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    for i, ch in enumerate(long_):
+        if long_[:i] + long_[i + 1:] == short:
+            return ch.isalpha()
+    return False
+
+
+def close_match(name, *, learned=True) -> dict | None:
+    """The one vocabulary marker a misspelt `name` is a typing slip from, or
+    None. Only for a name `canonical` does not know; never a guess:
+
+    - **strong** (`_strong_edits`): a confusable `0`/`O` or `1`/`l`/`I`, a
+      doubled character, two neighbours swapped -- the marker's number is
+      never changed;
+    - **letter**: one letter inserted, deleted or replaced, on a name of at
+      least `MIN_LETTER_EDIT` characters (folded), and only when no strong
+      edit found anything.
+
+    Each spelling of the name is tried (`_variants`: a fluorophore, cycle or
+    position stripped). Two different markers within reach -- `CD45RU` is a
+    letter from CD45RA and CD45RO -- is no match. Returns {canonical,
+    spelling (the vocabulary key it matched), edit: strong | letter}."""
+    if canonical(name, learned=learned) is not None:
+        return None
+    lookup = _lookup(learned)
+    keys = [k for k in dict.fromkeys(fold(v) for v in _variants(name)) if k]
+    found = {}
+    for key in keys:
+        for edited in _strong_edits(key):
+            hit = lookup.get(edited)
+            if hit:
+                found.setdefault(hit, edited)
+    edit = "strong"
+    if not found:
+        edit = "letter"
+        for key in keys:
+            if len(key) < MIN_LETTER_EDIT:
+                continue
+            for spelling, hit in lookup.items():
+                if _one_letter_apart(key, spelling):
+                    found.setdefault(hit, spelling)
+    if len(found) != 1:
+        return None
+    (hit, spelling), = found.items()
+    if hit in (NUCLEAR, AUTOFLUORESCENCE):
+        # Those resolve by pattern, never by a near spelling.
+        return None
+    return {"canonical": hit, "spelling": spelling, "edit": edit}
+
+
 def structural(name) -> str | None:
     """`DNA` for a nuclear counterstain, `Autofluorescence` for a control
     channel, else None -- by name pattern, not by a list of spellings, so a
