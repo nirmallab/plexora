@@ -309,6 +309,8 @@ def route_bench_command(args) -> int:
     m = evaluation["metrics"]
     if evaluation.get("bench_version", "").startswith("naming"):
         _print_naming(f"{args.route} for {args.feature}", evaluation)
+    elif evaluation.get("bench_version", "").startswith("contrast"):
+        _print_contrast(f"{args.route} for {args.feature}", evaluation)
     else:
         _print_gating(args, scenarios, m)
     if not args.submit:
@@ -352,6 +354,37 @@ def naming_bench_command(args) -> int:
     start, end = text.find("{"), text.rfind("}")
     scored = naming_bench.score(text[start:end + 1] if start >= 0 < end else text)
     _print_naming("Marker naming", scored)
+    return 0 if scored["metrics"]["invalid_answer_rate"] == 0 else 1
+
+
+def _print_contrast(title: str, scored: dict) -> None:
+    m = scored["metrics"]
+    print(f"{title}: tiles {m['tile_balanced_accuracy']:.3f} balanced (stained {m['tiles_stained_right']:.0%} "
+          f"right, unstained {m['tiles_unstained_right']:.0%} right, {m['tiles']} tiles), "
+          f"brightness picks {m['structure_agreement']:.3f}")
+    for row in scored["rows"][:20]:
+        print(f"  {row['scene']:16} {row['marker']:6} {row['tile']:3} value {row['value']}: "
+              f"{'stained' if row['stained'] else 'unstained'}, said "
+              f"{'stained' if row['said_stained'] else 'unstained'}")
+    if "seconds_per_image" in m:
+        print(f"  {_credits(m.get('cost_micro_per_image') or 0)} per scene at cost, {m['seconds_per_image']} s")
+
+
+def contrast_bench_command(args) -> int:
+    """`plexora ai contrast-bench --write DIR | --score DIR`: the contrast-check
+    bench for a model asked outside the gateway (no credits)."""
+    from plexora.ai import contrast_bench
+
+    if args.write:
+        items = contrast_bench.write(args.write)
+        print(f"Wrote {len(items)} scenes under {args.write}: answer each <scene>/question.txt "
+              "(its pictures beside it) into <scene>/answer.json, then --score.")
+        return 0
+    if not args.score:
+        print("Give --write DIR to write the packets, or --score DIR to score the answers.", file=sys.stderr)
+        return 2
+    scored = contrast_bench.score_directory(args.score)
+    _print_contrast("Contrast check", scored)
     return 0 if scored["metrics"]["invalid_answer_rate"] == 0 else 1
 
 

@@ -30,7 +30,7 @@ import numpy as np
 
 #: The bench version each module -- or task with its own bench -- is on;
 #: mirrors catalog.ts BENCH (a test keeps them equal).
-BENCH_VERSIONS = {"gating": "gating-3", "gating.marker_naming": "naming-1"}
+BENCH_VERSIONS = {"gating": "gating-3", "gating.marker_naming": "naming-1", "gating.display": "contrast-1"}
 DEFAULT_MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
@@ -59,6 +59,11 @@ def bench_route(route: str, *, feature: str = "gating", capability: str = "visio
         from plexora.ai import naming_bench
 
         return naming_bench.bench_route(route, gateway=gateway)
+    if feature == "gating.display":
+        # The contrast check: one packet per synthetic scene (`plexora.ai.contrast_bench`).
+        from plexora.ai import contrast_bench
+
+        return contrast_bench.bench_route(route, gateway=gateway)
     provider, model = split_route(route)
     markers = tuple(markers or DEFAULT_MARKERS)
     gateway = gateway or GatewayClient(dev=True)

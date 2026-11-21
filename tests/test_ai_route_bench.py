@@ -241,3 +241,68 @@ def test_the_naming_bench_asks_the_candidate_through_the_dev_route():
     assert evaluation["bench_version"] == "naming-1" and evaluation["feature"] == "gating.marker_naming"
     m = evaluation["metrics"]
     assert m["naming_accuracy"] == 1.0 and m["wrong_name_rate"] == 0.0 and m["failure_rate"] == 0.0
+
+
+# -- the contrast-check bench ------------------------------------------------------
+
+
+@pytest.fixture
+def contrast_items():
+    # Per test: a session needs the Pro licence each `pro` test installs for itself.
+    from plexora.ai import contrast_bench
+
+    return contrast_bench.collect()
+
+
+def _contrast(items, stained):
+    """An answer per scene: `stained(item, marker, tile)` says what each tile shows."""
+    from plexora.ai import contrast_bench
+
+    return {item["scene"]: {
+        "background_ok": {},
+        "structure_ok": {m: [c for c, lv in cols.items() if contrast_bench.structure_truth(lv)]
+                         for m, cols in item["levels"].items()},
+        "bright_artifact": {m: [t for t in ts if t[0] == "b" and not stained(item, m, t)]
+                            for m, ts in item["truth"].items()},
+        "dim_stained": {m: [t for t in ts if t[0] == "d" and stained(item, m, t)]
+                        for m, ts in item["truth"].items()}} for item in items}
+
+
+@pytest.mark.pro
+def test_the_contrast_bench_scores_tiles_by_their_cells_truth(contrast_items):
+    from plexora.ai import contrast_bench
+
+    assert [i["scene"] for i in contrast_items] == [s for s, _ in contrast_bench.SCENES]
+    # Every scene's strip holds both kinds of tile, and a negative shows only background.
+    for item in contrast_items:
+        kinds = {own for tiles in item["truth"].values() for own in tiles.values()}
+        assert kinds == {True, False}, item["scene"]
+    bare = [item["values"][m][t] for item in contrast_items if item["scene"] == "contrast_dim"
+            for m, ts in item["truth"].items() for t, own in ts.items() if not own]
+    assert bare and max(bare) < 50          # the background is 40
+    right = contrast_bench.score(contrast_items, _contrast(contrast_items, lambda i, m, t: i["truth"][m][t]))
+    assert right["metrics"]["tile_balanced_accuracy"] == 1.0 and right["metrics"]["structure_agreement"] == 1.0
+    # Calling every tile stained is half right, however few tiles are unstained.
+    every = contrast_bench.score(contrast_items, _contrast(contrast_items, lambda *_: True))
+    assert every["metrics"]["tile_balanced_accuracy"] == 0.5
+    assert contrast_bench.score(contrast_items, {})["metrics"]["failure_rate"] == 1.0
+
+
+@pytest.mark.pro
+def test_the_contrast_bench_asks_the_candidate_through_the_dev_route(contrast_items):
+    from plexora.ai import contrast_bench
+
+    answers = _contrast(contrast_items, lambda *_: True)
+
+    def brain(packet, body):
+        assert packet["kind"] == "display_setup"
+        scene = next(i["scene"] for i in contrast_items if i["packet"]["evidence"] == packet["evidence"])
+        return {"kind": "display_setup", **answers[scene]}
+
+    with FakeGateway(brain) as gateway:
+        client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), dev=True, sleep=lambda s: None)
+        evaluation = route_bench.bench_route("openai/gpt-test", feature="gating.display", gateway=client)
+    assert len(gateway.calls) == len(contrast_items)
+    assert {c["body"]["task"] for c in gateway.calls} == {"plexora.gating.display"}
+    assert evaluation["bench_version"] == "contrast-1"
+    assert evaluation["metrics"]["tile_balanced_accuracy"] == 0.5 and evaluation["metrics"]["failure_rate"] == 0.0

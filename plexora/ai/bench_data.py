@@ -235,6 +235,23 @@ SPATIAL_SCENARIOS = {
     "graph_only": {"spill": {"CD3": 6.0}, "dim": {"CD3": 0.25}, "blank": True},
 }
 
+#: The contrast-check bench's scenes (`plexora.ai.contrast_bench`), apart from
+#: SPATIAL_SCENARIOS so `--synthetic spatial` runs what it always ran. In
+#: these a truly negative cell carries none of the marker (`clean_negatives`):
+#: its pixels are the background's, plus whatever spill or haze the scene
+#: adds -- elsewhere every cell draws the marker's ring or nucleus at its own
+#: level, so a negative shows a faint copy of the stain a reader cannot tell
+#: from a dim positive's.
+CONTRAST_SCENARIOS = {
+    "contrast_spill": {**SPATIAL_SCENARIOS["dense_spill"], "clean_negatives": True},
+    "contrast_dim": {**SPATIAL_SCENARIOS["dim_positive"], "clean_negatives": True},
+    "contrast_mixed": {**SPATIAL_SCENARIOS["heterogeneous"], "clean_negatives": True},
+}
+
+
+def _spec(scenario):
+    return SPATIAL_SCENARIOS.get(scenario) or CONTRAST_SCENARIOS[scenario]
+
 
 def _spatial_layout(size, rng, *, dense_per_side=36):
     """Cell centres: the left half on a grid of spacing size/dense_per_side,
@@ -291,7 +308,7 @@ def spatial_scene(*, scenario="dense_spill", size=1024, seed=0,
     """(image (C, size, size) uint16, labels, cells, channels, painted) for a
     spatial scenario. `cells[i][marker]` is the per-label mean of the painted
     plane -- what a mask mean reads; `painted` holds the truth by cause."""
-    spec = SPATIAL_SCENARIOS[scenario]
+    spec = _spec(scenario)
     rng = np.random.default_rng(seed)
     centres, regions, spacing = _spatial_layout(size, rng, dense_per_side=dense_per_side)
     radius = 0.4 * spacing
@@ -328,8 +345,13 @@ def spatial_scene(*, scenario="dense_spill", size=1024, seed=0,
                                                        + np.log1p(cell_level))), cell_level)
         plane = image[index]
         where = ring if name in MEMBRANE else nucleus
+        base = plane.copy() if spec.get("clean_negatives") else None
         plane[inside] = negative_level
         plane[where] = cell_level[owner[where]]
+        if base is not None:
+            # A truly negative cell carries none of the marker: the background shows through.
+            bare = inside & ~truth[np.maximum(owner, 0)]
+            plane[bare] = base[bare]
         fraction = (spec.get("spill") or {}).get(name)
         clean_mean = None
         if fraction:
@@ -400,7 +422,7 @@ def register_spatial(data_root, name, *, scenario="dense_spill", size=1024, seed
                                                ColumnRoles, DataSpec, ImageSpec, Project,
                                                SegmentationSpec)
 
-    spec = SPATIAL_SCENARIOS[scenario]
+    spec = _spec(scenario)
     mask = spec.get("mask", True) if mask is None else mask
     calibrated = spec.get("calibrated", True) if calibrated is None else calibrated
     blank = bool(spec.get("blank"))

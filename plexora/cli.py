@@ -1879,8 +1879,10 @@ def _build_ai_parser():
                                                       "route, and optionally submit the evaluation.")
     route_bench.add_argument("route", metavar="PROVIDER/MODEL",
                              help="The candidate, e.g. openai/gpt-6.1-sol or orcarouter/claude-opus-5-5.")
-    route_bench.add_argument("--feature", default="gating", choices=("gating", "gating.marker_naming"),
-                             help="The module, or a task with its own bench (gating.marker_naming).")
+    route_bench.add_argument("--feature", default="gating",
+                             choices=("gating", "gating.marker_naming", "gating.display"),
+                             help="The module, or a task with its own bench (gating.marker_naming, "
+                                  "gating.display: the contrast check).")
     route_bench.add_argument("--capability", default="vision_judgement",
                              choices=("vision_judgement", "vision_routine"))
     route_bench.add_argument("--synthetic", default="easy,hard", metavar="SCENARIOS",
@@ -1898,6 +1900,13 @@ def _build_ai_parser():
     naming.add_argument("--packet", action="store_true", help="Print the question (and the answer's shape).")
     naming.add_argument("--score", default=None, metavar="FILE",
                         help="Score a model's JSON answer ('-' reads it from standard input).")
+    contrast = subs.add_parser("contrast-bench", help="The contrast-check bench without the gateway: "
+                                                      "write its packets and pictures for any model, "
+                                                      "then score the answers.")
+    contrast.add_argument("--write", default=None, metavar="DIR",
+                          help="Write <scene>/question.txt and its pictures under DIR.")
+    contrast.add_argument("--score", default=None, metavar="DIR",
+                          help="Score the <scene>/answer.json files under DIR.")
     from plexora.vision import cli as segment_cli
 
     segment_cli.add_parser(subs)
@@ -2038,7 +2047,7 @@ def _run_ai(args):
         from plexora.ai.setup import models_command
 
         return models_command(args.action, force=args.force)
-    if command in ("route-bench", "naming-bench"):
+    if command in ("route-bench", "naming-bench", "contrast-bench"):
         from plexora.ai.harness import cli as harness_cli
 
         return getattr(harness_cli, f"{command.replace('-', '_')}_command")(args)
