@@ -29,7 +29,7 @@ import urllib.request
 import numpy as np
 
 #: The bench version each module is on; mirrors catalog.ts BENCH (a test keeps them equal).
-BENCH_VERSIONS = {"gating": "gating-1"}
+BENCH_VERSIONS = {"gating": "gating-2"}
 DEFAULT_MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
@@ -105,10 +105,26 @@ def bench_route(route: str, *, feature: str = "gating", capability: str = "visio
             else:
                 os.environ["PLEXORA_DATA_PATH"] = previous
             paths.reset()
+    measured = metrics(rows, images)
+    measured["oracle_code_agreement"] = oracle_code_agreement(scenarios, markers, seed=seed, grid=grid, size=size)
     return {"feature": feature, "capability": capability, "provider": provider, "model": model,
-            "bench_version": BENCH_VERSIONS[feature], "metrics": metrics(rows, images),
+            "bench_version": BENCH_VERSIONS[feature], "metrics": measured,
             "dataset_ids": [f"synthetic:{s}:seed{seed + i}:grid{grid}" for i, s in enumerate(scenarios)],
             "plexora_version": _version(), "images": images}
+
+
+def oracle_code_agreement(scenarios, markers, *, seed=0, grid=24, size=1024) -> float:
+    """The ceiling the route is held to (gating-2): the median code agreement
+    of the scripted reader that answers every packet from the truth, on the
+    same scenes (the same seeds). The scenes carry overlaps no reader resolves,
+    so this is below 1; it costs no model call."""
+    from plexora.ai import bench
+
+    rows = bench.run_synthetic(tuple(scenarios), "oracle", arms=("session",), seed=seed,
+                               markers=tuple(markers), grid=grid, size=size)
+    codes = [r["code_agreement"] for r in rows
+             if r["marker"] == "*code*" and r.get("code_agreement") is not None]
+    return round(float(np.median(codes)), 4) if codes else 0.0
 
 
 def metrics(rows: list, images: list) -> dict:
@@ -144,6 +160,9 @@ def submit(evaluation: dict, *, admin_token: str, base_url: str | None = None) -
     body = {k: evaluation[k] for k in ("feature", "capability", "provider", "model", "bench_version", "metrics",
                                        "dataset_ids", "plexora_version")}
     body["metrics"] = {k: v for k, v in body["metrics"].items() if isinstance(v, (int, float))}
+    # The gateway files evaluations under the module id its task assignments use (`plexora.gating`).
+    if "." not in body["feature"] and body["feature"] != "*":
+        body["feature"] = f"plexora.{body['feature']}"
     request = urllib.request.Request(f"{base}/admin/api/ai/evaluations", method="POST",
                                      data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json",

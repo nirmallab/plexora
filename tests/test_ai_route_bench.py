@@ -83,10 +83,14 @@ def test_a_candidate_route_is_gated_through_the_dev_route_and_scored(monkeypatch
     assert {c["body"]["model"] for c in gateway.calls} == {"openai/gpt-test"}
     assert not any("capability" in c["body"] for c in gateway.calls)
     assert evaluation["provider"] == "openai" and evaluation["model"] == "gpt-test"
-    assert evaluation["bench_version"] == "gating-1"
+    assert evaluation["bench_version"] == "gating-2"
     m = evaluation["metrics"]
     assert evaluation["images"][0]["status"] == "done", evaluation["images"]
     assert m["code_agreement"] >= 0.95 and m["marker_f1"] >= 0.9, m
+    # The ceiling is the truth reader on the same scene, gated without the gateway: the truth reader
+    # answering through the route reaches it, which is what gating-2 asks of a model.
+    assert 0 < m["oracle_code_agreement"] <= 1
+    assert m["code_agreement"] >= m["oracle_code_agreement"] - 0.02, m
     assert m["invalid_answer_rate"] == 0.0 and m["failure_rate"] == 0.0
     usage = [c["usage"] for c in gateway.calls]
     read = sum(u["cache_read"] for u in usage)
@@ -117,7 +121,7 @@ def test_an_evaluation_is_submitted_with_the_admin_token_and_numbers_only():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         evaluation = {"feature": "gating", "capability": "vision_judgement", "provider": "openai",
-                      "model": "gpt-test", "bench_version": "gating-1", "dataset_ids": ["synthetic:easy"],
+                      "model": "gpt-test", "bench_version": "gating-2", "dataset_ids": ["synthetic:easy"],
                       "plexora_version": "0.0.27", "images": [{"reason": "kept local"}],
                       "metrics": {"code_agreement": 0.99, "bte_per_packet": None}}
         verdict = route_bench.submit(evaluation, admin_token="adm",
@@ -128,6 +132,7 @@ def test_an_evaluation_is_submitted_with_the_admin_token_and_numbers_only():
     assert verdict["passed"] is True
     assert seen["path"] == "/admin/api/ai/evaluations" and seen["auth"] == "Bearer adm"
     assert seen["body"]["metrics"] == {"code_agreement": 0.99}
+    assert seen["body"]["feature"] == "plexora.gating"
     assert "images" not in seen["body"]
 
 
