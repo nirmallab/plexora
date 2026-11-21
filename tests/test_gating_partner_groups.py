@@ -97,6 +97,32 @@ def test_a_group_is_one_expected_tile_and_an_incomplete_one_falls_back():
         assert all("members" not in p for p in plan)
 
 
+def test_the_not_expected_tile_is_the_sibling_the_expected_tile_cannot_tell_apart():
+    """CD3 shows a CD4 cell and a CD8 cell alike; CD20's B cells are already dark
+    for CD3. So beside CD3 the not-expected tile is CD8 -- before the surer CD20 --
+    and for CD8 it is CD4, the broader of two siblings (FOXP3 is inside CD4).
+    Every cell is inside CD45, so only the expected partner shown counts."""
+    from plexora.plugins.gating.server.autogate.partners import partner_plan
+
+    entries = _entries(
+        CD4=[("CD45", "subset", "high"), ("CD3", "coexpressed", "moderate"),
+             ("CD8", "exclusive", "moderate"), ("CD20", "exclusive", "high")],
+        CD8=[("CD3", "subset", "high"), ("CD45", "subset", "high"), ("FOXP3", "exclusive", "high"),
+             ("CD4", "exclusive", "moderate"), ("CD20", "exclusive", "high")],
+        CD3=[("CD45", "subset", "high")], CD20=[("CD45", "subset", "high")],
+        FOXP3=[("CD4", "subset", "moderate"), ("CD3", "subset", "moderate")])
+    present = {"CD3", "CD4", "CD8", "CD20", "CD45", "FOXP3"}
+
+    def tiles(marker):
+        return {p["kind"]: p["marker"] for p in partner_plan(entries, marker, present - {marker}, {}, 1)}
+
+    assert tiles("CD4") == {"co": "CD3", "anti": "CD8"}
+    assert tiles("CD8") == {"co": "CD3", "anti": "CD4"}
+    # Without a sibling on the panel, confidence decides as before.
+    assert {p["kind"]: p["marker"] for p in partner_plan(entries, "CD4", present - {"CD4", "CD8"}, {}, 1)} \
+        == {"co": "CD3", "anti": "CD20"}
+
+
 def test_the_tree_and_the_references_never_read_a_group_or_a_proposal():
     from plexora.plugins.gating.server.autogate import context, hierarchy
 

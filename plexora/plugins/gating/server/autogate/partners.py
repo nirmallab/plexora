@@ -90,11 +90,29 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
         if name in co:
             del anti[name]
 
+    group = _group(entries, marker, rel, present, gated, told)
+    # The expected tile shows the cells the marker's positives belong to. A
+    # not-expected partner that lives in those same cells -- a sibling, as
+    # CD8 is beside CD4 inside CD3 -- is the only tile that tells the two
+    # apart; one the expected tile already rules out (CD20: its cells are
+    # CD3-negative) says the same thing twice. Siblings rank first among the
+    # not-expected, before a gated partner: a gate vouches for a channel, a
+    # sibling is what the reader cannot judge without. Only the expected
+    # partner the tile shows counts (`shown`, set below once `co` is ranked):
+    # every cell is inside a broad partner such as CD45 or b2m.
+    shown = set()
+
+    def sibling(name):
+        return any((name, b) in rel and rel[(name, b)][0] in ("subset", "coexpressed") for b in shown)
+
     def rank(table, specific):
         def key(name):
             conf, steps, _r, proposed = table[name]
             broader = specific and any(name in ups(other) for other in table if other != name)
-            return (proposed, name not in gated, broader, -conf, steps,
+            # Of two siblings, the broader: FOXP3 is inside CD4, so CD4 tells more cells apart.
+            narrower = not specific and sibling(name) and any(
+                name in downs(other) for other in table if other != name and sibling(other))
+            return (proposed, specific or not sibling(name), narrower, name not in gated, broader, -conf, steps,
                     -(abundance.get(name) or 0.0), name)
         return sorted(table, key=key)
 
@@ -110,7 +128,14 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
     dedupe(anti)
 
     words = {v: k for k, v in _CONFIDENCE.items()}
-    group = _group(entries, marker, rel, present, gated, told)
+    # The expected tile: the subset_any group when one leads, else the first expected partner.
+    lead = [b for b in rank(co, True) if not (group and b in group[0])]
+    if group and not group[2]:
+        shown.update(group[0])
+    elif lead and not co[lead[0]][3]:
+        shown.add(lead[0])
+    elif group:
+        shown.update(group[0])
     out = {"co": [], "anti": []}
     for kind, table, specific in (("co", co, True), ("anti", anti, False)):
         for name in rank(table, specific):
