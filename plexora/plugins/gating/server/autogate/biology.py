@@ -34,11 +34,18 @@ from __future__ import annotations
 
 import copy
 import functools
+import re
 
 from plexora.ai import vocabulary
 
 SOURCES = ("user", "metadata", "inferred")
-KINDS = ("tissue", "disease")
+#: The context kinds the graph may hold: the graph's own list, so a kind its
+#: schema accepts is never refused here (graph 2026-11-21.2 added
+#: `anatomical_site` and `process`). Every kind is read the same way.
+try:
+    from biocognia_markers.graph import CONTEXT_KINDS as KINDS
+except ImportError:                                    # biocognia_markers before 0.2
+    KINDS = ("tissue", "disease", "anatomical_site", "process")
 #: What a look is told of the Context Interpreter's reading (beside `said`).
 INTERPRETATION_KEYS = ("populations_of_interest", "markers_mentioned_for_context",
                        "ambiguities", "confidence")
@@ -70,9 +77,10 @@ def project_metadata(call, project) -> dict:
 
 
 def load() -> dict:
-    """{version, contexts, lookup}: the graph's tissue and disease contexts in
-    Plexora's names -- each {name, kind, synonyms, structures, expect,
-    relations, indicators} -- read again whenever the vocabulary is."""
+    """{version, contexts, lookup}: the graph's contexts (tissues, diseases,
+    anatomical sites, processes) in Plexora's names -- each {name, kind,
+    synonyms, structures, expect, relations, indicators} -- read again
+    whenever the vocabulary is."""
     return _load(vocabulary.version())
 
 
@@ -90,7 +98,7 @@ def _load(version) -> dict:
             return [names[a] for a in graph.anchors(graphmod.family_slug(ref))]
         return [names.get(ref, ref)]
 
-    contexts, lookup = {}, {}
+    contexts, lookup, capitals, lower = {}, {}, set(), set()
     for key, item in graph.contexts.items():
         entry = {"name": key, "kind": item.get("kind"),
                  "synonyms": list(item.get("synonyms") or ()),
@@ -121,7 +129,11 @@ def _load(version) -> dict:
         contexts[key] = entry
         for alias in [key, *entry["synonyms"]]:
             lookup.setdefault(vocabulary.fold(alias), key)
-    return {"version": version, "contexts": contexts, "lookup": lookup}
+            (capitals if str(alias).isupper() else lower).add(vocabulary.fold(alias))
+    # A name the graph writes only in capitals (AS, ES, ARMS) is an acronym:
+    # said only in capitals, so "as stated" is not angiosarcoma.
+    return {"version": version, "contexts": contexts, "lookup": lookup,
+            "acronyms": capitals - lower}
 
 
 def version() -> str:
@@ -130,17 +142,34 @@ def version() -> str:
 
 def match(text) -> list:
     """The known contexts named anywhere in `text` (a request, a metadata
-    value), longest names first so `cutaneous melanoma` is not read as two."""
+    value), longest names first so `cutaneous melanoma` is not read as two.
+    A name is read as a run of the text's whole words, a plural allowed
+    (`melanomas`), never inside a word or across one: "of the skin" does not
+    say `ES` (Ewing sarcoma), nor "punch biopsy" `CHB` (hepatitis B). An
+    acronym is said only in capitals: "as stated" is not `AS` (angiosarcoma)."""
     if not text:
         return []
-    folded = vocabulary.fold(text)
-    found = []
-    for alias in sorted(load()["lookup"], key=len, reverse=True):
-        if alias and alias in folded:
-            name = load()["lookup"][alias]
-            if name not in found:
-                found.append(name)
-            folded = folded.replace(alias, " ")
+    loaded = load()
+    lookup, acronyms = loaded["lookup"], loaded["acronyms"]
+    raw = [w for w in re.findall(r"\w+", str(text)) if vocabulary.fold(w)]
+    words = [vocabulary.fold(w) for w in raw]
+    hits = []                                   # (alias, first word, past the last)
+    for start in range(len(words)):
+        joined = ""
+        for end in range(start, len(words)):
+            joined += words[end]
+            capitals = all(w.isupper() or w.isdigit() for w in raw[start:end + 1])
+            for alias in (joined, joined[:-1] if joined.endswith("s") else None,
+                          joined[:-2] if joined.endswith("es") else None):
+                if alias and alias in lookup and (capitals or alias not in acronyms):
+                    hits.append((alias, start, end + 1))
+    found, used = [], set()
+    for alias, start, end in sorted(hits, key=lambda h: (-len(h[0]), h[1])):
+        if used.intersection(range(start, end)):
+            continue
+        used.update(range(start, end))
+        if lookup[alias] not in found:
+            found.append(lookup[alias])
     return found
 
 

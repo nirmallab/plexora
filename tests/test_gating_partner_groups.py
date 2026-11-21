@@ -44,10 +44,11 @@ def test_the_vocabulary_names_groups_and_leaves_tissue_dependent_markers_to_the_
     vocabulary.clear_cache()
     entries = vocabulary.load()["entries"]
     tigit = {p["marker"] for p in entries["TIGIT"]["partners"] if p["relation"] == "subset_any"}
-    assert tigit == {"CD3", "CD4", "CD8", "CD56"}
-    # Which cells carry PD-L1 depends on the tumour: no partner, a note instead.
-    assert entries["PDL1"]["partners"] == []
-    assert "myeloid" in entries["PDL1"]["expression"]
+    # Graph 2026-11-21.2: T or NK cells, NK cells named by CD56, CD16 or NKp46.
+    assert tigit == {"CD3", "CD4", "CD8", "CD56", "CD16", "NKp46"}
+    # Which cells carry CD39 depends on the tissue: no partner, a note instead.
+    assert entries["CD39"]["partners"] == []
+    assert "tissue" in entries["CD39"]["expression"]
     gated = [e for e in entries.values() if e.get("role") not in ("context",)]
     assert all(e.get("expression") for e in gated)
     with pytest.raises(ValueError, match="one subset_any partner is a subset"):
@@ -58,10 +59,10 @@ def test_the_vocabulary_names_groups_and_leaves_tissue_dependent_markers_to_the_
 def test_a_panel_missing_a_lineage_of_a_group_says_so():
     from plexora.plugins.gating.server.autogate import context
 
-    whole = context.build(["CD3", "CD4", "CD8", "CD56", "TIGIT"])
+    whole = context.build(["CD3", "CD4", "CD8", "CD56", "CD16", "NKp46", "TIGIT"])
     assert "subset_any_missing" not in whole["entries"]["TIGIT"]
     part = context.build(["CD3", "TIGIT"])
-    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD4", "CD8", "CD56"]
+    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD4", "CD8", "CD16", "CD56", "NKp46"]
     assert {(p["marker"], p["relation"]) for p in part["entries"]["TIGIT"]["partners"]
             if p["relation"] == "subset_any"} == {("CD3", "subset_any")}
 
@@ -143,8 +144,8 @@ def test_the_tree_and_the_references_never_read_a_group_or_a_proposal():
 def test_a_proposal_is_held_to_the_rules_a_prompt_cannot_keep():
     from plexora.plugins.gating.server.autogate import context
 
-    panel = context.build(["CD45", "CD3", "CD20", "CD68", "CD11c", "PanCK", "PD-L1", "DNA"])
-    kept, refused = context.check_proposal(panel, "PD-L1", [
+    panel = context.build(["CD45", "CD3", "CD20", "CD68", "CD11c", "PanCK", "CD39", "DNA"])
+    kept, refused = context.check_proposal(panel, "CD39", [
         {"marker": "CD68", "relation": "subset_any", "confidence": "high",
          "basis": "mostly myeloid: macrophages"},
         {"marker": "CD11c", "relation": "subset_any", "basis": "dendritic cells"},
@@ -163,11 +164,11 @@ def test_a_proposal_is_held_to_the_rules_a_prompt_cannot_keep():
     assert "panel" in why["DNA"]              # a counterstain is no partner
     assert sum(r["marker"] == "CD68" for r in refused) == 1
     # Two subsets that exclude each other cannot both hold; a lone group is a subset.
-    kept, refused = context.check_proposal(panel, "PD-L1", [
+    kept, refused = context.check_proposal(panel, "CD39", [
         {"marker": "CD3", "relation": "subset", "basis": "T cells"},
         {"marker": "CD20", "relation": "subset", "basis": "B cells"}])
     assert kept == [] and {r["marker"] for r in refused} == {"CD3", "CD20"}
-    kept, _ = context.check_proposal(panel, "PD-L1", [
+    kept, _ = context.check_proposal(panel, "CD39", [
         {"marker": "CD68", "relation": "subset_any", "basis": "macrophages"}])
     assert kept[0]["relation"] == "subset"
 
@@ -175,8 +176,8 @@ def test_a_proposal_is_held_to_the_rules_a_prompt_cannot_keep():
 def test_tiles_only_proposals_fill_empty_slots_per_context_and_nothing_else():
     from plexora.plugins.gating.server.autogate import biology, context
 
-    panel = context.build(["CD45", "CD3", "CD68", "PanCK", "PD-L1", "Ki67", "DAPI"])
-    assert context.empty_slots(panel, "PD-L1") == {"co", "anti"}
+    panel = context.build(["CD45", "CD3", "CD68", "PanCK", "CD39", "Ki67", "DAPI"])
+    assert context.empty_slots(panel, "CD39") == {"co", "anti"}
     assert context.empty_slots(panel, "CD45") == {"co"}            # it excludes Pan-CK
     assert context.empty_slots(panel, "CD68") == set()
     assert "DAPI" not in context.review_markers(panel, None, panel["markers"])
@@ -186,16 +187,16 @@ def test_tiles_only_proposals_fill_empty_slots_per_context_and_nothing_else():
     group = [{"marker": "CD68", "relation": "subset_any", "confidence": "low", "basis": "b"},
              {"marker": "PanCK", "relation": "subset_any", "confidence": "low", "basis": "b"}]
     context.store_proposals(panel, crc, {
-        "PD-L1": group,
+        "CD39": group,
         # A filled slot is never drawn from a proposal: CD68 has its partners.
         "CD68": [{"marker": "CD3", "relation": "coexpressed", "confidence": "low",
                   "basis": "b"}]})
     over = biology.overlay(panel, crc)
-    laid = over["entries"]["PD-L1"]["partners"]
+    laid = over["entries"]["CD39"]["partners"]
     assert [p["marker"] for p in laid] == ["CD68", "PanCK"] and all(p["proposed"] for p in laid)
     assert all(not p.get("proposed") for p in over["entries"]["CD68"]["partners"])
-    assert panel["entries"]["PD-L1"]["partners"] == []          # the stored panel is untouched
-    assert biology.overlay(panel, melanoma)["entries"]["PD-L1"]["partners"] == []
+    assert panel["entries"]["CD39"]["partners"] == []          # the stored panel is untouched
+    assert biology.overlay(panel, melanoma)["entries"]["CD39"]["partners"] == []
 
 
 # -- the picture ---------------------------------------------------------------------------
@@ -245,7 +246,7 @@ def test_a_group_draws_as_one_tile_lit_where_any_member_is(tmp_path):
 
 @pytest.mark.pro
 def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, monkeypatch):
-    """No tissue named: the review still runs, and PD-L1 (no partner) gets
+    """No tissue named: the review still runs, and CD39 (no partner) gets
     its expected tile. Unsure, the proposal draws the tile only; the same
     panel is not asked again."""
     from plexora.agent import invoke, jobs
@@ -256,12 +257,12 @@ def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, mo
     from tests import autogate_fixtures
     from tests.test_gating_session import answer, next_packet, ok
 
-    monkeypatch.setitem(autogate_fixtures.MARKER_LEVELS, "PDL1",
+    monkeypatch.setitem(autogate_fixtures.MARKER_LEVELS, "CD39",
                         autogate_fixtures.MARKER_LEVELS["CD20"])
     vocabulary.clear_cache()
-    make_gating_project(tmp_path, markers=("CD3", "CD20", "PDL1"))
+    make_gating_project(tmp_path, markers=("CD3", "CD20", "CD39"))
     session = AgentSession()
-    reply = {"kind": "partner_review", "entries": [{"marker": "PDL1", "partners": [
+    reply = {"kind": "partner_review", "entries": [{"marker": "CD39", "partners": [
         {"marker": "CD3", "relation": "subset_any", "confidence": "moderate",
          "basis": "activated T cells"},
         {"marker": "CD20", "relation": "subset_any", "confidence": "moderate",
@@ -276,18 +277,18 @@ def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, mo
         for _ in range(2):
             packet, _ = next_packet(session, sid)
             assert packet["kind"] == "partner_review"
-            pdl1 = next(m for m in packet["evidence"]["markers"] if m["marker"] == "PDL1")
-            assert pdl1["empty"] == ["anti", "co"] and pdl1["expression"]
+            cd39 = next(m for m in packet["evidence"]["markers"] if m["marker"] == "CD39")
+            assert cd39["empty"] == ["anti", "co"] and cd39["expression"]
             assert packet["evidence"]["sample"] == {"named": "no tissue or disease was named"}
             assert "inferred_context" in packet["question"]
             outcome = answer(session, sid, packet, reply)["outcome"]
             assert [r["partner"] for r in outcome["refused"]] == ["CD3"]
         settled = outcome["settled"]
         assert settled["applied"] == []
-        assert settled["tiles_only"] == {"PDL1": ["subset_any CD3", "subset_any CD20"]}
+        assert settled["tiles_only"] == {"CD39": ["subset_any CD3", "subset_any CD20"]}
         assert settled["context"] == "none: only empty slots could be filled"
         with engines.engine_for(session_call(session), sid, save=False) as engine:
-            unit = next(u for u in engine.record["units"].values() if u["marker"] == "PDL1")
+            unit = next(u for u in engine.record["units"].values() if u["marker"] == "CD39")
             shown = engine.partner_panels(unit)
             panel = engine.panel_for("gsynth")
         assert set(shown["co"]) == {"CD20", "CD3"} and " or " in shown["markers"]["co"]
@@ -298,7 +299,7 @@ def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, mo
         assert {t["marker"] for t in tiles} == {"CD20", "CD3"}
         assert all(t["relation"] == "subset_any" and t["members"] for t in tiles)
         # Tiles only: no relation, reference or score reads them.
-        assert hierarchy.relations(panel, "PDL1") == []
+        assert hierarchy.relations(panel, "CD39") == []
         ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
         again = ok(invoke(session, "gating_session_start", {
             "engine": "v1", "scope": "project", "project": "gsynth"}))
@@ -418,15 +419,15 @@ def test_a_review_change_is_made_only_when_both_draws_are_sure_in_this_context()
 def test_without_a_context_only_empty_slots_are_filled():
     from plexora.plugins.gating.server.autogate import context
 
-    panel = context.build(["CD45", "CD3e", "CD68", "Pan-CK", "CD20", "PD-L1"])
+    panel = context.build(["CD45", "CD3e", "CD68", "Pan-CK", "CD20", "CD39"])
     # CD68's not-expected slot is full (CD3e, Pan-CK): one beside them needs a
     # context, as does the drop.
     cd68 = {**_drop("CD68", "Pan-CK")["CD68"], **_add("CD68", "CD20", "exclusive")["CD68"]}
-    both = {"CD68": cd68, **_add("PD-L1", "CD68", "subset")}
+    both = {"CD68": cd68, **_add("CD39", "CD68", "subset")}
     settled = _review(panel, None, [both] * 2)
     assert settled["context"] is None
     assert settled["changes"]["drop"] == [] and [
-        (c["marker"], c["partner"]) for c in settled["changes"]["add"]] == [("PD-L1", "CD68")]
+        (c["marker"], c["partner"]) for c in settled["changes"]["add"]] == [("CD39", "CD68")]
     unsure = {(u["marker"], u["partner"]) for u in settled["unsure"]}
     assert {("CD68", "Pan-CK"), ("CD68", "CD20")} <= unsure
 
@@ -459,10 +460,10 @@ def test_a_sure_drop_is_not_derived_back_and_a_sure_addition_is_evidence():
     from plexora.plugins.gating.server.autogate import biology, context, hierarchy, partners
 
     record = biology.resolve(notes="colorectal cancer")
-    panel = context.build(["CD45", "CD3e", "CD68", "CD11c", "Pan-CK", "PD-L1"])
-    add = {"PD-L1": {"partners": [
+    panel = context.build(["CD45", "CD3e", "CD68", "CD11c", "Pan-CK", "CD39"])
+    add = {"CD39": {"partners": [
         {"marker": "CD68", "relation": "subset", "confidence": "high",
-         "basis": "in colorectal cancer PD-L1 sits on macrophages"}]}}
+         "basis": "in colorectal cancer CD39 sits on macrophages"}]}}
     _review(panel, record, [{**_drop("CD68", "Pan-CK"), **add}] * 2)
     over = biology.overlay(panel, record)
     # CD68 within CD45 and CD45 exclusive of Pan-CK would derive it back.
@@ -470,9 +471,9 @@ def test_a_sure_drop_is_not_derived_back_and_a_sure_addition_is_evidence():
     plan = partners.partner_plan(over["entries"], "CD68", set(over["markers"]) - {"CD68"}, {}, 2,
                                  dropped=context.dropped_pairs(over))
     assert "Pan-CK" not in [p["marker"] for p in plan if p["kind"] == "anti"]
-    rel = next(r for r in hierarchy.relations(over, "PD-L1") if r["marker"] == "CD68")
+    rel = next(r for r in hierarchy.relations(over, "CD39") if r["marker"] == "CD68")
     assert (rel["relation"], rel["confidence"], rel["derived"]) == ("subset", "moderate", False)
-    assert context.references_for(over, "PD-L1", {"CD68": "high"})[0]["marker"] == "CD68"
+    assert context.references_for(over, "CD39", {"CD68": "high"})[0]["marker"] == "CD68"
     # Another context sees the vocabulary as it is.
     other = biology.resolve(disease="melanoma")
     assert any(r["marker"] == "Pan-CK"
