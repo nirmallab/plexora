@@ -106,6 +106,40 @@ def classification(values, truth, low, high=None) -> dict:
             "fraction_error": abs((tp + fp) - (tp + fn)) / n if n else None}
 
 
+def dim_allowed(values, truth) -> np.ndarray:
+    """The negative cells a gate may call positive without error, by the
+    gating rule: gate at the dimmest reliable point above background, so dim
+    cells count. Where a marker's negative and positive cells overlap, these
+    are the negatives at least as bright as its dimmest reliably stained
+    positive -- the dimmest positive brighter than a typical unstained cell
+    (the negatives' median); a positive dimmer than that no reader can see.
+    Missing a positive is still an error, so the best gate is the rule's."""
+    v = np.asarray(values, dtype=np.float32)
+    t = np.asarray(truth, dtype=bool)
+    none = np.zeros(v.shape, dtype=bool)
+    if not t.any() or t.all():
+        return none
+    seen = v[t & (v > np.nanmedian(v[~t]))]
+    if not seen.size:
+        return none
+    return ~t & (v >= float(seen.min()))
+
+
+def dim_counted(values, truth, gates) -> dict:
+    """`truth` with each `dim_allowed` cell taken as the gate called it: the
+    truth a gate is scored against when dim cells count (the route bench)."""
+    from plexora.agent import gate_rule
+
+    out = dict(truth)
+    for marker, low in gates.items():
+        if low is None or marker not in truth:
+            continue
+        v = np.asarray(values[marker], dtype=np.float32)
+        called = gate_rule.passes(v, low, float(np.nanmax(v)))
+        out[marker] = np.asarray(truth[marker], dtype=bool) | (dim_allowed(v, truth[marker]) & called)
+    return out
+
+
 def code_agreement(values, truth, gates) -> float | None:
     """Share of cells whose positive/negative code over `gates` matches truth."""
     from plexora.agent import gate_rule
@@ -533,16 +567,21 @@ def gates_for_arms(session, project, markers, agent, arms, *, variants=("baselin
     return out, extras
 
 
-def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None) -> list:
+def score_image(project, values, truth, gates_by_arm, extras, *, cell_truth=None,
+                dim_counts=False) -> list:
     """Rows per (arm, marker), a `*code*` row per arm and a `*cost*` row per
     session arm. `extras` is {arm: a session's units and costs} (a lone
     session's dict is taken as the `session` arm's); `cell_truth` (by
-    marker) adds where the errors fall (`cause_scores`)."""
+    marker) adds where the errors fall (`cause_scores`). `dim_counts` scores
+    by the gating rule (`dim_counted`): a negative as bright as the dimmest
+    reliably stained positive is no error when called positive."""
     if extras and "units" in extras:
         extras = {"session": extras}
     extras = extras or {}
     rows = []
+    every = truth
     for arm, gates in gates_by_arm.items():
+        truth = dim_counted(values, every, gates) if dim_counts else every
         extra = extras.get(arm) or (extras.get("session") if arm == "final" else None)
         for marker, low in gates.items():
             row = {"image": project, "arm": arm, "marker": marker, "gate": low}
@@ -587,7 +626,7 @@ def _register_scenario(root, name, scenario, *, grid, size, seed, markers):
 
 
 def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, grid=24,
-                  size=1024, variants=("baseline",)) -> list:
+                  size=1024, variants=("baseline",), dim_counts=False) -> list:
     from plexora import paths
     from plexora.agent import AgentSession, registry
 
@@ -610,7 +649,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                 gates, extras = gates_for_arms(session, name, markers, agent, arms,
                                                variants=variants)
                 for row in score_image(name, made["values"], made["truth"], gates, extras,
-                                       cell_truth=made.get("cell_truth")):
+                                       cell_truth=made.get("cell_truth"), dim_counts=dim_counts):
                     row["scenario"] = scenario
                     rows.append(row)
             session.close()

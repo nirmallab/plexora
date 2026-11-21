@@ -84,7 +84,7 @@ def test_a_candidate_route_is_gated_through_the_dev_route_and_scored(monkeypatch
     assert {c["body"]["model"] for c in gateway.calls} == {"openai/gpt-test"}
     assert not any("capability" in c["body"] for c in gateway.calls)
     assert evaluation["provider"] == "openai" and evaluation["model"] == "gpt-test"
-    assert evaluation["bench_version"] == "gating-2"
+    assert evaluation["bench_version"] == "gating-3"
     m = evaluation["metrics"]
     assert evaluation["images"][0]["status"] == "done", evaluation["images"]
     assert m["code_agreement"] >= 0.95 and m["marker_f1"] >= 0.9, m
@@ -168,6 +168,28 @@ def test_the_cli_runs_the_bench_and_writes_the_evaluation(monkeypatch, tmp_path,
     args.submit = True
     monkeypatch.delenv("PLEXORA_ADMIN_TOKEN", raising=False)
     assert cli.route_bench_command(args) == 2
+
+
+def test_dim_cells_count_a_gate_at_the_dimmest_reliable_positive_is_right():
+    """gating-3: where CD4's negatives reach past its dimmest positives (the easy
+    scene), a gate where the positives begin -- the gating rule -- scores
+    every cell right; a higher gate is charged for the positives it misses."""
+    import numpy as np
+
+    _, _, cells, _ = bench_data.scene(grid=24, size=1024, seed=0, scenario="easy")
+    values = {"CD4": np.array([c["CD4"] for c in cells])}
+    truth = {"CD4": np.array([bench_data.truth_positive("CD4", c, "easy") for c in cells])}
+    # The gate keeps cells above it: just under the dimmest positive keeps every one.
+    rule = float(np.nextafter(np.float32(values["CD4"][truth["CD4"]].min()), np.float32(0)))
+    assert bench.code_agreement(values, truth, {"CD4": rule}) < 0.9
+
+    def scored(gate):
+        return bench.code_agreement(values, bench.dim_counted(values, truth, {"CD4": gate}), {"CD4": gate})
+
+    assert scored(rule) == 1.0
+    assert scored(119.0) < 0.98
+    # Below the overlap, a negative called positive is still an error.
+    assert scored(60.0) < 0.9
 
 
 # -- the marker-naming bench -------------------------------------------------------
