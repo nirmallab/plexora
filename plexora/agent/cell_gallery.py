@@ -160,7 +160,12 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
                          detail={"max": MAX_GALLERY_CELLS})
     channel_records = list(record.image.real_channels)
     channel_names = [c.get("fullname") or c.get("name") for c in channel_records]
-    if marker and not channels and marker not in channel_names:
+    from plexora.ai import vocabulary
+
+    # The marker is the table's column; its pixels are the channel the looks'
+    # matcher finds (`CD45` -> `03_CD45_ArgoFluor520`).
+    channel = vocabulary.match_name(marker, channel_names) if marker else None
+    if marker and not channels and channel is None:
         raise AgentError("precondition_missing",
                          f"{marker!r} is a table column with no image channel of that name, "
                          "so there is nothing to look at; pass channels to draw others",
@@ -245,10 +250,10 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
             draw_channels.append(ChannelSpec(name=name, color=palette[index]))
     else:
         nuclear = nuclear_channel(channel_names)
-        if nuclear and nuclear != marker:
+        if nuclear and nuclear != channel:
             draw_channels.append(ChannelSpec(name=nuclear, color=NUCLEAR_COLOR))
-        if marker:
-            draw_channels.append(ChannelSpec(name=marker, color=TARGET_COLOR))
+        if channel:
+            draw_channels.append(ChannelSpec(name=channel, color=TARGET_COLOR))
         if not draw_channels:
             draw_channels.append(ChannelSpec(name=channel_names[0], color="#ffffff"))
 

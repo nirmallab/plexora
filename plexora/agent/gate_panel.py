@@ -113,15 +113,23 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
     from plexora.server.utils.label_overlay import cell_ids
 
     record = data.project
+    from plexora.ai import vocabulary
+
     channel_names = [c.get("fullname") or c.get("name") for c in record.image.real_channels]
-    if marker not in channel_names:
+    # The marker is the table's column (values, highlight, QC); its pixels are
+    # the channel the looks' matcher finds (`CD45` -> `03_CD45_ArgoFluor520`).
+    channel = vocabulary.match_name(marker, channel_names)
+    if channel is None:
         raise AgentError("precondition_missing",
                          f"{marker!r} is a table column with no image channel of that name, "
                          "so there is nothing to look at",
                          detail={"channels": channel_names})
-    if context_marker and context_marker not in channel_names:
-        raise AgentError("invalid_input", f"{context_marker!r} is not an image channel",
-                         detail={"channels": channel_names})
+    if context_marker:
+        context_channel = vocabulary.match_name(context_marker, channel_names)
+        if context_channel is None:
+            raise AgentError("invalid_input", f"{context_marker!r} is not an image channel",
+                             detail={"channels": channel_names})
+        context_marker = context_channel
     nuclear = nuclear or nuclear_channel(channel_names)
     panel_px = int(max(160, min(panel_px, (MAX_PANEL_WIDTH - 12) // 3)))
 
@@ -146,10 +154,10 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
 
     highlight = MarkerHighlight(marker=marker, low=low, high=high)
     b_channels = []
-    if nuclear and nuclear != marker:
+    if nuclear and nuclear != channel:
         b_channels.append((nuclear, NUCLEAR_COLOR))
-    b_channels.append((marker, TARGET_COLOR))
-    if context_marker and context_marker != marker:
+    b_channels.append((channel, TARGET_COLOR))
+    if context_marker and context_marker != channel:
         b_channels.append((context_marker, CONTEXT_COLOR))
 
     from plexora.agent.sections import table_planes
@@ -167,7 +175,7 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
         plane, plane_from = (_field_plane(zs, depth, inside, near) if zs is not None
                              else (None, None))
         view = f"z{plane}" if plane is not None else None
-        a = _panel(session, record.name, bounds, [(marker, "#ffffff")],
+        a = _panel(session, record.name, bounds, [(channel, "#ffffff")],
                    segmentation="none", highlight=None, width=panel_px, view=view)
         b = _panel(session, record.name, bounds, b_channels, segmentation="outlines",
                    highlight=highlight, width=panel_px, view=view)
