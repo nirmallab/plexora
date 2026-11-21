@@ -128,6 +128,8 @@ class Oracle:
                                                 else direction}}
         if kind in ("panel_context", "partner_review"):
             return {"kind": kind, "entries": []}
+        if kind == "marker_naming":
+            return {"kind": kind, "names": []}
         if kind == "display_setup":
             # The darker half of the ladder for both questions: the rule's own
             # column wherever the numbers allow it.

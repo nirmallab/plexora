@@ -355,6 +355,9 @@ class TruthAgent:
         if kind == "partner_review":
             # Nor does it know a tissue's biology: the stated partners stand.
             return {"kind": kind, "entries": []}
+        if kind == "marker_naming":
+            # Nor a marker's name: every one stays as the panel spells it.
+            return {"kind": kind, "names": []}
         return {"kind": "panel_context", "entries": []}
 
 

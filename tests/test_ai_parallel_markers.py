@@ -255,7 +255,8 @@ def test_a_marker_waits_for_its_earlier_partners_and_the_one_it_is_gated_within(
     session = AgentSession()
     sid = _bulked(session, scene, tmp_path)
     with engines.engine_for(_call(session), sid, save=False) as engine:
-        engine.record["panel_pending"] = engine.record["review_pending"] = False
+        engine.record["naming_pending"] = engine.record["panel_pending"] = False
+        engine.record["review_pending"] = False
         unit = {u["marker"]: u for u in engine.units_of("gpar")}
         assert unit["CD3"]["state"] == unit["CD8"]["state"] == "accepted_t1"
         # Gating order is CD3, CD4, CD8: each waits for the partners before it.
@@ -397,11 +398,14 @@ def test_setup_packets_and_strips_go_out_alone(tmp_path, scene):
             "reader": "x", "fingerprint": "", "strict": True, "seq": 0}
 
     with engines.engine_for(_call(session), sid, save=False) as engine:
-        # The panel's set-up question comes first, and goes out alone.
-        assert engine.ready_units() == ([("panel_context", [])], None)
+        # The panel's set-up questions come first -- the unknown markers'
+        # names, then what is still unknown about them -- each alone.
+        assert engine.ready_units() == ([("marker_naming", [])], None)
         hold(engine, "pk_9001", "t2_confirm", ["KIA"])
         assert engine.ready_units() == ([], "busy")
         engine.record["outstanding"].clear()
+        engine.record["naming_pending"] = False
+        assert engine.ready_units() == ([("panel_context", [])], None)
         engine.record["panel_pending"] = False
         # Then the partner review, alone too.
         assert engine.ready_units() == ([("partner_review", [])], None)

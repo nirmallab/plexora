@@ -54,6 +54,16 @@ modules:
         max_tokens: 16000
         effort: medium
         kinds: [partner_review]
+      marker_naming:
+        label: Marker naming
+        blurb: Gives the standard name of each panel marker the vocabulary does not recognise, or unknown.
+        # Its own task, like partner_review: planning's shared answer schema
+        # is at the size the provider is known to compile.
+        requires: {vision: false, reasoning: false}
+        capability: text_reasoning
+        max_tokens: 4000
+        effort: low
+        kinds: [marker_naming]
       display:
         label: Contrast check
         blurb: Looks at each marker at five brightnesses and says where background and structure both show.

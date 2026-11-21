@@ -1746,6 +1746,44 @@ PROPOSED_RELATIONS = {
 }
 
 
+def marker_naming(engine, units):
+    """Round one for the markers the vocabulary does not know by any
+    spelling, nor by a close match (`context.name_unresolved`): their
+    standard names only. Code looks each name up; what it finds gets the
+    vocabulary's entry and partners, and only what is still unknown is
+    described (`panel_context`)."""
+    from plexora.plugins.gating.server.autogate import context
+
+    project = engine.record["images"][0]
+    ds = engine.call.session.data(project)
+    panel = context.for_project(ds)
+    due = context.naming_due(panel)
+    if not due:
+        engine.record["naming_pending"] = False
+        engine.record["panel_pending"] = bool(panel["unresolved"])
+        return None
+    packet = {
+        "question": ("Plexora's vocabulary does not recognise these marker names. For each, "
+                     "give the standard name of the marker it is -- the antibody target as "
+                     "papers name it (FOXP3, CD45RO, E-cadherin), with any fluorophore, cycle, "
+                     "position or clone tag dropped, and a misspelling corrected -- or "
+                     f"`{answers.UNKNOWN_NAME}` when the name does not tell you which marker "
+                     "it is -- and in `aliases` up to three other names of it (gene symbol, "
+                     "CD number, protein name). Answer every marker. Do not describe the "
+                     "markers: each name is looked up in the BioCognia marker graph, which "
+                     "knows gene symbols, CD numbers and common protein names; what is "
+                     "still unknown is asked about next."),
+        "evidence": {"unresolved": due,
+                     "panel": [m for m in panel["markers"] if m not in due],
+                     "rule": ("a name is used only when it is one the vocabulary knows and "
+                              "names no other marker of this panel; a wrong name gives the "
+                              "marker another's partners, so say unknown rather than guess")},
+        "allowed": ["names"],
+        "_image_meta": [],
+    }
+    return packet, []
+
+
 def panel_context(engine, units):
     from plexora.plugins.gating.server.autogate import context
 
@@ -1917,7 +1955,8 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "absence_check": absence_check,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
-            "panel_context": panel_context, "partner_review": partner_review,
+            "marker_naming": marker_naming, "panel_context": panel_context,
+            "partner_review": partner_review,
             "replan": replan_packet, "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
             "display_setup": display_setup}
@@ -1960,7 +1999,8 @@ def narrate(packet) -> str:
     partner = (evidence.get("condition") or {}).get("within") or plot.get("partner") or ""
     return template.format(marker=marker, partner=partner,
                            references=" and ".join(references) or partner,
-                           n=len(units) or len(evidence.get("rows") or ()))
+                           n=len(units) or len(evidence.get("rows") or ())
+                           or len(evidence.get("unresolved") or ()))
 
 
 def evidence_label(packet) -> str:

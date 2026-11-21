@@ -99,15 +99,72 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
     return entry
 
 
-def build(markers, *, overrides=None, image_channels=None) -> dict:
+#: Names a guess may share with another of the panel's markers: the nuclear
+#: stain and the blank channels come once per cycle.
+_REPEATABLE = (vocabulary.NUCLEAR, vocabulary.AUTOFLUORESCENCE)
+
+
+def name_unresolved(markers, resolved, ai_names=None) -> tuple:
+    """(named, refused) for the markers `resolved` has no name for: each one
+    a typing slip from one vocabulary marker (`vocabulary.close_match`), or
+    the name a reader gave it (`ai_names`: {marker: name or None}, the
+    `marker_naming` answer) when that name is one `canonical` knows. A reader
+    is asked only about what the close match left.
+
+    A guess is refused when the panel already has the marker it names
+    (`CD45R0` beside `CD45RO` is a second channel, not a typo), or when two
+    markers are guessed as the same one -- unless it is the nuclear stain or
+    a blank, which come once per cycle. `named` is {marker: {canonical, by:
+    close_match | ai, ...}}; `refused` is [{marker, canonical, by, reason}].
+    `resolved` is updated in place with what was named."""
+    exact = {c for c in resolved.values() if c}
+    guesses = {}
+    for marker in markers:
+        if resolved.get(marker):
+            continue
+        close = vocabulary.close_match(marker)
+        if close:
+            guesses[marker] = {"canonical": close["canonical"], "by": "close_match",
+                               "spelling": close["spelling"], "edit": close["edit"]}
+            continue
+        said = (ai_names or {}).get(marker)
+        found = vocabulary.canonical(said) if said else None
+        if found:
+            guesses[marker] = {"canonical": found, "by": "ai", "said": said}
+    counts = {}
+    for guess in guesses.values():
+        counts[guess["canonical"]] = counts.get(guess["canonical"], 0) + 1
+    named, refused = {}, []
+    for marker, guess in guesses.items():
+        target = guess["canonical"]
+        reason = None
+        if target not in _REPEATABLE:
+            if target in exact:
+                reason = f"the panel already has {target} under its own name"
+            elif counts[target] > 1:
+                reason = f"more than one marker was taken for {target}"
+        if reason:
+            refused.append({"marker": marker, **guess, "reason": reason})
+        else:
+            named[marker] = guess
+            resolved[marker] = target
+    return named, refused
+
+
+def build(markers, *, overrides=None, image_channels=None, ai_names=None) -> dict:
     """The panel context for `markers` (the table's marker columns).
 
     `overrides` is {marker: {field: value}} from the user or metadata
     (`source` says which); `image_channels` lets a marker without an image
-    channel be flagged, since it can never be looked at.
+    channel be flagged, since it can never be looked at. A marker the
+    vocabulary does not know by any spelling is named by a close match or
+    by a reader (`ai_names`, `name_unresolved`) before it is left unresolved;
+    its entry is the vocabulary's, with `named` saying how it was reached.
     """
     markers = list(markers)
     resolved = vocabulary.resolve_panel(markers)
+    ai_names = dict(ai_names or {})
+    named, naming_refused = name_unresolved(markers, resolved, ai_names)
     by_canonical = {}
     for marker, canonical in resolved.items():
         if canonical:
@@ -118,6 +175,8 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
         canonical = resolved[marker]
         if canonical:
             entries[marker] = _entry_from_vocabulary(marker, canonical, by_canonical)
+            if marker in named:
+                entries[marker]["named"] = named[marker]
         else:
             entries[marker] = {"marker": marker, "canonical": None, "role": None,
                                "compartment": None, "lineage": None, "expression": None,
@@ -131,6 +190,7 @@ def build(markers, *, overrides=None, image_channels=None) -> dict:
     context = {"version": VERSION, "vocabulary_version": vocabulary.version(),
                "panel_hash": panel_hash(markers), "markers": markers, "entries": entries,
                "unresolved": unresolved, "duplicates": duplicates, "ai_suggestions": {},
+               "named": named, "naming_refused": naming_refused, "ai_names": ai_names,
                "order": [], "order_basis": {}}
     for marker, fields in (overrides or {}).items():
         apply_entry(context, marker, fields, source=fields.get("source", "user"))
@@ -1031,8 +1091,42 @@ def for_project(ds, *, create=True) -> dict:
     hash_ = panel_hash(markers)
     stored = load(hash_)
     if stored is not None and stored.get("vocabulary_version") == vocabulary.version() \
-            and stored.get("markers") == markers:
+            and stored.get("markers") == markers and "named" in stored:
         return stored
+    context = rebuild(stored, markers, channels)
+    if create:
+        save(context)
+    return context
+
+
+def naming_due(context) -> list:
+    """The unresolved markers no reader has been asked to name yet: what a
+    `marker_naming` packet asks about, before any is described
+    (`panel_context`)."""
+    asked = context.get("ai_names") or {}
+    return [m for m in context.get("unresolved") or () if m not in asked]
+
+
+def apply_names(ds, answers) -> dict:
+    """A reader's names for the panel's unresolved markers ({marker: name or
+    None}), kept with the panel and the context rebuilt on them: every
+    marker a name resolves (`name_unresolved`) now has the vocabulary's
+    entry and partners, both ways. A name is asked once: an `unknown`, or a
+    name the vocabulary does not know, stays None and the marker goes on to
+    be described. Returns the saved context."""
+    channels = [c.get("fullname") or c.get("name") for c in ds.project.image.real_channels]
+    markers = list(ds.table.markers) if getattr(ds.project, "has_table", True) else channels
+    stored = load(panel_hash(markers)) or for_project(ds)
+    ai_names = {**(stored.get("ai_names") or {}), **answers}
+    context = rebuild({**stored, "ai_names": ai_names}, markers, channels)
+    save(context)
+    return context
+
+
+def rebuild(stored, markers, channels) -> dict:
+    """The panel context built afresh for `markers`, keeping from `stored`
+    what was said about it: the user's, the metadata's and a reader's
+    entries, a reader's names, and the partner reviews."""
     overrides = {}
     if stored is not None:
         for marker, entry in (stored.get("entries") or {}).items():
@@ -1040,7 +1134,8 @@ def for_project(ds, *, create=True) -> dict:
                 overrides[marker] = {**{k: entry.get(k) for k in FIELDS
                                         if entry.get(k) is not None},
                                      "source": entry["source"]}
-    context = build(markers, overrides=overrides, image_channels=channels)
+    ai_names = {m: n for m, n in ((stored or {}).get("ai_names") or {}).items() if m in markers}
+    context = build(markers, overrides=overrides, image_channels=channels, ai_names=ai_names)
     if stored is not None:
         # The partner reviews and their tiles-only proposals are of the panel
         # in a context (`proposal_key`), not of the marker order or the
@@ -1049,6 +1144,4 @@ def for_project(ds, *, create=True) -> dict:
         for key in ("reviewed", "proposed"):
             if stored.get(key):
                 context[key] = stored[key]
-    if create:
-        save(context)
     return context
