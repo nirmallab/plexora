@@ -539,6 +539,10 @@ CONFUSABLE = {"0": "o", "o": "0", "1": "li", "l": "1i", "i": "1l"}
 #: names sit one letter from too many real markers (CD3E, CD8A; HLA-DR,
 #: -DQ and -DP) to guess.
 MIN_LETTER_EDIT = 6
+#: A strong edit needs a spelling of at least this many characters (folded):
+#: "Ki-76" stripped of its "-76" is "Ki", and Ki with i read as 1 is K1
+#: (Keratin 1) -- two characters are too few to tell a slip from a name.
+MIN_STRONG_EDIT = 3
 
 
 def _strong_edits(key):
@@ -592,6 +596,8 @@ def close_match(name, *, learned=True) -> dict | None:
     keys = [k for k in dict.fromkeys(fold(v) for v in _variants(name)) if k]
     found = {}
     for key in keys:
+        if len(key) < MIN_STRONG_EDIT:
+            continue
         for edited in _strong_edits(key):
             hit = lookup.get(edited)
             if hit:

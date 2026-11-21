@@ -1586,11 +1586,22 @@ def test_every_immune_marker_names_cd45_as_its_superset():
     """A lineage marker of leukocytes has CD45 as its `subset` partner, so its
     first look carries the CD45 numbers and a conditional gate can stand on
     them. Markers shared with other lineages (CD56 on neuroendocrine cells,
-    PD-L1 on tumour cells) are the exceptions, and say so in `lineage`."""
+    PD-L1 on tumour cells) are the exceptions, and say so in `lineage`; the
+    graph's lineage text does not always say it, so `ELSEWHERE` names the
+    rest (graph 2026-11-21.3's changelog gives the same reasons). State
+    markers are read by their carriers, not here."""
     import re
 
     from plexora.ai import vocabulary
 
+    ELSEWHERE = {
+        "CD5": "thymic carcinoma", "PAX5": "Merkel cell and small-cell carcinoma, HRS cells",
+        "CD21": "follicular dendritic cells (stromal)", "CD23": "follicular dendritic cells (stromal)",
+        "S100A9": "keratinocytes, carcinoma", "Lysozyme C": "Paneth cells",
+        "Napsin A": "type II pneumocytes", "CD88": "C5aR1 beyond myeloid cells",
+        "IRF8": "predominantly haematopoietic; also carcinoma cells (PMID:24832596)",
+        "BLIMP1": "plasma cells: CD45-dim or negative", "MZB1": "plasma cells: CD45-dim or negative",
+        "TMEM119": "microglia: CD45-low"}
     entries = list(vocabulary.load()["entries"].values())
     immune = re.compile(r"\b(T|B|NK) cells?\b|macrophage|monocyte|myeloid|dendritic|"
                         r"neutrophil|regulatory T", re.I)
@@ -1598,8 +1609,9 @@ def test_every_immune_marker_names_cd45_as_its_superset():
     missing = []
     for entry in entries:
         lineage = entry.get("lineage") or ""
-        if entry["canonical"] == "CD45" or not immune.search(lineage) \
-                or shared.search(lineage):
+        if entry["canonical"] == "CD45" or entry["canonical"] in ELSEWHERE \
+                or not str(entry.get("role") or "").startswith("lineage") \
+                or not immune.search(lineage) or shared.search(lineage):
             continue
         relations = {p["marker"]: p["relation"] for p in entry.get("partners") or []}
         if relations.get("CD45") != "subset":
@@ -1828,7 +1840,9 @@ def test_a_trailing_capital_l_folds_but_never_a_ligand():
 
     assert vocabulary.canonical("CD20L") == "CD20"
     assert vocabulary.canonical("HLADRL") == vocabulary.canonical("HLADR")
-    assert vocabulary.canonical("CD40L") is None
+    # CD40L is the ligand, a marker of its own (graph 2026-11-21.2): never CD40.
+    assert vocabulary.canonical("CD40L") == "CD40L"
+    assert vocabulary.canonical("CD40L") != vocabulary.canonical("CD40")
 
 
 def test_an_ome_channel_name_matches_its_table_column():
