@@ -307,12 +307,10 @@ def route_bench_command(args) -> int:
         with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(evaluation, handle, indent=2, default=str)
     m = evaluation["metrics"]
-    print(f"{args.route} for {args.feature}/{args.capability} on {len(scenarios)} image(s):")
-    print(f"  code agreement {m['code_agreement']:.3f}, marker F1 {m['marker_f1']:.3f}, "
-          f"invalid answers {m['invalid_answer_rate']:.1%}, failures {m['failure_rate']:.1%}, "
-          f"cache reads {m['cache_hit_ratio']:.0%}")
-    print(f"  {m['model_calls']} calls, {_credits(m['cost_micro_per_image'])} per image at cost, "
-          f"{m['seconds_per_image']} s per image")
+    if evaluation.get("bench_version", "").startswith("naming"):
+        _print_naming(f"{args.route} for {args.feature}", evaluation)
+    else:
+        _print_gating(args, scenarios, m)
     if not args.submit:
         return 0
     try:
@@ -325,6 +323,45 @@ def route_bench_command(args) -> int:
         return 0
     print(f"  evaluation {verdict.get('id')} did not pass: {'; '.join(verdict.get('misses') or [])}")
     return 1
+
+
+def _print_naming(title: str, scored: dict) -> None:
+    m = scored["metrics"]
+    print(f"{title}: {m['right']} of {m['asked']} named right, {m['unnamed']} left unnamed, "
+          f"{m['wrong']} named as another marker")
+    for row in scored["rows"]:
+        if row["verdict"] != "right":
+            print(f"  {row['verdict']:8} {row['name']:24} said {row['said']!r}, expected {row['expected']}")
+    if m.get("cost_micro_per_image") is not None and "seconds_per_image" in m:
+        print(f"  {_credits(m['cost_micro_per_image'])} at cost, {m['seconds_per_image']} s")
+
+
+def naming_bench_command(args) -> int:
+    """`plexora ai naming-bench --packet | --score FILE`: the marker-naming
+    bench for a model asked outside the gateway (no credits)."""
+    from plexora.ai import naming_bench
+
+    if args.packet:
+        print(naming_bench.prompt(naming_bench.packet()))
+        return 0
+    if not args.score:
+        print("Give --packet to print the question, or --score FILE to score an answer.", file=sys.stderr)
+        return 2
+    text = sys.stdin.read() if args.score == "-" else open(args.score, encoding="utf-8").read()
+    # A reply may wrap its JSON in prose or a code fence: the outermost object is the answer.
+    start, end = text.find("{"), text.rfind("}")
+    scored = naming_bench.score(text[start:end + 1] if start >= 0 < end else text)
+    _print_naming("Marker naming", scored)
+    return 0 if scored["metrics"]["invalid_answer_rate"] == 0 else 1
+
+
+def _print_gating(args, scenarios, m) -> None:
+    print(f"{args.route} for {args.feature}/{args.capability} on {len(scenarios)} image(s):")
+    print(f"  code agreement {m['code_agreement']:.3f}, marker F1 {m['marker_f1']:.3f}, "
+          f"invalid answers {m['invalid_answer_rate']:.1%}, failures {m['failure_rate']:.1%}, "
+          f"cache reads {m['cache_hit_ratio']:.0%}")
+    print(f"  {m['model_calls']} calls, {_credits(m['cost_micro_per_image'])} per image at cost, "
+          f"{m['seconds_per_image']} s per image")
 
 
 def chat_command(args, *, read=input, write=print) -> int:

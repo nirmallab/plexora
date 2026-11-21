@@ -892,17 +892,16 @@ def _take_panel(engine, panel):
                                                          "partners", "named")}
 
 
-def apply_naming(engine, packet, answer):
-    """Round one's names, looked up (`context.apply_names`): a marker whose
-    name the vocabulary knows -- and no other marker of the panel has --
-    gets its entry and partners; the rest go on to be described
-    (`panel_context`). Every asked marker is recorded, `unknown` as None,
-    so none is asked its name twice."""
-    from plexora.plugins.gating.server.autogate import answers, context
+def names_said(asked, answer) -> tuple[dict, list]:
+    """({marker: name or None}, refused) for a `marker_naming` answer: each
+    asked marker's name as the lookup takes it (the spelling the vocabulary
+    knows, else the first given; `unknown` as None), and the markers whose
+    names point to different markers, which keep none. The naming bench
+    (`plexora.ai.naming_bench`) scores answers through this too."""
+    from plexora.plugins.gating.server.autogate import answers
 
     from plexora.ai import vocabulary
 
-    asked = list((packet.get("evidence") or {}).get("unresolved") or ())
     said, refused = {m: None for m in asked}, []
     for item in answer.names:
         if item.marker not in said:
@@ -924,6 +923,19 @@ def apply_naming(engine, packet, answer):
             continue
         # The spelling the vocabulary knows, else the first given.
         said[item.marker] = next(iter(found.values()), spellings[0] if spellings else None)
+    return said, refused
+
+
+def apply_naming(engine, packet, answer):
+    """Round one's names, looked up (`context.apply_names`): a marker whose
+    name the vocabulary knows -- and no other marker of the panel has --
+    gets its entry and partners; the rest go on to be described
+    (`panel_context`). Every asked marker is recorded, `unknown` as None,
+    so none is asked its name twice."""
+    from plexora.plugins.gating.server.autogate import context
+
+    asked = list((packet.get("evidence") or {}).get("unresolved") or ())
+    said, refused = names_said(asked, answer)
     project = engine.record["images"][0]
     panel = context.apply_names(engine.call.session.data(project), said)
     named = {m: panel["named"][m]["canonical"] for m in asked if m in panel["named"]}

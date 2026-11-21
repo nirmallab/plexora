@@ -1757,12 +1757,24 @@ def marker_naming(engine, units):
     project = engine.record["images"][0]
     ds = engine.call.session.data(project)
     panel = context.for_project(ds)
-    due = context.naming_due(panel)
-    if not due:
+    packet = naming_packet(panel)
+    if packet is None:
         engine.record["naming_pending"] = False
         engine.record["panel_pending"] = bool(panel["unresolved"])
         return None
-    packet = {
+    return packet, []
+
+
+def naming_packet(panel) -> dict | None:
+    """The `marker_naming` question for a panel context (`context.build`):
+    the markers no reader has named yet, or None. The naming bench
+    (`plexora.ai.naming_bench`) sends this same packet."""
+    from plexora.plugins.gating.server.autogate import context
+
+    due = context.naming_due(panel)
+    if not due:
+        return None
+    return {
         "question": ("Plexora's vocabulary does not recognise these marker names. For each, "
                      "give the standard name of the marker it is -- the antibody target as "
                      "papers name it (FOXP3, CD45RO, E-cadherin), with any fluorophore, cycle, "
@@ -1781,7 +1793,6 @@ def marker_naming(engine, units):
         "allowed": ["names"],
         "_image_meta": [],
     }
-    return packet, []
 
 
 def panel_context(engine, units):
