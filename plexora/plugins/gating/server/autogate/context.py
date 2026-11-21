@@ -31,7 +31,10 @@ from pathlib import Path
 
 from plexora.ai import vocabulary
 
-VERSION = "1"
+#: 2: `no_image_channel` by the looks' channel matcher, not by exact name (a
+#: context stored under 1 flagged every marker of a panel named apart from
+#: its channels, and is rebuilt).
+VERSION = "2"
 
 #: The vocabulary's schema (`plexora.ai.vocabulary`), which a panel entry --
 #: shipped, the user's, or an agent's -- is held to.
@@ -1092,7 +1095,8 @@ def for_project(ds, *, create=True) -> dict:
     markers = list(ds.table.markers) if getattr(ds.project, "has_table", True) else channels
     hash_ = panel_hash(markers)
     stored = load(hash_)
-    if stored is not None and stored.get("vocabulary_version") == vocabulary.version() \
+    if stored is not None and stored.get("version") == VERSION \
+            and stored.get("vocabulary_version") == vocabulary.version() \
             and stored.get("markers") == markers and "named" in stored:
         return stored
     context = rebuild(stored, markers, channels)
