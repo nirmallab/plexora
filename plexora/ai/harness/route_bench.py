@@ -28,8 +28,9 @@ import urllib.request
 
 import numpy as np
 
-#: The bench version each module is on; mirrors catalog.ts BENCH (a test keeps them equal).
-BENCH_VERSIONS = {"gating": "gating-2"}
+#: The bench version each module -- or task with its own bench -- is on;
+#: mirrors catalog.ts BENCH (a test keeps them equal).
+BENCH_VERSIONS = {"gating": "gating-2", "gating.marker_naming": "naming-1"}
 DEFAULT_MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
@@ -53,6 +54,11 @@ def bench_route(route: str, *, feature: str = "gating", capability: str = "visio
 
     if feature not in BENCH_VERSIONS:
         raise ValueError(f"The route bench covers {', '.join(BENCH_VERSIONS)} so far.")
+    if feature == "gating.marker_naming":
+        # A text task with its own bench: one packet, no images (`plexora.ai.naming_bench`).
+        from plexora.ai import naming_bench
+
+        return naming_bench.bench_route(route, gateway=gateway)
     provider, model = split_route(route)
     markers = tuple(markers or DEFAULT_MARKERS)
     gateway = gateway or GatewayClient(dev=True)
@@ -160,8 +166,9 @@ def submit(evaluation: dict, *, admin_token: str, base_url: str | None = None) -
     body = {k: evaluation[k] for k in ("feature", "capability", "provider", "model", "bench_version", "metrics",
                                        "dataset_ids", "plexora_version")}
     body["metrics"] = {k: v for k, v in body["metrics"].items() if isinstance(v, (int, float))}
-    # The gateway files evaluations under the module id its task assignments use (`plexora.gating`).
-    if "." not in body["feature"] and body["feature"] != "*":
+    # The gateway files evaluations under the id its assignments look up: the
+    # module's (`plexora.gating`), or a task's with a bench of its own.
+    if body["feature"] != "*" and not body["feature"].startswith("plexora."):
         body["feature"] = f"plexora.{body['feature']}"
     request = urllib.request.Request(f"{base}/admin/api/ai/evaluations", method="POST",
                                      data=json.dumps(body).encode("utf-8"),

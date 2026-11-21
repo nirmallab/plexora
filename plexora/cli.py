@@ -1879,7 +1879,8 @@ def _build_ai_parser():
                                                       "route, and optionally submit the evaluation.")
     route_bench.add_argument("route", metavar="PROVIDER/MODEL",
                              help="The candidate, e.g. openai/gpt-6.1-sol or orcarouter/claude-opus-5-5.")
-    route_bench.add_argument("--feature", default="gating", choices=("gating",))
+    route_bench.add_argument("--feature", default="gating", choices=("gating", "gating.marker_naming"),
+                             help="The module, or a task with its own bench (gating.marker_naming).")
     route_bench.add_argument("--capability", default="vision_judgement",
                              choices=("vision_judgement", "vision_routine"))
     route_bench.add_argument("--synthetic", default="easy,hard", metavar="SCENARIOS",
@@ -1892,6 +1893,11 @@ def _build_ai_parser():
                              help="Record the result on the gateway (needs PLEXORA_ADMIN_TOKEN).")
     route_bench.add_argument("--gateway", default=None)
     route_bench.add_argument("--out", default=None, help="Write the evaluation JSON here.")
+    naming = subs.add_parser("naming-bench", help="The marker-naming bench without the gateway: print its "
+                                                  "question for any model, then score the answer.")
+    naming.add_argument("--packet", action="store_true", help="Print the question (and the answer's shape).")
+    naming.add_argument("--score", default=None, metavar="FILE",
+                        help="Score a model's JSON answer ('-' reads it from standard input).")
     from plexora.vision import cli as segment_cli
 
     segment_cli.add_parser(subs)
@@ -2032,10 +2038,10 @@ def _run_ai(args):
         from plexora.ai.setup import models_command
 
         return models_command(args.action, force=args.force)
-    if command == "route-bench":
+    if command in ("route-bench", "naming-bench"):
         from plexora.ai.harness import cli as harness_cli
 
-        return harness_cli.route_bench_command(args)
+        return getattr(harness_cli, f"{command.replace('-', '_')}_command")(args)
     if command in ("run", "trace", "credits", "chat"):
         from plexora.ai.harness import cli as harness_cli
 

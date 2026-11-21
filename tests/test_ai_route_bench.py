@@ -37,7 +37,8 @@ def test_the_bench_versions_match_the_gateway_bar():
         pytest.skip("the BioCognia platform is not checked out beside this repository")
     catalog = PLATFORM_CATALOG.read_text(encoding="utf-8")
     for feature, version in route_bench.BENCH_VERSIONS.items():
-        assert re.search(rf"\b{feature}: \{{ version: '{re.escape(version)}'", catalog), feature
+        # A task's own bench is a quoted key (`'gating.marker_naming': {`).
+        assert re.search(rf"(?<![\w.])'?{re.escape(feature)}'?: \{{ version: '{re.escape(version)}'", catalog), feature
 
 
 def test_a_route_is_named_as_provider_and_model():
@@ -134,6 +135,17 @@ def test_an_evaluation_is_submitted_with_the_admin_token_and_numbers_only():
     assert seen["body"]["metrics"] == {"code_agreement": 0.99}
     assert seen["body"]["feature"] == "plexora.gating"
     assert "images" not in seen["body"]
+    seen.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        route_bench.submit({**evaluation, "feature": "gating.marker_naming", "bench_version": "naming-1"},
+                           admin_token="adm", base_url=f"http://127.0.0.1:{server.server_address[1]}")
+    finally:
+        server.shutdown()
+        server.server_close()
+    # A task with a bench of its own is filed under the task's id.
+    assert seen["body"]["feature"] == "plexora.gating.marker_naming"
 
 
 def test_the_cli_runs_the_bench_and_writes_the_evaluation(monkeypatch, tmp_path, capsys):
@@ -156,3 +168,54 @@ def test_the_cli_runs_the_bench_and_writes_the_evaluation(monkeypatch, tmp_path,
     args.submit = True
     monkeypatch.delenv("PLEXORA_ADMIN_TOKEN", raising=False)
     assert cli.route_bench_command(args) == 2
+
+
+# -- the marker-naming bench -------------------------------------------------------
+
+
+def _naming(answer_for):
+    from plexora.ai import naming_bench
+
+    asked = naming_bench.packet()
+    return naming_bench.score({"names": [{"marker": m, "name": answer_for(m), "aliases": []}
+                                         for m in asked["evidence"]["unresolved"]]}, asked)["metrics"]
+
+
+def test_the_naming_bench_asks_every_name_and_scores_what_the_lookup_does():
+    from plexora.ai import naming_bench
+
+    asked = naming_bench.packet()
+    # Every bench name reaches the model: none is already known or a typing slip of one.
+    assert asked["evidence"]["unresolved"] == [name for name, _ in naming_bench.CASES]
+    want = {name: meant for name, meant in naming_bench.CASES}
+    assert all(c for n, c in naming_bench.expected().items() if want[n])
+    perfect = _naming(lambda m: want[m] or "unknown")
+    assert perfect["naming_accuracy"] == 1.0 and perfect["wrong_name_rate"] == 0.0
+    # Unknown, or a name the vocabulary lacks, leaves a marker unnamed: safe, only less useful.
+    shy = _naming(lambda m: "SP7" if m == "SP7_Opal570" else "unknown" if m == "L26" else want[m] or "unknown")
+    assert shy["unnamed"] == 2 and shy["wrong"] == 0
+    # A clone read as another marker, or a name given to what nothing tells, is wrong.
+    bold = _naming(lambda m: "CD4" if m == "NAT105" else "CD45" if m == "XQ-445" else want[m] or "unknown")
+    assert bold["wrong"] == 2 and bold["wrong_name_rate"] == pytest.approx(2 / 19, abs=1e-4)
+    assert naming_bench.score("not json", asked)["metrics"]["invalid_answer_rate"] == 1.0
+
+
+def test_the_naming_bench_asks_the_candidate_through_the_dev_route():
+    from plexora.ai import naming_bench
+
+    want = {name: meant for name, meant in naming_bench.CASES}
+
+    def brain(packet, body):
+        assert packet["kind"] == "marker_naming"
+        return {"kind": "marker_naming", "names": [{"marker": m, "name": want[m] or "unknown", "aliases": []}
+                                                   for m in packet["evidence"]["unresolved"]]}
+
+    with FakeGateway(brain) as gateway:
+        client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), dev=True, sleep=lambda s: None)
+        evaluation = route_bench.bench_route("openai/gpt-test", feature="gating.marker_naming", gateway=client)
+    (call,) = gateway.calls
+    assert call["path"] == "/v1/ai/dev/messages" and call["body"]["model"] == "openai/gpt-test"
+    assert call["body"]["task"] == "plexora.gating.marker_naming"
+    assert evaluation["bench_version"] == "naming-1" and evaluation["feature"] == "gating.marker_naming"
+    m = evaluation["metrics"]
+    assert m["naming_accuracy"] == 1.0 and m["wrong_name_rate"] == 0.0 and m["failure_rate"] == 0.0
