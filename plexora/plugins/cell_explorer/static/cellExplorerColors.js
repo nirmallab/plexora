@@ -42,11 +42,13 @@ class CellExplorerColors {
      * The quick picks in a category's colour popover, in the shape core's
      * ColorSwatchPicker takes.
      *
-     * Drawn from CATEGORICAL rather than invented, so the ten one-click choices
-     * are the same ten colours the legend already assigned by itself: swapping
-     * two categories over is picking one of the colours on screen, not matching
-     * a new one to them by eye. The neutral last is UNASSIGNED, which is the
-     * one deliberate "this means nothing" colour in the set.
+     * Drawn from CATEGORICAL rather than invented, so the one-click choices
+     * are the colours the legend already assigned by itself: swapping two
+     * categories over is picking one of the colours on screen, not matching a
+     * new one to them by eye. White is the exception, there because a category
+     * picked out against everything else on a dark image is the common ask.
+     * The neutral last is UNASSIGNED, which is the one deliberate "this means
+     * nothing" colour in the set.
      */
     static SWATCH_PRESETS = [
         { label: "Blue", hex: "#4477aa" },
@@ -58,6 +60,7 @@ class CellExplorerColors {
         { label: "Orange", hex: "#ee7733" },
         { label: "Teal", hex: "#009988" },
         { label: "Magenta", hex: "#ee3377" },
+        { label: "White", hex: "#ffffff" },
         { label: "Neutral grey", hex: "#5b6675" },
     ];
 

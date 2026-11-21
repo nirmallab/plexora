@@ -380,6 +380,37 @@
     /* A scrolled list must not hand its last flick on to the sidebar, which
        would scroll the colour-by control out of view mid-search. */
     overscroll-behavior: contain;
+    /* The eye is the last column, and the scrollbar sits at the same edge --
+       on macOS as an overlay drawn ON TOP of the eyes while the list moves.
+       A click meant for an eye landed on the track and paged the list away.
+       The gap keeps the eyes out from under it, and the bar itself is thin
+       and faint until the list is pointed at: it says where you are, it is
+       not a control anyone aims for. Wheel and trackpad do the scrolling. */
+    padding-right: 10px;
+    scrollbar-color: transparent transparent;
+    scrollbar-width: thin;
+}
+
+.cex-legend:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* WebKit without scrollbar-color (older Safari, older WKWebView). */
+.cex-legend::-webkit-scrollbar {
+    width: 6px;
+}
+
+.cex-legend::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.cex-legend::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+}
+
+.cex-legend:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
 }
 
 /* Swatch, name, count, eye. A grid rather than a flex row so that the counts
