@@ -30,7 +30,7 @@ import numpy as np
 
 #: The bench version each module -- or task with its own bench -- is on;
 #: mirrors catalog.ts BENCH (a test keeps them equal).
-BENCH_VERSIONS = {"gating": "gating-2", "gating.marker_naming": "naming-1"}
+BENCH_VERSIONS = {"gating": "gating-3", "gating.marker_naming": "naming-1"}
 DEFAULT_MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
@@ -93,8 +93,10 @@ def bench_route(route: str, *, feature: str = "gating", capability: str = "visio
                     record = engine.store().load(summary["session_id"])
                     finals = {u["marker"]: u.get("final") for u in record["units"].values()
                               if u["project"] == name}
+                # gating-3: scored by the gating rule -- dim cells count (`bench.dim_counted`).
                 scored = bench.score_image(name, made["values"], made["truth"],
-                                           {"route": {m: finals.get(m) for m in markers}}, {})
+                                           {"route": {m: finals.get(m) for m in markers}}, {},
+                                           dim_counts=True)
                 for row in scored:
                     row["scenario"] = scenario
                 rows.extend(scored)
@@ -122,12 +124,12 @@ def bench_route(route: str, *, feature: str = "gating", capability: str = "visio
 def oracle_code_agreement(scenarios, markers, *, seed=0, grid=24, size=1024) -> float:
     """The ceiling the route is held to (gating-2): the median code agreement
     of the scripted reader that answers every packet from the truth, on the
-    same scenes (the same seeds). The scenes carry overlaps no reader resolves,
-    so this is below 1; it costs no model call."""
+    same scenes (the same seeds), scored as the route is (gating-3: dim cells
+    count, `bench.dim_counted`). It costs no model call."""
     from plexora.ai import bench
 
     rows = bench.run_synthetic(tuple(scenarios), "oracle", arms=("session",), seed=seed,
-                               markers=tuple(markers), grid=grid, size=size)
+                               markers=tuple(markers), grid=grid, size=size, dim_counts=True)
     codes = [r["code_agreement"] for r in rows
              if r["marker"] == "*code*" and r.get("code_agreement") is not None]
     return round(float(np.median(codes)), 4) if codes else 0.0
