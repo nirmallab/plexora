@@ -48,12 +48,32 @@ def test_a_marker_without_a_channel_cannot_be_looked_at(tmp_path):
     config = json.loads((tmp_path / "config.json").read_text())
     for channel in config["other"]["imageData"]:
         if channel.get("name") == "CD8":
-            channel["name"] = channel["fullname"] = "CD8a"
+            # A channel no spelling ties to CD8 (CD8a would be CD8: the looks'
+            # matcher, `vocabulary.match_name`, finds it).
+            channel["name"] = channel["fullname"] = "Unlabelled_7"
     (tmp_path / "config.json").write_text(json.dumps(config))
     registry.discover(["gating"])
     outcome = invoke(AgentSession(), "render_gate_validation",
                      {"project": "other", "marker": "CD8", "max_fields": 1})
     assert outcome["error"]["code"] == "precondition_missing"
+
+
+def test_a_vendor_named_channel_is_the_markers(tmp_path):
+    """The table's CD8 is drawn from `10_CD8a_ArgoFluor624`, as every look does."""
+    import json
+
+    from tests.agent_fixtures import make_synthetic_project as make
+
+    make(tmp_path, "vendor")
+    config = json.loads((tmp_path / "config.json").read_text())
+    for channel in config["vendor"]["imageData"]:
+        if channel.get("name") == "CD8":
+            channel["name"] = channel["fullname"] = "10_CD8a_ArgoFluor624"
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    registry.discover(["gating"])
+    outcome = invoke(AgentSession(), "render_gate_validation",
+                     {"project": "vendor", "marker": "CD8", "max_fields": 1})
+    assert outcome["ok"], outcome.get("error")
 
 
 def _deep_cells(tmp_path):
