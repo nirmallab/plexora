@@ -184,7 +184,9 @@ def build(markers, *, overrides=None, image_channels=None, ai_names=None) -> dic
                                "partners": [], "caveats": [], "expected_fraction": None,
                                "morphology": None, "source": None}
             unresolved.append(marker)
-        if image_channels is not None and marker not in image_channels:
+        # The matcher every look uses (`views.image_channel`): a table's `CD45`
+        # is drawn from the image's `03_CD45_ArgoFluor520`.
+        if image_channels is not None and vocabulary.match_name(marker, image_channels) is None:
             entries[marker]["no_image_channel"] = True
     duplicates = {c: ms for c, ms in by_canonical.items() if len(ms) > 1}
     context = {"version": VERSION, "vocabulary_version": vocabulary.version(),
