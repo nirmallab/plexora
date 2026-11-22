@@ -300,12 +300,25 @@ def summary(result) -> dict:
             "cells": {k: ((result or {}).get("cells") or {}).get(k)
                       for k in ("n", "n_fail", "n_warn", "n_noted", "n_background",
                                 "by_reason", "n_marker_flagged", "n_marker_unreliable")},
+            # Ran (its cells) or skipped, and why: a panel that cannot tell
+            # enough lineages apart is said to be unchecked, not clean.
+            "multi_channel_bright": _multi_bright_line(((result or {}).get("cells") or {})),
             "strictness": (result or {}).get("strictness"),
             "checks": {check: {key: {k: entry.get(k) for k in (
                 "threshold", "threshold_source", "offset_steps", "state", "n_regions",
                 "flagged_pct", "denominator")} for key, entry in per.items()}
                 for check, per in ((result or {}).get("checks") or {}).items()},
             "warnings": len((result or {}).get("warnings") or [])}
+
+
+def _multi_bright_line(cells) -> dict | None:
+    record = cells.get("multi_channel_bright")
+    if not record:
+        return None
+    return {"ran": not record.get("skipped"), "why": record.get("why"),
+            "n": cells.get("n_multi_channel_bright"), "status": record.get("status"),
+            "panel_lineages": record.get("panel_lineages"),
+            "min_lineages": record.get("min_lineages"), "quantile": record.get("quantile")}
 
 
 # -- tables --------------------------------------------------------------------

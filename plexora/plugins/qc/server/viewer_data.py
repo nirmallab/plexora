@@ -64,6 +64,7 @@ REASON_COLORS = {
     "seg_large": "#5eead4",
     "seg_irregular": "#bef264",
     "no_nucleus": "#fda4af",
+    "multi_channel_bright": "#f0abfc",
     "dna_loss": "#fca5a5",
     # The cells outside the tissue: the Background ROI's own slate, so the
     # cells match its outline (a `background|note` group, faint).

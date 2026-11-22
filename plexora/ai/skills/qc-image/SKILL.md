@@ -246,7 +246,10 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    tissue (noted and kept), the segmentation flags by reason, and DNA
    retention's digest -- reliable through which cycle of how many, how many
    nucleated cells lose their nucleus by the last cycle, and the labels with
-   no nucleus (`no_nucleus`: warned, excluded under `strict`). A nucleus
+   no nucleus (`no_nucleus`: warned, excluded under `strict`), and the cells
+   bright in markers of several lineages no cell combines
+   (`multi_channel_bright`: warned, excluded under `strict`; or skipped,
+   with why, when the panel spans too few exclusive lineages). A nucleus
    lost by a cycle flags that cycle's markers in the cell (`dna_loss`),
    never the whole cell.
 6. Offer `export_qc` for files: cells.csv (each cell's `status` --

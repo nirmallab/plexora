@@ -118,7 +118,10 @@ AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 CELL_STATUSES = ("exclude", "warn", "note")
 
 CELL_REASONS = ("seg_under", "seg_over", "seg_small", "seg_large", "seg_irregular",
-                "background", "no_nucleus")
+                "background", "no_nucleus", "multi_channel_bright")
+#: A cell bright in markers of lineages no real cell combines (`cells.
+#: multibright`): autofluorescence, a dying cell, debris -- not a cell type.
+MULTI_BRIGHT_REASON = "multi_channel_bright"
 #: The cell reasons Segmentation QC's cell modules call, from the mask read
 #: against the DNA stain (`segqc`): one label holding two nuclei, one nucleus
 #: cut across labels, and a size or roundness far from the mask's own.
@@ -191,6 +194,18 @@ MARKER_EVIDENCE = {"alpha": 1e-3, "min_superiority": 0.64, "min_tail_ratio": 3.0
                    "min_cells": 5, "min_reference": 50, "tail_quantile": 0.99,
                    "ring_cells": 10.0, "ring_share": 0.5}
 
+#: [cal] multi-channel bright cells (`cells.multibright`). The quantile a
+#: marker is lit above, the number of exclusive lineages and whether the call
+#: excludes are the preset's (`cells.multi_bright_*`); these are fixed. Only
+#: graph exclusions of `min_confidence` or stronger count. Cutoffs are read
+#: in the tissue's cells, or every cell when the tissue holds fewer than
+#: `min_tissue_cells`. `housekeeping` markers never take part. A panel whose
+#: lineage markers span fewer exclusive lineages than the preset asks for
+#: skips the check (no fallback).
+MULTI_BRIGHT = {"min_confidence": "moderate", "min_tissue_cells": 200,
+                "housekeeping": ("betaTUBULIN", "beta-tubulin", "TUBB", "GAPDH", "ACTB",
+                                 "beta-actin", "Actin", "Histone H3", "HH3", "H3")}
+
 #: What each reason means, for `uns["plexora_qc"]["definitions"]` and the report.
 REASON_DEFINITIONS = {
     "seg_under": "one mask label holds the DNA of two nuclei (Segmentation QC's "
@@ -210,6 +225,11 @@ REASON_DEFINITIONS = {
                   "cell kept -- only the user's renaming or approval excludes it",
     "no_nucleus": "the label's mean DNA in the reference cycle is no brighter than the "
                   "glass's noise (or the presence floor); warns, and excludes under strict",
+    "multi_channel_bright": "bright (above each marker's high quantile in the tissue) in "
+                            "markers of several lineages no real cell combines -- epithelial "
+                            "and T cell and myeloid at once, by the marker graph's exclusions; "
+                            "an autofluorescent or dying cell or debris, not a cell type; "
+                            "warns, and excludes under strict",
     **{f"region:{c}": f"inside a QC region of class {CLASS_WORDS[c]}"
        for c in ARTIFACT_CLASSES},
 }
@@ -242,7 +262,7 @@ PRIMARY_ORDER = (
     "region:illumination_or_shading", "region:excessive_background",
     "region:autofluorescence", "region:bleedthrough_or_crosstalk",
     "region:staining_artifact", "region:other_technical",
-    "region:uncertain_manual_review", "no_nucleus",
+    "region:uncertain_manual_review", "no_nucleus", "multi_channel_bright",
     "seg_under", "seg_over", "seg_large", "seg_small", "seg_irregular", "background",
 )
 
@@ -279,7 +299,7 @@ CATEGORIES = (
      "default_class": "staining_artifact",
      "groups": ("judged per channel, never outlined: antibody aggregates",
                 "high background", "autofluorescence", "bleed-through", "failed channels",
-                "artifact-bright values")},
+                "artifact-bright values", "cells bright in many lineages at once")},
 )
 CATEGORY_IDS = tuple(c["id"] for c in CATEGORIES)
 CATEGORY_WORDS = {c["id"]: c["words"] for c in CATEGORIES}
@@ -347,6 +367,7 @@ CELL_REASON_CATEGORY = {
     **{f"region:{c}": CLASS_CATEGORY[c] for c in ARTIFACT_CLASSES},
     "background": BACKGROUND["id"],
     "no_nucleus": "segmentation",
+    "multi_channel_bright": "staining_signal",
     "dna_loss": "tissue_acquisition",
     **{f"detected:{c}": CLASS_CATEGORY[c] for c in STAINING_REGION_CLASSES},
     "rim": "tissue_acquisition",
@@ -369,6 +390,7 @@ REASON_WORDS = {
     "seg_irregular": "Irregular shape",
     "background": "Outside the tissue",
     "no_nucleus": "No nucleus",
+    "multi_channel_bright": "Bright in many lineages",
     "dna_loss": "Nucleus lost by this cycle",
     **{f"detected:{c}": f"Detected {CLASS_WORDS[c].lower()}" for c in STAINING_REGION_CLASSES},
     "rim": "Tissue rim",
@@ -970,6 +992,11 @@ STRICTNESS_KEYS = {
     "cells.roi_overlap_fraction": "down",
     "cells.marker_quantile": "down",
     "cells.no_nucleus_exclude": "up",
+    # Multi-channel bright cells (`cells.multibright`): a lower quantile
+    # lights more cells, fewer lineages flag more of them.
+    "cells.multi_bright_quantile": "down",
+    "cells.multi_bright_lineages": "down",
+    "cells.multi_bright_exclude": "up",
 }
 
 #: [cal] the three presets. Custom tables are refused outside [lenient, strict].
@@ -981,6 +1008,8 @@ STRICTNESS_PRESETS = {
         "area.size_alone": 0,
         "cells.roi_overlap_fraction": 0.75, "cells.marker_quantile": 0.995,
         "cells.no_nucleus_exclude": 0,
+        "cells.multi_bright_quantile": 0.98, "cells.multi_bright_lineages": 3,
+        "cells.multi_bright_exclude": 0,
     },
     "standard": {
         "artifact.exclude_min_severity": 1, "artifact.exclude_min_confidence": 0.65,
@@ -989,6 +1018,8 @@ STRICTNESS_PRESETS = {
         "area.size_alone": 0,
         "cells.roi_overlap_fraction": 0.5, "cells.marker_quantile": 0.99,
         "cells.no_nucleus_exclude": 0,
+        "cells.multi_bright_quantile": 0.97, "cells.multi_bright_lineages": 3,
+        "cells.multi_bright_exclude": 0,
     },
     "strict": {
         "artifact.exclude_min_severity": 0, "artifact.exclude_min_confidence": 0.3,
@@ -997,6 +1028,8 @@ STRICTNESS_PRESETS = {
         "area.size_alone": 1,
         "cells.roi_overlap_fraction": 0.25, "cells.marker_quantile": 0.975,
         "cells.no_nucleus_exclude": 1,
+        "cells.multi_bright_quantile": 0.97, "cells.multi_bright_lineages": 3,
+        "cells.multi_bright_exclude": 1,
     },
 }
 

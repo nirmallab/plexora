@@ -352,6 +352,7 @@ nothing stronger flagged the cell for that reason).
 |---|---|---|---|---|
 | `background` | cell | note | note | the Background ROI (only the user's rename or approval excludes) |
 | `no_nucleus` | cell | warn | exclude (`cells.no_nucleus_exclude`) | DNA retention |
+| `multi_channel_bright` | cell | warn | exclude (`cells.multi_bright_exclude`) | the table's values and the marker graph (`cells/multibright.py`) |
 | `dna_loss` | marker | exclude for that marker | same | DNA retention: the cell's nucleus gone by the marker's cycle |
 | `seg_small`, `seg_large` | cell | warn | exclude (`area.size_alone`) | Segmentation QC |
 | `seg_irregular` | cell | warn | warn | Segmentation QC |
@@ -369,6 +370,20 @@ writes exactly that. `dna_loss` is a marker flag of status exclude, so the
 marker is in `unreliable_markers` and gating leaves it out; each cycle's
 record is in `marker_evidence` (`test: "dna_retention"`). A cell with no
 nucleus outside the tissue carries both reasons (`n_no_nucleus_in_background`).
+`multi_channel_bright` (`cells/multibright.py`, category Staining / signal):
+a marker is lit in a cell above its `cells.multi_bright_quantile` (lenient
+0.98, standard and strict 0.97) among the tissue's cells; markers that
+resolve to a graph family are lineage markers (a family-less marker is a
+state and takes no part); two lineage markers are exclusive when every pair
+of their common carrier families (own family plus unscoped common `also_on`
+exceptions) falls under a family-level exclusion of `MULTI_BRIGHT
+["min_confidence"]` or stronger, a rare exception into the other's lineage
+weakening it a grade, and a stated vocabulary relation winning; a cell is
+flagged when its lit lineage markers hold a clique of
+`cells.multi_bright_lineages` (3) pairwise-exclusive markers. A panel whose
+whole lineage set has no such clique skips the check (`summary
+["multi_channel_bright"]`: `skipped`, `why`); there is no count-only
+fallback. Markers a channel-level verdict excludes take no part.
 A dismissal clears notes too. A result saved before may still hold
 `cells.modules`; `calls.derive` ignores it, and `strictness.RETIRED_KEYS`
 drops retired keys from an old custom table.
@@ -931,7 +946,8 @@ it), `REVIEW` and `BACKGROUND` (its own category and class, listed last by
 `category_order()`; not an artifact class, never a finding). Every class maps to one (`CLASS_CATEGORY`; a tile seam is
 acquisition, an intensity step at a tile border), every cell
 and marker reason to one (`CELL_REASON_CATEGORY`: the `seg_*` reasons and
-`no_nucleus` are segmentation, `dna_loss` tissue / acquisition,
+`no_nucleus` are segmentation, `multi_channel_bright` staining / signal,
+`dna_loss` tissue / acquisition,
 `background` the background, a region reason takes its class's category); `_assert_categories` checks it at
 import. Three classes exist for this: `segmentation_error` (a region where the
 mask failed; whole-cell -- a session no longer writes one, the class stays

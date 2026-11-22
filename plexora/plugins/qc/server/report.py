@@ -211,6 +211,8 @@ def build(call, project, result) -> dict:
         "cells_noted": cells.get("n_noted"),
         "cells_background": cells.get("n_background"),
         "cells_no_nucleus": cells.get("n_no_nucleus"),
+        "cells_multi_channel_bright": cells.get("n_multi_channel_bright"),
+        "multi_channel_bright": _multi_bright_brief(cells.get("multi_channel_bright")),
         "cells_excluded_fraction": (cells.get("n_fail") or 0) / cells["n"]
         if cells.get("n") else None,
         "sentence": _denominator_sentence(tissue_meta, area, pixel, cells, scan)}
@@ -459,6 +461,16 @@ def to_html(call, report) -> str:
                          f"<td>{_n((cells.get('note_by_reason') or {}).get(reason))}</td>"
                          f"<td>{esc(schemas.REASON_DEFINITIONS.get(reason, ''))}</td></tr>")
         parts.append("</table>")
+        brief = _multi_bright_brief(cells.get("multi_channel_bright"))
+        if brief and brief.get("skipped"):
+            parts.append(f"<p class='muted'>Multi-channel bright cells: not checked -- "
+                         f"{esc(str(brief.get('why') or ''))}.</p>")
+        elif brief:
+            parts.append(f"<p class='muted'>Multi-channel bright cells: "
+                         f"{_n(cells.get('n_multi_channel_bright'))} cells bright in markers "
+                         f"of {brief['min_lineages']} or more lineages the marker graph keeps "
+                         f"apart (each marker's {brief['quantile']:.1%} quantile; lineages: "
+                         f"{esc(', '.join(brief.get('lineages') or []) or '-')}).</p>")
         if cells.get("n_no_nucleus_in_background"):
             parts.append(f"<p class='muted'>{cells['n_no_nucleus_in_background']} cells with no "
                          "nucleus are also outside the tissue; both reasons are listed.</p>")
@@ -486,6 +498,19 @@ def _audit_words(channel):
     return (str(audit.get("verdict") or "-"),
             schemas.CLASS_WORDS.get(klass, klass) if klass else "-",
             str(note.get("reason") or channel.get("reason") or "-"))
+
+
+def _multi_bright_brief(record):
+    """What the report says of the multi-channel bright check: ran (its bar
+    and the lineages its flagged cells span) or skipped and why; None when
+    the calls predate it."""
+    if not record:
+        return None
+    return {"skipped": bool(record.get("skipped")), "why": record.get("why"),
+            "quantile": record.get("quantile"), "min_lineages": record.get("min_lineages"),
+            "panel_lineages": record.get("panel_lineages"),
+            "n_flagged": record.get("n_flagged"),
+            "lineages": list((record.get("families") or {}))[:8]}
 
 
 def _cell_reasons(cells):

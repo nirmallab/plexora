@@ -43,6 +43,14 @@ a nucleated cell that lost its nucleus before a marker's cycle has that
 marker flagged `dna_loss` (exclude for the marker, so it is in
 `unreliable_markers` and gating leaves it out).
 
+Multi-channel bright cells (`multibright`): a cell bright -- above each
+marker's `cells.multi_bright_quantile` in the tissue -- in markers of at
+least `cells.multi_bright_lineages` lineages the marker graph keeps apart
+(epithelial, T cell, myeloid at once) gets `multi_channel_bright` (a cell
+reason: warns, excludes under strict, `cells.multi_bright_exclude`). Read
+from the table's values alone; a panel whose markers span too few exclusive
+lineages skips it, and `summary["multi_channel_bright"]` says why.
+
 Three statuses (`schemas.CELL_STATUSES`): exclude fails the cell, warn is
 recorded beside a passing cell, note is recorded and changes nothing --
 `pass` and `action` ignore notes, as does everything that leaves cells out
@@ -578,6 +586,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
     # stays, marked.
     clean = {d.get("channel"): d for d in result.get("user_dismissed") or []
              if d.get("finding") == "channel"}
+    failed_markers = set()   # excluded in every cell: no part in the cell checks below
     for candidate in (result.get("candidates") or {}).values():
         user = candidate.get("user_state") or {}
         action = candidate.get("action") or "exclude"
@@ -606,6 +615,20 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
                 continue
             flag(marker, reason, status, np.ones(n, dtype=bool), category)
             marker_evidence.append({**record, "borne_out": True, "n_flagged": n})
+            if status == "exclude":
+                failed_markers.add(marker)
+
+    # -- multi-channel bright cells (`cells.multibright`) -------------------------
+    # Bright in markers of lineages no real cell combines: a table-derived
+    # cell reason, read again under every preset.
+    multi_bright = _multi_bright(ds, keep, markers, values_of, table, failed_markers,
+                                 exclude["background"] | warn["background"]
+                                 | note["background"])
+    if multi_bright is not None:
+        status, mask, mb_evidence, _record = multi_bright
+        by_status[status][schemas.MULTI_BRIGHT_REASON] |= mask
+        if mask.any():
+            evidence[schemas.MULTI_BRIGHT_REASON] = mb_evidence
 
     # -- the user's dismissals ------------------------------------------------
     # A finding the user judged wrong flags nothing; its evidence stays, marked.
@@ -661,6 +684,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
         marker_hits[(category, marker, reason)] = entry
 
     # -- the calls ------------------------------------------------------------
+    multi_record = multi_bright[3] if multi_bright is not None else None
     no_nucleus = exclude["no_nucleus"] | warn["no_nucleus"] | note["no_nucleus"]
     # Outside the tissue, whatever the user made the background do.
     background = exclude["background"] | warn["background"] | note["background"]
@@ -689,6 +713,11 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
                "n_no_nucleus": int(no_nucleus.sum()),
                # Both reasons are listed on such a cell, not de-duplicated.
                "n_no_nucleus_in_background": int((no_nucleus & background).sum()),
+               # Ran, or skipped and why (`multibright.detect`'s record).
+               "multi_channel_bright": multi_record,
+               "n_multi_channel_bright": int((exclude[schemas.MULTI_BRIGHT_REASON]
+                                              | warn[schemas.MULTI_BRIGHT_REASON]
+                                              | note[schemas.MULTI_BRIGHT_REASON]).sum()),
                "by_reason": by_reason, "warn_by_reason": warn_by_reason,
                "note_by_reason": note_by_reason,
                "n_marker_flagged": int(flagged_any.sum()),
@@ -704,6 +733,64 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
                "channel_findings": findings,
                "cells_version": schemas.CELLS_VERSION}
     return frame, pairs, summary
+
+
+def multi_bright_status(table):
+    """`multi_channel_bright` warns, and excludes where the preset says
+    (`cells.multi_bright_exclude`: strict)."""
+    return "exclude" if float(table.get("cells.multi_bright_exclude") or 0) >= 1 else "warn"
+
+
+def _multi_bright(ds, keep, markers, values_of, table, failed, background):
+    """(status, mask, evidence, record) of `multi_channel_bright`; skipped
+    (a record, no cell flagged, no evidence) when the table has no values or
+    the panel's lineages are too few. Reads the columns it needs into
+    `values_of` (log units, as every other cell test). A marker excluded in
+    every cell (a failed channel) takes no part."""
+    from plexora.plugins.qc.server.cells import multibright
+
+    status = multi_bright_status(table)
+    preset = schemas.STRICTNESS_PRESETS["standard"]
+    quantile = float(table.get("cells.multi_bright_quantile")
+                     or preset["cells.multi_bright_quantile"])
+    lineages = int(table.get("cells.multi_bright_lineages")
+                   or preset["cells.multi_bright_lineages"])
+    n = int(np.count_nonzero(keep))
+    candidates = [m for m in markers if m not in failed]
+    info = multibright.panel_for(tuple(candidates))
+    wanted = list(info["lineage"])
+    missing = [m for m in wanted if m not in values_of]
+    if missing:
+        try:
+            read = ds.table.columns(missing)
+        except Exception:  # no expression values to read: the check is skipped
+            read = {}
+        for m in missing:
+            if m in read:
+                values_of[m] = _to_log(ds, np.asarray(read[m], dtype=np.float64))[keep]
+    values = {m: values_of[m] for m in wanted if m in values_of}
+    if not values or not n:
+        record = multibright.skipped_record(
+            "the table has no expression values" if n else "the table has no cells",
+            quantile=quantile, min_lineages=lineages)
+        if wanted:
+            record["panel_lineages"] = info["max_lineages"]
+        return status, np.zeros(n, dtype=bool), None, record
+    tissue = ~background if background.any() else None
+    mask, record = multibright.detect(values, quantile=quantile, min_lineages=lineages,
+                                      tissue=tissue, info=info)
+    if failed:
+        record["failed_channels"] = sorted(m for m in failed if m in markers)
+    record["status"] = status
+    evidence = {"level": "cell", "tool": "multi_channel_bright",
+                "tool_version": multibright.VERSION, "column": None, "status": status,
+                # The markers most often lit in the flagged cells: what the
+                # viewer shows when the call is clicked.
+                "channels": list(record.get("lit_in_flagged") or {})[:8],
+                "lineages": record.get("families") or {},
+                "cutoffs": {"space": "log", "quantile": quantile, "min_lineages": lineages,
+                            "per_marker": record.get("cutoffs") or {}}}
+    return status, mask, evidence, record
 
 
 def _detections_and_rim(ds, keep, markers, values_of, xs, ys, hints, tissue, quantile, flag,
