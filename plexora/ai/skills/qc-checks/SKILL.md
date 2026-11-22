@@ -91,18 +91,17 @@ microns.
    on the cell (warned, excluded under `strict`), `dna_loss` on each marker
    of a cycle the cell's nucleus is gone by (the cell kept).
    `multi_channel_bright` comes from the table alone, on every derive: a
-   cell above each marker's high quantile in the tissue
-   (`cells.multi_bright_quantile`) in markers of at least
-   `cells.multi_bright_lineages` lineages the marker graph keeps apart --
-   epithelial and T cell and myeloid at once -- is warned (excluded under
-   `strict`). It is an autofluorescent or dying cell or debris, never a cell
-   type, and never a double-positive population: a lineage bright in many of
-   its own markers (CD3E, CD8a, CD69, TCF1) is one lineage, and an
-   exception the graph holds (CD31 on immune cells, vimentin on most) is no
-   conflict. A panel whose markers span too few exclusive lineages skips it
-   (`cells.multi_channel_bright.why`, "the panel covers 2 exclusive
-   lineages; needs 3"): say the check did not run, not that the cells are
-   clean.
+   cell above each marker's high quantile in the tissue (the strictness
+   table sets it, and how many lineages count) in markers of several
+   lineages the marker graph keeps apart -- epithelial and T cell and
+   myeloid at once -- is warned (excluded under `strict`). It is an
+   autofluorescent or dying cell or debris, never a cell type, and never a
+   double-positive population: a lineage bright in many of its own markers
+   is one lineage, and an exception the graph holds (an endothelial marker
+   on immune cells, vimentin on most) is no conflict. A panel whose markers
+   span too few exclusive lineages skips it
+   (`cells.multi_channel_bright.why` says how many it covers and needs):
+   say the check did not run, not that the cells are clean.
 6. `refine_qc_roi` retraces a region (a registration region to its mismatch
    map, a segmentation cluster written before to its density grid, a blur
    region to the blur trace;
