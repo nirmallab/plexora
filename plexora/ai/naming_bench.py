@@ -49,7 +49,9 @@ CASES = (
     ("Ab_lot_2231", None),
 )
 FEATURE = "gating.marker_naming"
-VERSION = "naming-1"
+#: naming-2 (2026-11-22): SP7 -> 2GV6 and Foxp-3 -> Forkhead-box-P3, two names
+#: graph 2026-11-21.2 resolves before the model sees them; 19 names again.
+VERSION = "naming-2"
 
 
 def expected() -> dict:

@@ -30,7 +30,7 @@ import numpy as np
 
 #: The bench version each module -- or task with its own bench -- is on;
 #: mirrors catalog.ts BENCH (a test keeps them equal).
-BENCH_VERSIONS = {"gating": "gating-3", "gating.marker_naming": "naming-1", "gating.display": "contrast-1"}
+BENCH_VERSIONS = {"gating": "gating-3", "gating.marker_naming": "naming-2", "gating.display": "contrast-1"}
 DEFAULT_MARKERS = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
