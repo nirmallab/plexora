@@ -140,12 +140,19 @@ AUTOFLUORESCENCE_PATTERN = re.compile(
 #: `-iFluor647` (letters, `fluor`, the wavelength, an optional letter).
 _FLUOR = r"[_\-\s.][a-z]*fluor\d+[a-z]?"
 #: Suffixes that name a fluorophore, a cycle or a replicate, not the marker.
-_SUFFIX = re.compile(
-    r"([_\-\s.](af|alexa|alexafluor|cy|opal|atto|fitc|pe|apc|bv|dylight|cf|ef)\d*"
-    rf"|{_FLUOR}"
-    r"|[_\-\s.](c|cycle|r|round|ch|channel)\d+"
-    r"|[_\-\s.]\d+"
-    r"|\(\d+\))+$", re.I)
+_ONE_SUFFIX = (r"([_\-\s.](af|alexa|alexafluor|cy|opal|atto|fitc|pe|apc|bv|dylight|cf|ef)\d*"
+               rf"|{_FLUOR}"
+               r"|[_\-\s.](c|cycle|r|round|ch|channel)\d+"
+               r"|[_\-\s.]\d+"
+               r"|\(\d+\))")
+_SUFFIX = re.compile(rf"{_ONE_SUFFIX}+$", re.I)
+#: The last suffix alone: taken off one at a time, a name's own number
+#: survives a tag after it (`Ki-67_2` is Ki-67; all at once it was `Ki`).
+_LAST_SUFFIX = re.compile(rf"{_ONE_SUFFIX}$", re.I)
+#: A trailing `_2`: no spelling the graph lists holds an underscore, so a
+#: number after one is a lab's replicate or cycle tag, never the name's own
+#: (`CD3_2` is CD3, not CD32).
+_REPLICATE = re.compile(r"(_\d+)+$")
 #: The fluorophore alone, so a marker whose name ends in digits (`Ki-67`)
 #: survives where `_SUFFIX` would take its number for a replicate.
 _FLUOR_SUFFIX = re.compile(rf"({_FLUOR})+$", re.I)
@@ -171,7 +178,16 @@ def fold(name) -> str:
 
 def _variants(name):
     text = str(name).strip()
-    yield text
+    at = text
+    while at:
+        # At each step a trailing `_1` goes first: `CD3_1_AF488` less its
+        # fluorophore is `CD3_1`, which is CD3, never CD31.
+        tagged = _REPLICATE.sub("", at)
+        if tagged and tagged != at:
+            yield tagged
+        yield at
+        shorter = _LAST_SUFFIX.sub("", at)
+        at = shorter if shorter != at else ""
     stripped = _SUFFIX.sub("", text)
     if stripped and stripped != text:
         yield stripped
@@ -288,14 +304,46 @@ def _build(graph) -> dict:
         return [ref] if ref in markers else []
 
     partners = {mid: {} for mid in markers}
+    stated = set()            # (mid, key): set by an edge naming both markers
 
-    def add(mid, other, relation, confidence):
+    def add(mid, other, relation, confidence, direct=False):
+        """The pair's relation at its grade. An edge naming both markers is
+        the most specific statement and sets the grade over any read
+        through a family (CD11c x CD3: weak, beside DC x T cell, strong);
+        among statements alike the strongest is kept."""
         if mid not in markers or other == mid:
             return
         key = (names[other], relation)
         held = partners[mid].get(key)
-        if held is None or CONFIDENCE.index(confidence) < CONFIDENCE.index(held):
+        if (mid, key) in stated and not direct:
+            return
+        if held is None or (direct and (mid, key) not in stated) \
+                or CONFIDENCE.index(confidence) < CONFIDENCE.index(held):
             partners[mid][key] = confidence
+        if direct:
+            stated.add((mid, key))
+
+    # The graph's exceptions (`also_on`, a marker also on another family):
+    # `common` narrows the exclusions it crosses, `rare` only weakens them.
+    exceptions = {}
+    for edge in graph.edges:
+        if edge["type"] == "also_on" and _graph.is_family(edge["to"]) \
+                and graph.applies(edge) and counts(edge):
+            exceptions.setdefault(edge["from"], []).append(edge)
+
+    def crossing(mid, slug):
+        """`common`, `rare` or None: how often `mid` is also on cells of
+        family `slug` (an exception naming it or a family within it)."""
+        found = None
+        for edge in exceptions.get(mid, ()):
+            if slug in graph.ancestors(_graph.family_slug(edge["to"])):
+                if edge.get("frequency") != "rare" and edge.get("confidence") != "weak":
+                    return "common"
+                found = "rare"
+        return found
+
+    def weaker(confidence):
+        return CONFIDENCE[min(CONFIDENCE.index(confidence) + 1, len(CONFIDENCE) - 1)]
 
     for edge in graph.edges:
         if not graph.applies(edge) or not counts(edge):
@@ -308,15 +356,30 @@ def _build(graph) -> dict:
                 add(edge["from"], other, relation, confidence)
         elif kind in ("exclusive", "coexpressed"):
             left, right = expand(edge["from"]), expand(edge["to"])
+            direct = not (_graph.is_family(edge["from"]) or _graph.is_family(edge["to"]))
             for a in left:
                 for b in right:
+                    grade = confidence
+                    if kind == "exclusive":
+                        # An exception crossing it: CD11c, an anchor of DC,
+                        # is also on a few CD8 T cells (rare), so DC x T
+                        # cell holds for CD11c x CD3 one grade lower; a
+                        # common one (CD146 on endothelium) lifts it.
+                        seen = {crossing(a, _graph.family_slug(edge["to"]))
+                                if _graph.is_family(edge["to"]) else None,
+                                crossing(b, _graph.family_slug(edge["from"]))
+                                if _graph.is_family(edge["from"]) else None}
+                        if "common" in seen:
+                            continue
+                        if "rare" in seen:
+                            grade = weaker(grade)
                     # A coexpressed partner read beneath the other (`under`:
                     # CD163 under CD68) is listed on that side only, which
                     # places it in the gating tree (`hierarchy.build`).
                     if edge.get("under") in (None, a):
-                        add(a, b, kind, confidence)
+                        add(a, b, kind, grade, direct)
                     if edge.get("under") in (None, b):
-                        add(b, a, kind, confidence)
+                        add(b, a, kind, grade, direct)
     # How deep each marker sits: in the graph's family tree (immune, T, CD4 T),
     # else in the subset tree of its partners (CD45 0, CD3 1). A marker's
     # partners come narrowest first, as its carriers are read.

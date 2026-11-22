@@ -205,3 +205,22 @@ def test_an_alias_names_the_marker_and_names_that_disagree_name_nothing(tmp_path
     assert outcome["refused"][0]["marker"] == "Mystery2"
     assert outcome["still_unresolved"] == ["Mystery2"]
     ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+
+
+@pytest.mark.parametrize("typed, meant", [
+    ("CD3_2", "CD3"),          # a replicate tag, never CD32: no listed spelling holds an underscore
+    ("CD3e_2", "CD3"),
+    ("Ki-67_2", "Ki67"),       # one suffix at a time: the name's own number survives the tag
+    ("CK-5_2", "Keratin 5"),   # never PanCK ("CK")
+    ("CD45_AF488_c2", "CD45"),
+    ("CD3_1_AF488", "CD3"),    # the tag is read at every step, never CD31
+])
+def test_a_tag_after_a_name_never_takes_the_names_number(typed, meant):
+    assert vocabulary.canonical(typed) == meant
+
+
+def test_a_number_dropped_from_a_short_name_is_no_spelling_to_correct():
+    """Ki-76 stripped of "-76" is "Ki"; with i read as 1 that is K1 (Keratin
+    1). Two characters are too few to tell a slip from a name."""
+    assert vocabulary.canonical("Ki-76") is None
+    assert vocabulary.close_match("Ki-76") is None

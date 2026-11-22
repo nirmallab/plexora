@@ -508,3 +508,35 @@ def test_new_rules_stay_off_for_bench_v5_arms():
     assert hypotheses.PARAMS["carriers"] and hypotheses.PARAMS["redraw_invalid"]
     assert hypotheses.V5_RULES["carriers"] is None and hypotheses.V5_RULES["redraw_invalid"] \
         is False
+
+
+def test_a_pair_the_graph_names_keeps_its_own_grade_over_its_families():
+    """DC x T cell is strong, but the graph states CD11c x CD3 itself as weak
+    (some CD8 T cells carry CD11c): the edge naming both markers sets the
+    pair's grade, so CD11c is no control for a marker the T cells carry."""
+    from plexora.ai import vocabulary
+
+    vocabulary.clear_cache()
+    cd3 = {(p["marker"], p["relation"]): p["confidence"]
+           for p in vocabulary.load()["entries"]["CD3"]["partners"]}
+    assert cd3[("CD11c", "exclusive")] == "low"
+    assert cd3[("CD68", "exclusive")] == "moderate"
+
+
+def test_an_exception_narrows_or_weakens_the_exclusion_it_crosses():
+    """The graph's `also_on`: a common one lifts a family exclusion for that
+    marker, a rare one keeps it a grade lower (biocognia_markers.graph)."""
+    from plexora.ai import vocabulary
+
+    vocabulary.clear_cache()
+    entries = vocabulary.load()["entries"]
+
+    def relation(a, b):
+        return {p["marker"]: (p["relation"], p["confidence"]) for p in entries[a]["partners"]
+                if p["relation"] == "exclusive"}.get(b)
+
+    # Common: PECAM-1 is also on leukocytes, S100 also on dendritic cells.
+    assert relation("CD31", "CD45") is None and relation("CD45", "CD31") is None
+    assert relation("CD45", "S100") is None
+    # Rare: DC x NK cell is moderate; CD11c on a few NK cells keeps it, low.
+    assert relation("CD11c", "CD16") == ("exclusive", "low")
