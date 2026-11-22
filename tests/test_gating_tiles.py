@@ -48,7 +48,8 @@ def test_the_multi_view_collage_draws_partners_and_redraws_byte_for_byte(tmp_pat
         assert set(manifest["partner_windows"]) == {"CD3", "CD20"}
         again = collage.rerender(session, ds, manifest)
         assert again["png"] == out["png"]
-        # Without partners the partner panels are dark, never another channel.
+        # Without partners the partner slots show the marker itself
+        # (`collage.EMPTY_SLOT`), never another channel.
         bare = collage.render_collage(session, ds, layout="t2m", rows=rows, marker="CD8",
                                       gate=1.5, fmt="png", store=False)
         assert "partners" not in bare["manifest"]["request"]

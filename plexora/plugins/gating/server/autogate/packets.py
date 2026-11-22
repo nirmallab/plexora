@@ -25,7 +25,7 @@ from typing import get_args
 from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server.autogate import answers, schemas, tableops, views
 from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
-from plexora.plugins.gating.server.autogate.partners import tiles_of
+from plexora.plugins.gating.server.autogate.partners import SUPPORTS, expected_words, tiles_of
 
 #: At most this many images in one packet (`Engine.issue` refuses more).
 MAX_IMAGES = 2
@@ -62,14 +62,18 @@ READING_GUIDE = {
     "rows": ("one word per collage row, about the cells around the nucleus the four magenta "
              "ticks mark: `own_stain` -- stain touching that nucleus with no other nucleus "
              "inside it (a ring or halo around it, a fill inside it, cytoplasm hugging it on "
-             "one or more sides: a spindle cell's stain runs along its long nucleus); "
+             "one or more sides: a spindle cell's stain runs along its long nucleus; a "
+             "stain body the outline overlaps or touches with no other nucleus inside it -- "
+             "the outline approximates the cell and is often smaller than it); "
              "`neighbour_only` -- stain in the tile, but around ANOTHER nucleus, or apart "
              "from this one by a dark gap; `unstained` -- nothing touches the nucleus; "
              "`mixed` -- the row holds both kinds about evenly; `cannot_tell`. A row is what "
              "most of its cells are. Judge the shape, not the brightness: the morphology "
              "panel brightens a dim cell's own stain on purpose, and a marker several cell "
              "types carry can be far dimmer on some (CD4 on monocytes and macrophages): "
-             "their faint own stain is `own_stain`. Plexora places the gate from the words"),
+             "their faint own stain is `own_stain` -- dim stain inside the outline clearly "
+             "above the faint floor of the unstained cells beside it counts. Plexora places "
+             "the gate from the words"),
     "collage_t2": ("each cell is two panels side by side, blue nuclei and the marker in "
                    "yellow. Left, morphology: the marker windowed on this cell's own "
                    "brightest pixels (a cell with no stain stays dark; a brighter neighbour "
@@ -91,8 +95,9 @@ READING_GUIDE = {
                     "right the "
                     "not-expected one "
                     "(`partner_panels.not_expected`): each at its own gate's 40 % grey, the judged "
-                    "cell outlined in magenta, black when there is none. An expected partner lit "
-                    "inside the outline supports the cell's own stain; a not-expected partner lit "
+                    "cell outlined in magenta; a slot with no partner shows the marker instead "
+                    "(`partner_panels.expected_slot`, `.not_expected_slot`). An expected "
+                    "partner lit inside the outline supports the cell's own stain; a not-expected partner lit "
                     "inside it says the cell is another type, so marker light on it is likely a "
                     "neighbour's. Partners glow too: read them inside the outline. Caption = "
                     "the cell's place in its row. Rows: just below, at and just above the "
@@ -138,8 +143,10 @@ READING_GUIDE = {
     "panel": ("one word per numbered cell (its caption), about the cell around the nucleus "
               "the four magenta ticks mark: `own_stain` -- the marker's stain belongs to it, "
               "touching that nucleus with no other nucleus inside it (a ring or halo around "
-              "it, a fill inside it, cytoplasm hugging it); `not_own_stain` -- nothing "
-              "touches the nucleus, or the stain is a neighbour's or apart by a dark gap; "
+              "it, a fill inside it, cytoplasm hugging it), or a stain body its outline "
+              "overlaps or touches with no other nucleus inside that body; `not_own_stain` "
+              "-- nothing touches the nucleus or the outline, or the stain is a neighbour's "
+              "or apart by a dark gap; "
               "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge, "
               "a smear across cells, or a haze or streaks lighting the field alike with no "
               "edge at this cell's outline (a fibrous stain's bands: `panel_fibrous`). The "
@@ -148,12 +155,19 @@ READING_GUIDE = {
               "not brightness. In a crowded field a ring may be partial: stain on the "
               "sides that touch no other cell, or all round it inside a cluster of stained "
               "cells, is `own_stain`; light only on the side facing one brighter neighbour, "
-              "the rest of its outline dark, is that neighbour's (`not_own_stain`). A "
-              "marker several cell types carry can be far dimmer on some "
-              "(`context.lineage`; CD4: bright on helper T cells, dim on monocytes and "
+              "the rest of its outline dark, is that neighbour's (`not_own_stain`). The "
+              "outline is the segmentation's approximation of the cell, drawn from the "
+              "nucleus outward, and is often smaller than the cell -- a mast cell or a "
+              "macrophage reaches past it: a stain body next to the nucleus that the outline "
+              "overlaps or touches, with no other nucleus inside it, is this cell's own, "
+              "not a neighbour's. A marker several cell types carry can be far dimmer on "
+              "some (`context.lineage`; CD4: bright on helper T cells, dim on monocytes and "
               "macrophages): a faint stain that is the cell's own is `own_stain`, judged "
-              "against the unstained cells, not the brightest. Say `uncertain` rather than "
-              "guess. Plexora chooses the gate from the words"),
+              "against the unstained cells, not the brightest -- dim stain inside the "
+              "outline clearly above the faint floor the unstained cells beside it show is "
+              "`own_stain`, however dim; dim populations count. Say `uncertain` only when "
+              "the picture cannot say, not because the stain is dim or the outline misses "
+              "part of the cell. Plexora chooses the gate from the words"),
     "panel_plots": ("the second picture, beside the cells, is context for them. Left, the "
                     "marker's distribution over the cells the gate is estimated on: the range "
                     "the numbered cells were drawn from shaded, the candidate gates dashed. "
@@ -181,12 +195,31 @@ READING_GUIDE = {
                         "together, a positive cell is positive for one of them) and the "
                         "not-expected one "
                         "(`partner_panels.not_expected`) alone in grey, the judged cell "
-                        "outlined magenta, black when there is none. The partners are context: "
+                        "outlined magenta; a slot with no partner shows the marker instead "
+                        "(`partner_panels.expected_slot`, `.not_expected_slot`). The partners are "
+                        "context: "
                         "an expected partner lit inside the outline is consistent with the "
                         "lineage, a not-expected one with another lineage, and neither decides "
                         "whether the marker's stain is this cell's own -- a marker several cell "
                         "types carry is own stain on a cell without the expected partner too. "
                         "Judge the marker tiles"),
+    "slot_marker_alone": ("the bottom-left tile (`partner_panels.expected_slot`: no expected "
+                          "partner) is the marker alone in grey at its display window, no "
+                          "nuclei, the judged cell outlined magenta and its neighbours grey: "
+                          "the stain's shape, and whether it fills or rings the outline or "
+                          "lies beside it"),
+    "slot_wider_field": ("the bottom-right tile (`partner_panels.not_expected_slot`: no "
+                         "not-expected partner) is the marker and nuclei over a field about "
+                         "two and a half times wider, the judged cell outlined white, ticks "
+                         "on its nucleus: which nucleus a stain body sits on, and whether the "
+                         "cell is part of a larger stained cell or cluster"),
+    "supporting_tile": ("the bottom-left tile is named `partner_panels.supporting` instead of "
+                        "an expected partner: markers whose positives sit inside this "
+                        "marker's (CD163 inside IBA1), drawn as an expected partner is. Lit "
+                        "inside the judged cell's outline, it supports that cell's own stain. "
+                        "Dark says nothing -- many positive cells lack it (most IBA1+ "
+                        "macrophages are CD163-negative): never read a dark supporting tile "
+                        "as evidence against the cell. Judge the marker tiles"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -887,9 +920,7 @@ def _multiview(engine, unit, ds, reference=None, look=None, kind=None):
             partners["relations"][side] = reference["relation"]
             partners["members"].pop(side, None)
     engine.note_partners_drawn(unit, kind=kind, tiles=tiles_of(partners))
-    names = partners["markers"]
-    return "t2m", partners, {"partner_panels": {"expected": names.get("co"),
-                                                "not_expected": names.get("anti")}}
+    return "t2m", partners, partner_words(partners)
 
 
 def _panel_words(layout, partners):
@@ -898,8 +929,53 @@ def _panel_words(layout, partners):
     if layout != "t2m":
         return None
     names = (partners or {}).get("markers") or {}
-    return (f"morphology | outlined context / expected {names.get('co') or 'none'} | "
-            f"not expected {names.get('anti') or 'none'}")
+    expected = expected_words(partners)
+    expected = SLOT_WORDS["co"] if not expected else expected \
+        if expected.startswith("supporting ") else f"expected {expected}"
+    anti = f"not expected {names['anti']}" if names.get("anti") else SLOT_WORDS["anti"]
+    return f"morphology | outlined context / {expected} | {anti}"
+
+
+#: How a look names a partner slot that has no partner, which shows the
+#: marker instead (`collage.EMPTY_SLOT`), and the guide entry that reads it.
+SLOT_WORDS = {"co": "the marker alone, outlined", "anti": "a wider field"}
+SLOT_GUIDE = {"co": "slot_marker_alone", "anti": "slot_wider_field"}
+
+
+def segmentation_words(engine, project) -> dict:
+    """{"segmentation": note} for a look's evidence when the image's cell
+    outlines are approximate (`Engine.segmentation_note`), else {}."""
+    finder = getattr(engine, "segmentation_note", None)
+    try:
+        found = finder(project) if finder is not None else None
+    except Exception:
+        found = None
+    return {"segmentation": found["note"]} if found else {}
+
+
+def partner_words(partners) -> dict:
+    """What a look's evidence names its partner tiles (`partner_panels`):
+    `expected` and `not_expected`, or `supporting` in place of `expected`
+    for a supporting tile (`partners.SUPPORTS`) -- its own name, because a
+    dark supporting tile says nothing about the cell."""
+    names = (partners or {}).get("markers") or {}
+    side = "supporting" if ((partners or {}).get("relations") or {}).get("co") == SUPPORTS \
+        else "expected"
+    out = {side: names.get("co"), "not_expected": names.get("anti")}
+    # A slot with no partner shows the marker instead (`collage.EMPTY_SLOT`).
+    out.update({f"{'expected' if kind == 'co' else 'not_expected'}_slot": SLOT_WORDS[kind]
+                for kind in ("co", "anti") if not names.get(kind)})
+    return {"partner_panels": {k: v for k, v in out.items() if v is not None}}
+
+
+def partner_guide(partners) -> list:
+    """The guide entries a look's partner tiles add: `supporting_tile` when
+    the expected slot holds a supporting tile; the slot readings for a slot
+    with no partner (`SLOT_GUIDE`)."""
+    names = (partners or {}).get("markers") or {}
+    out = ["supporting_tile"] if ((partners or {}).get("relations") or {}).get("co") \
+        == SUPPORTS else []
+    return out + [SLOT_GUIDE[kind] for kind in ("co", "anti") if not names.get(kind)]
 
 
 def _condition_brief(unit):
@@ -948,7 +1024,7 @@ def t2_confirm(engine, units):
                     "word per row, and the pattern of the stained cells.")
     within = within_eligible(partners) if not condition else []
     guide = ["rows", "collage_t2m" if layout else "collage_t2", "sheet", "partners",
-             "requests"] + (["within_partner"] if within else [])
+             "requests"] + (["within_partner"] if within else []) + partner_guide(partner_panels)
     packet = {
         "question": question,
         "evidence": {
@@ -959,7 +1035,7 @@ def t2_confirm(engine, units):
             "within_allowed": within,
             "profile": {"class": (unit.get("summary") or {}).get("class")},
             "rows": {r["key"]: r["label"] for r in rows},
-            **multiview,
+            **multiview, **segmentation_words(engine, unit["project"]),
             "context": {"compartment": compartment}, "flags": _flags(unit),
             **_sheet_evidence(context_sheet),
             **_reading(engine, guide + _sheet_keys(context_sheet, unit)),
@@ -1025,7 +1101,8 @@ def t3_biological(engine, units):
     condition = unit.get("condition")
     within = within_eligible(partners) if not condition else []
     guide = ["rows"] + (["collage_t2m"] if layout else ["collage_t2", "collage_t3"]) + \
-        ["sheet", "partners"] + (["within_partner"] if within else [])
+        ["sheet", "partners"] + (["within_partner"] if within else []) + \
+        partner_guide(partner_panels)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: for each "
@@ -1044,7 +1121,7 @@ def t3_biological(engine, units):
             "rows": {r["key"]: r["label"] for r in rows},
             "context": {"compartment": compartment},
             "references": [r["marker"] for r in refs],
-            **multiview,
+            **multiview, **segmentation_words(engine, unit["project"]),
             **_sheet_evidence(second),
             **_reading(engine, guide + _sheet_keys(second, unit)),
         },
@@ -1163,6 +1240,7 @@ def t4_candidates(engine, units):
         t4_guide[1:3] = ["collage_split", "collage_flips_split"]
     elif not layout:
         t4_guide[1:3] = ["collage_flips"]
+    t4_guide += partner_guide(partner_panels)
     question = (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
                 "call between neighbouring thresholds, nearest the current gate first. "
                 f"For EVERY row, do those cells carry their OWN {stain} stain, around "
@@ -1187,7 +1265,7 @@ def t4_candidates(engine, units):
         "evidence": {"partners": _partner_line(numbers),
                      "marker": unit["marker"], "project": ds.name, "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
-                     **multiview,
+                     **multiview, **segmentation_words(engine, unit["project"]),
                      **({"condition": _condition_brief(unit)} if condition else {}),
                      "round": int(unit.get("rounds", 0)) + 1,
                      **_sheet_evidence(context_sheet),

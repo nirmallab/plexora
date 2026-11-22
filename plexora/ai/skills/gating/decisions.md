@@ -67,8 +67,18 @@ cells below every candidate and two clear positives (carrier cells standing
 above their neighbours). A panel whose reader calls both clear positives
 unstained, after reading stain somewhere, is discarded and drawn again --
 two discarded panels close the marker. The gate written is always one of the candidates and
-passes the same whole-image checks; a failed check caps its confidence, it
-never moves the gate. A conditional gate (a `within` answer of engine
+passes the same whole-image checks; a gate that fails one is never accepted
+(below). A panel draws one expected partner beside each cell, or, for a
+marker with none, a supporting one (`supporting CD163` for `IBA1`: a
+lineage inside the marker's positives): lit, it supports the cell's own stain; dark,
+it says nothing, and it never counts against a cell or moves a gate. A
+slot with no partner is never black: the expected one shows the marker
+alone with the cell's outline, the not-expected one the marker and nuclei
+over a wider field. Readers judge ownership by the nucleus -- the outline
+approximates the cell -- and count dim own stain above the unstained
+cells' floor; a look on an image whose outlines came from another platform,
+or whose looks keep naming `segmentation`, carries a `segmentation` note.
+A conditional gate (a `within` answer of engine
 `v1`) or a marker with no candidates gets `v1` looks, whose reading comes with
 the packet.
 
@@ -82,6 +92,15 @@ the packet.
   `manual_review_recommended`, written at the best the evidence reached and
   tagged `needs_review`; none is accepted because it ran out of looks.
 - A gate is never accepted against the last direction a look gave.
+- A gate that fails its own whole-image checks is written there for review,
+  never accepted.
+- A marker about to close for review whose looks read almost no cell as
+  carrying its own stain -- a look calling half its cells `artifact`, or
+  most cells `uncertain` or `artifact` with a stain artifact named -- is
+  shown on the whole image first, once: `technical_failure` or
+  `no_positive_population` closes it so (the absence regions first, when
+  the session checks absence); any other answer makes the review close, its
+  reason saying what the check said.
 - `technically_failed` and `no_positive_population` markers are written at
   the column's maximum, the reason kept beside the gate.
 - Locked and approved gates are never written; hand-set gates are kept unless

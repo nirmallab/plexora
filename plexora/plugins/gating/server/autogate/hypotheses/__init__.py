@@ -480,10 +480,9 @@ def packet(engine, units):
     lineage = (unit.get("context") or {}).get("lineage")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     numbers = [c["number"] for c in arranged]
-    multiview = ({"partner_panels": {"expected": partners["markers"].get("co"),
-                                     "not_expected": partners["markers"].get("anti")}}
-                 if partners else {})
-    guide = ["panel", "collage_panel_m" if partners else "collage_panel"]
+    multiview = packets.partner_words(partners) if partners else {}
+    guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
+        packets.partner_guide(partners)
     fibrous = ((engine.panel_for(unit["project"]).get("entries") or {})
                .get(unit["marker"]) or {}).get("morphology") == "fibrous"
     if fibrous:
@@ -509,6 +508,7 @@ def packet(engine, units):
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
+                     **packets.segmentation_words(engine, unit["project"]),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -607,10 +607,9 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
     lineage = context.get("lineage")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     numbers = [c["number"] for c in arranged]
-    multiview = ({"partner_panels": {"expected": partners["markers"].get("co"),
-                                     "not_expected": partners["markers"].get("anti")}}
-                 if partners else {})
-    guide = ["panel", "collage_panel_m" if partners else "collage_panel"]
+    multiview = packets.partner_words(partners) if partners else {}
+    guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
+        packets.partner_guide(partners)
     if ((engine.panel_for(project).get("entries") or {}).get(unit["marker"]) or {}).get(
             "morphology") == "fibrous":
         guide.append("panel_fibrous")
@@ -620,6 +619,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
+                     **packets.segmentation_words(engine, project),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -986,8 +986,14 @@ def finish(engine, unit, status):
     if not at_start:
         state["reason"] += plateau_note(state)
     proposed = leader if leader is not None and not at_start else state.get("start")
-    engine.close(unit, CLOSE_STATE[status], f"cell panels: {state['reason']}",
-                 proposed=proposed)
+    from plexora.plugins.gating.server.autogate import replan
+
+    reason = f"cell panels: {state['reason']}"
+    if replan.check_unreadable(engine, unit, CLOSE_STATE[status], reason, proposed):
+        # Looks that could not read the stain as any cell's own: the whole
+        # image is looked at before it closes for review (a failed stain).
+        return
+    engine.close(unit, CLOSE_STATE[status], reason, proposed=proposed)
 
 
 def plateau_note(state) -> str:

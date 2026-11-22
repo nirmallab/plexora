@@ -627,6 +627,14 @@ def apply_qc(engine, packet, answer):
 
         if replan.after_whole_image(engine, unit, answer.verdict):
             return _outcome(unit, whole_image=answer.verdict)
+    if unit.get("unreadable_check") and "verdict" not in unit["unreadable_check"]:
+        from plexora.plugins.gating.server.autogate import replan
+
+        # A stain its looks could not read (`replan.check_unreadable`): a
+        # failed or empty answer closes it below; any other keeps the review
+        # close it was about to make.
+        if replan.after_unreadable(engine, unit, answer.verdict):
+            return _outcome(unit, whole_image=answer.verdict, kept=True)
     if answer.verdict in ("technical_failure", "no_positive_population") \
             and engine.options["absence_check"]:
         said = {"technical_failure": "technically_failed",
@@ -680,7 +688,14 @@ def apply_qc(engine, packet, answer):
 
 def _qc_real_signal(engine, unit, overruled=None):
     """The channel is real: hard flags are downgraded and the marker gets a
-    look (beside a reference when a look already failed to settle it)."""
+    look (beside a reference when a look already failed to settle it) --
+    unless its looks already could not read it (`replan.check_unreadable`):
+    then the review close they were about to make."""
+    if unit.get("unreadable_check"):
+        from plexora.plugins.gating.server.autogate import replan
+
+        replan.keep_unreadable(engine, unit, "real_signal")
+        return _outcome(unit, kept=True, **({"overruled": overruled} if overruled else {}))
     unit["flags"] = [f for f in unit.get("flags") or [] if f not in schemas.HARD_FLAGS] + \
         [f"{f}_downgraded" for f in unit.get("flags") or [] if f in schemas.HARD_FLAGS]
     if overruled:

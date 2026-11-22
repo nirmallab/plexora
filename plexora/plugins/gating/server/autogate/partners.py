@@ -30,7 +30,10 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
             supersets of its supersets; the most specific first. A broad
             lineage marker with none of these (CD3, PanCK) gets the lineage
             markers that declare themselves inside it instead (`contains`:
-            "CD4 or CD8a" for CD3), never a state;
+            "CD4 or CD8a" for CD3), never a state; failing that, up to
+            `_MAX_SUPPORTS` lineage markers whose positives sit inside its
+            own (`supports`: CD163 for IBA1) -- a tile whose light supports
+            a cell's own stain and whose dark says nothing;
       anti  exclusive partners either way, those of the marker's supersets,
             and the subsets of a marker it excludes.
     A derived relation is as confident as its weakest step, and never one a
@@ -101,9 +104,14 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
         # positives are, drawn as one tile. Never a state beneath it (FOXP3,
         # PD-1): only some of its cells carry one.
         group = _beneath(entries, marker, rel, present, gated, told, dropped)
+        if group is None:
+            # No lineage beneath it carries its cells (IBA1: only CD163, which
+            # many IBA1+ macrophages lack): the markers whose positives sit
+            # inside its positives, as support only (`_supports`).
+            group = _supports(entries, marker, rel, present, gated, told, dropped)
         if group and len(group[0]) == 1:
-            (only,), conf, proposed, _relation = group
-            co[only] = (conf, 1, "contains", proposed)
+            (only,), conf, proposed, relation = group
+            co[only] = (conf, 1, relation, proposed)
             group = None
     # The expected tile shows the cells the marker's positives belong to. A
     # not-expected partner that lives in those same cells -- a sibling, as
@@ -229,6 +237,99 @@ def _beneath(entries, marker, rel, present, gated, told, dropped=()):
     members = members[:_MAX_BENEATH]
     return (members, min(found[m][0] for m in members), any(found[m][1] for m in members),
             "contains")
+
+
+#: The relation of a supporting tile (`_supports`), and the most markers one
+#: draws together.
+SUPPORTS = "supports"
+_MAX_SUPPORTS = 2
+#: A marker expected on at least this share of cells (its `expected_fraction`'s
+#: lower bound: HLA-A on every nucleated cell) gets no supporting tile: a
+#: lineage inside it says nothing about whose stain a cell carries.
+_UBIQUITOUS = 0.5
+#: Roles that never get a supporting tile: a context channel (a membrane or
+#: tubulin stain on most cells) is no population.
+_NO_SUPPORT_ROLES = ("context",)
+
+
+def _supports(entries, marker, rel, present, gated, told, dropped=()):
+    """(members, confidence, proposed, "supports") of the panel's lineage
+    markers whose positives sit inside `marker`'s, or None: those declaring
+    themselves its `subset` (CD163 inside IBA1, CD66b inside CD11b, CD19 and
+    CD11c inside HLA-DR), and those whose `subset_any` carriers on this panel
+    all lie within it (the marker itself, or a subset of it), with none of
+    the group's lineages missing from the panel. Only for a marker with no
+    expected partner and no `contains` tile, and only on stated relations:
+    a pair a planner proposed for another marker's tiles (`told`: CD11b
+    inside IBA1, "monocytes and macrophages carrying CD11b") was said about
+    that marker's cells, not this one's.
+
+    Support only. Unlike `contains`, it does not say where the marker's
+    positives are -- many IBA1+ macrophages are CD163-negative -- so a reader
+    is told that the tile lit inside a cell's outline supports its own stain
+    and that a dark tile says nothing. It never counts against a cell, never
+    enters a gate's purity or contradiction numbers (those read the panel
+    context's relations, to which this adds none), and never moves a gate.
+    At most `_MAX_SUPPORTS`: gated first, then the broadest (one another
+    candidate sits inside), the surer, the one more markers sit inside; one
+    channel per vocabulary entry."""
+    entry = entries.get(marker) or {}
+    if entry.get("role") in _NO_SUPPORT_ROLES:
+        return None
+    fraction = entry.get("expected_fraction")
+    if isinstance(fraction, (list, tuple)) and fraction and fraction[0] is not None \
+            and float(fraction[0]) >= _UBIQUITOUS:
+        return None
+
+    def within(x):
+        return x == marker or (rel.get((x, marker)) or ("",))[0] in ("subset", "coexpressed")
+
+    found = {}
+    for (x, b), (r, conf) in rel.items():
+        if b != marker or x == marker or x not in present or (x, b) in told \
+                or (entries.get(x) or {}).get("role") not in _LINEAGE_ROLES:
+            continue
+        if any((x, marker, d) in dropped or (marker, x, d) in dropped
+               for d in ("subset", "subset_any")):
+            continue
+        if r == "subset":
+            found[x] = max(found.get(x, 0), conf)
+        elif r == "subset_any":
+            carriers = [c for (y, c), (r2, _c2) in rel.items() if y == x and r2 == "subset_any"]
+            if (entries.get(x) or {}).get("subset_any_missing") \
+                    or not all(c in present or c == marker for c in carriers) \
+                    or not all(within(c) for c in carriers):
+                continue
+            found[x] = max(found.get(x, 0), min(rel[(x, c)][1] for c in carriers))
+    if not found:
+        return None
+
+    def broader(name):
+        return any((rel.get((other, name)) or ("",))[0] == "subset" for other in found
+                   if other != name)
+
+    def breadth(name):
+        return sum(1 for (_y, b), (r, _c) in rel.items() if b == name and r == "subset")
+
+    seen, members = set(), []
+    for name in sorted(found, key=lambda k: (k not in gated, not broader(k), -found[k],
+                                             -breadth(k), k)):
+        key = (entries.get(name) or {}).get("canonical") or name
+        if key not in seen:
+            seen.add(key)
+            members.append(name)
+    members = members[:_MAX_SUPPORTS]
+    return members, min(found[m] for m in members), False, SUPPORTS
+
+
+def expected_words(panels) -> str | None:
+    """How a look names its expected tile: the partner, or "supporting X"
+    for a supporting tile (`SUPPORTS`), whose dark says nothing."""
+    names = (panels or {}).get("markers") or {}
+    co = names.get("co")
+    if co and ((panels or {}).get("relations") or {}).get("co") == SUPPORTS:
+        return f"supporting {co}"
+    return co
 
 
 def tiles_of(panels):
