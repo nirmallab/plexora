@@ -235,6 +235,31 @@ def test_a_table_that_changed_is_stale_and_not_drawn(ds, made, monkeypatch):
     assert runs.stale_reason(ds, store.run_record(ds.name, "CD8")).startswith("the table")
 
 
+def test_cells_that_moved_make_a_run_stale_though_values_and_ids_did_not(ds, made):
+    """The table group reads each cell's nearest neighbours, so a run made
+    before the coordinates were put right (read in the wrong space, then
+    fixed) no longer describes the cells -- with every value and id as it was."""
+    from plexora.server.models.project import Project
+
+    _label(ds, made)
+    runs.run(ds, "CD8")
+    x_role = Project.load(made["name"]).roles.x
+    with open(made["csv_path"], encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    for row in rows:
+        row[x_role] = f"{float(row[x_role]) + 7.0:.3f}"
+    with open(made["csv_path"], "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    moved = local_handles(made["name"])
+    assert moved.table.expression_fingerprint == ds.table.expression_fingerprint
+    reason = runs.stale_reason(moved, store.run_record(moved.name, "CD8"))
+    assert reason is not None and reason.startswith("the table"), reason
+    codes, info = calls.viewer_codes(moved, "CD8")
+    assert info["state"] == "stale" and (codes == VIEW_NOT_CLASSIFIED).all()
+
+
 def test_table_features_alone_without_a_mask(tmp_path):
     made = make_synthetic_project(tmp_path, name="nomask", mask=False)
     ds = local_handles("nomask")

@@ -1506,9 +1506,13 @@ def pixel_setup(engine, units):
                 f"{found['prior']['cell_diameter_um']:g} µm cell, it is about {mpp:.3g} µm/px "
                 f"(plausible {found['low']:.3g} to {found['high']:.3g}).")
     else:
-        said = ("No estimate could be made from the cells; the snapshots carry a bar in image "
-                "pixels. Give the value only if the user states it, or estimate it from the "
-                "nuclei (most are five to ten microns across).")
+        # A refusal says why (`pixel_estimate.measure_areas`): a table and mask
+        # that disagree is worth the user's attention beyond this one value.
+        how = str(found.get("how") or "")
+        why = f" ({how[len('refused: '):]})" if how.startswith("refused: ") else ""
+        said = (f"No estimate could be made from the cells{why}; the snapshots carry a bar "
+                "in image pixels. Give the value only if the user states it, or estimate it "
+                "from the nuclei (most are five to ten microns across).")
     packet = {
         "question": (f"{project} states no pixel size, so the {field_um:g} µm tissue fields, "
                      f"the cell crops and the scale bars need one. {said} Do the nuclei look "

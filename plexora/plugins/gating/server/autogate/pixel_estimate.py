@@ -79,7 +79,9 @@ def _sample(ds, seed, n):
 def measure_areas(session, ds, *, seed=0, spec=MEASURE):
     """(areas in square full-resolution pixels, how): each sampled cell's own
     mask, read at level 0; without a mask, the table's area column (taken to
-    be in pixels, which is what it is for an image with no pixel size)."""
+    be in pixels, which is what it is for an image with no pixel size). When
+    more than half the crops that have a mask hold no pixel of their own cell,
+    no areas and a `how` starting "refused:" that names the disagreement."""
     from plexora.agent.evidence import crops as cropmod
     from plexora.agent.presets import nuclear_channel
     from plexora.agent.render import resolve_channel
@@ -100,8 +102,19 @@ def measure_areas(session, ds, *, seed=0, spec=MEASURE):
                 crop_px=int(spec["crop_px"]), tile_px=int(spec["crop_px"]), mask=True, level=0)
         except Exception:
             crops = {}
-        areas = [crop.mask_stats["area_level_px"] for crop in crops.values()
-                 if crop.mask_stats and crop.mask_stats.get("area_level_px")]
+        masked = [crop for crop in crops.values() if crop.mask_stats]
+        areas = [crop.mask_stats["area_level_px"] for crop in masked
+                 if crop.mask_stats.get("area_level_px")]
+        missing = len(masked) - len(areas)
+        if masked and 2 * missing > len(masked):
+            # Most cells are not on their own label: the table's x/y or ids do
+            # not describe this mask. Its area column then says nothing about
+            # pixels either -- on a Xenium table it is in µm², and taking it
+            # as px² gave a µm/px estimate off by the pixel size squared.
+            return [], (f"refused: {missing} of {len(masked)} sampled cells' mask crops do "
+                        "not contain the cell's own label, so the table's positions or ids "
+                        "and the mask disagree; the table's area column is not used in "
+                        "its place")
         if len(areas) >= int(spec["min_cells"]):
             return areas, "mask"
     if c.area is not None and index.size:

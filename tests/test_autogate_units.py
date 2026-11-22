@@ -1523,6 +1523,40 @@ def test_the_pixel_size_is_estimated_from_the_cells_own_size():
     assert pixel_estimate.estimate([0, -1, np.nan] * 50) is None
 
 
+def test_no_pixel_size_is_estimated_when_most_cells_miss_their_own_mask_label(
+        tmp_path, monkeypatch):
+    """A table whose x/y (or ids) do not land on the mask is not a table whose
+    area column is in pixels: a Xenium table's is in µm², and taking it as px²
+    put the estimate off by the pixel size squared. More than half the masked
+    crops without their own label refuses, naming the disagreement; a few
+    misses still measure from the mask."""
+    from plexora.agent import AgentSession
+    from plexora.agent.evidence import crops as cropmod
+    from plexora.plugins.gating.server.autogate import pixel_estimate
+
+    make_gating_project(tmp_path, calibrated=False)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    real = cropmod.read_cell_crops
+
+    def missing(share):
+        def read(*args, **kwargs):
+            crops, info = real(*args, **kwargs)
+            masked = [crop for crop in crops.values() if crop.mask_stats]
+            for crop in masked[:int(share * len(masked))]:
+                crop.mask_stats = {"area_level_px": 0, "centroid_offset_px": None}
+            return crops, info
+        return read
+
+    monkeypatch.setattr(cropmod, "read_cell_crops", missing(1.0))
+    refused = pixel_estimate.estimate_for(session, ds)
+    assert refused["microns_per_pixel"] is None
+    assert refused["how"].startswith("refused:") and "disagree" in refused["how"]
+    assert "area column is not used" in refused["how"]
+    monkeypatch.setattr(cropmod, "read_cell_crops", missing(0.2))
+    assert pixel_estimate.estimate_for(session, ds)["how"] == "mask"
+
+
 def test_the_field_side_follows_each_images_pixel_size(tmp_path):
     from plexora.agent import AgentSession
     from plexora.plugins.gating.server.autogate import sheet

@@ -40,6 +40,12 @@ _EPS = 1e-6
 
 
 def table_fingerprint(ds) -> str:
+    """The values, the ids and where the cells are. Positions belong here
+    because the table group reads them -- each cell's nearest neighbours
+    (`_neighbour_values`) -- and a project whose coordinates were put right
+    keeps the same values and ids, so a run made on the wrong positions would
+    otherwise stay current (`runs.stale_reason`, `calls._arrays_for`)."""
+    from plexora.agent.coordinates import xy_fingerprint
     from plexora.plugins.gating.server.classifier.geometry import cells
 
     geometry = cells(ds)
@@ -47,6 +53,10 @@ def table_fingerprint(ds) -> str:
     digest.update(str(ds.table.expression_fingerprint).encode("utf-8"))
     digest.update(str(geometry.n).encode("utf-8"))
     digest.update(np.ascontiguousarray(geometry.ids).tobytes())
+    schema = ds.schema
+    where = xy_fingerprint(ds.table.geometry(), getattr(schema, "x", None),
+                           getattr(schema, "y", None))
+    digest.update(f"xy:{where}".encode("utf-8"))
     return digest.hexdigest()[:16]
 
 

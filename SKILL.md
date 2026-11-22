@@ -4744,8 +4744,11 @@ deliberately left out and what should be built next.
   under `label_areas/`), not the part inside the region's box, so a large
   cell the box cuts is not read as mostly inside; a region with a `labels`
   solid takes exactly the cells it names, `method="labels"`), `cells/`
-  (`inputs.py` fingerprints what the calls were derived from — mask, table,
-  pixel size, transform, cells version (`MAPPING`: every pair re-read) and
+  (`inputs.py` fingerprints what the calls were derived from — mask, table
+  (its file stamp and the read spec, `providers.local._spec_hash`: a
+  coordinate correction, new x/y roles or a subset move cells with the file
+  untouched, and centroid-mapped pairs must follow), pixel size, transform,
+  cells version (`MAPPING`: every pair re-read) and
   Segmentation QC/DNA retention (`DIRECT`: flags re-read, no mask) — from
   stats and record fields only, so `exclusions._stale` can ask on every
   estimate; `columns.py` is the one per-cell column builder every export
