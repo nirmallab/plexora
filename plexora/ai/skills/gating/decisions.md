@@ -74,13 +74,10 @@ lineage inside the marker's positives): lit, it supports the cell's own stain; d
 it says nothing, and it never counts against a cell or moves a gate. A
 slot with no partner is never black: the expected one shows the marker
 alone with the cell's outline, the not-expected one the marker and nuclei
-over a wider field. For a marker whose cells reach past their outline and
-carry it dimmer on some (the graph's other-lineage role: mast cells,
-macrophages, monocytes), readers take a stain body the outline overlaps as
-the cell's own and count dim own stain above the unstained cells' floor; a
-reliable lineage or a packed epithelium's membrane (T cells, cytokeratin,
-E-cadherin) is read at its outline. A look on an image whose outlines came from another platform, or
-whose looks keep naming `segmentation`, carries a `segmentation` note. A
+over a wider field. Ownership is read at the outline for every marker. A
+look on an image whose outlines came from another platform, or whose looks
+keep naming `segmentation`, carries a `segmentation` note saying the outlines
+are approximate. A
 marker that closes for review is written at the candidate its reads make
 likeliest, not the one nearest its start.
 A conditional gate (a `within` answer of engine
