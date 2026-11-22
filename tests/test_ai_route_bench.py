@@ -139,7 +139,7 @@ def test_an_evaluation_is_submitted_with_the_admin_token_and_numbers_only():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        route_bench.submit({**evaluation, "feature": "gating.marker_naming", "bench_version": "naming-1"},
+        route_bench.submit({**evaluation, "feature": "gating.marker_naming", "bench_version": "naming-2"},
                            admin_token="adm", base_url=f"http://127.0.0.1:{server.server_address[1]}")
     finally:
         server.shutdown()
@@ -238,7 +238,7 @@ def test_the_naming_bench_asks_the_candidate_through_the_dev_route():
     (call,) = gateway.calls
     assert call["path"] == "/v1/ai/dev/messages" and call["body"]["model"] == "openai/gpt-test"
     assert call["body"]["task"] == "plexora.gating.marker_naming"
-    assert evaluation["bench_version"] == "naming-1" and evaluation["feature"] == "gating.marker_naming"
+    assert evaluation["bench_version"] == "naming-2" and evaluation["feature"] == "gating.marker_naming"
     m = evaluation["metrics"]
     assert m["naming_accuracy"] == 1.0 and m["wrong_name_rate"] == 0.0 and m["failure_rate"] == 0.0
 
