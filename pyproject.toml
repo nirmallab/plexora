@@ -65,7 +65,7 @@ dependencies = [
     # contexts): markers, their relations and the overlay a user or an agent
     # adds to. Data and pure numpy; it brings platformdirs and scipy, both
     # here already.
-    "biocognia-markers>=0.2.2,<0.3",
+    "biocognia-markers>=0.2.3,<0.3",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes
