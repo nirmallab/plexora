@@ -565,12 +565,15 @@ def test_a_broad_lineage_marker_is_shown_the_lineages_beneath_it():
     # Only states beneath it: still none.
     alone = {k: entries[k] for k in ("CD3", "FOXP3")}
     assert not [p for p in partner_plan(alone, "CD3", {"FOXP3"}, {}, 1) if p["kind"] == "co"]
-    # Only subsets beneath it, none coexpressed: most of its cells lack them.
+    # Only subsets beneath it, none coexpressed: most of its cells lack them,
+    # so no `contains` tile -- a supporting one (`_supports`), whose dark says
+    # nothing.
     myeloid = _entries(CD11b=[], CD66b=[("CD11b", "subset", "moderate")])
-    assert not [p for p in partner_plan(myeloid, "CD11b", {"CD66b"}, {}, 1) if p["kind"] == "co"]
+    assert [p["relation"] for p in partner_plan(myeloid, "CD11b", {"CD66b"}, {}, 1)
+            if p["kind"] == "co"] == ["supports"]
     # A marker that is no lineage (HLA-ABC on every cell) never gets one.
     every = _entries(HLAA=[], CD31=[("HLAA", "subset", "low")], ECAD=[("HLAA", "coexpressed", "low")])
-    every["HLAA"]["role"] = "state"
+    every["HLAA"].update(role="state", expected_fraction=[0.5, 1.0])
     assert not [p for p in partner_plan(every, "HLAA", {"CD31", "ECAD"}, {}, 1) if p["kind"] == "co"]
 
 

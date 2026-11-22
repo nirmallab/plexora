@@ -25,7 +25,7 @@ from typing import get_args
 from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server.autogate import answers, schemas, tableops, views
 from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
-from plexora.plugins.gating.server.autogate.partners import tiles_of
+from plexora.plugins.gating.server.autogate.partners import SUPPORTS, expected_words, tiles_of
 
 #: At most this many images in one packet (`Engine.issue` refuses more).
 MAX_IMAGES = 2
@@ -187,6 +187,13 @@ READING_GUIDE = {
                         "whether the marker's stain is this cell's own -- a marker several cell "
                         "types carry is own stain on a cell without the expected partner too. "
                         "Judge the marker tiles"),
+    "supporting_tile": ("the bottom-left tile is named `partner_panels.supporting` instead of "
+                        "an expected partner: markers whose positives sit inside this "
+                        "marker's (CD163 inside IBA1), drawn as an expected partner is. Lit "
+                        "inside the judged cell's outline, it supports that cell's own stain. "
+                        "Dark says nothing -- many positive cells lack it (most IBA1+ "
+                        "macrophages are CD163-negative): never read a dark supporting tile "
+                        "as evidence against the cell. Judge the marker tiles"),
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
                          "before it, magenta = positive at that candidate. A candidate is "
@@ -887,9 +894,7 @@ def _multiview(engine, unit, ds, reference=None, look=None, kind=None):
             partners["relations"][side] = reference["relation"]
             partners["members"].pop(side, None)
     engine.note_partners_drawn(unit, kind=kind, tiles=tiles_of(partners))
-    names = partners["markers"]
-    return "t2m", partners, {"partner_panels": {"expected": names.get("co"),
-                                                "not_expected": names.get("anti")}}
+    return "t2m", partners, partner_words(partners)
 
 
 def _panel_words(layout, partners):
@@ -898,8 +903,29 @@ def _panel_words(layout, partners):
     if layout != "t2m":
         return None
     names = (partners or {}).get("markers") or {}
-    return (f"morphology | outlined context / expected {names.get('co') or 'none'} | "
+    expected = expected_words(partners)
+    expected = expected if expected and expected.startswith("supporting ") \
+        else f"expected {expected or 'none'}"
+    return (f"morphology | outlined context / {expected} | "
             f"not expected {names.get('anti') or 'none'}")
+
+
+def partner_words(partners) -> dict:
+    """What a look's evidence names its partner tiles (`partner_panels`):
+    `expected` and `not_expected`, or `supporting` in place of `expected`
+    for a supporting tile (`partners.SUPPORTS`) -- its own name, because a
+    dark supporting tile says nothing about the cell."""
+    names = (partners or {}).get("markers") or {}
+    side = "supporting" if ((partners or {}).get("relations") or {}).get("co") == SUPPORTS \
+        else "expected"
+    return {"partner_panels": {side: names.get("co"), "not_expected": names.get("anti")}}
+
+
+def partner_guide(partners) -> list:
+    """The guide entries a look's partner tiles add: `supporting_tile` when
+    the expected slot holds a supporting tile."""
+    return ["supporting_tile"] if ((partners or {}).get("relations") or {}).get("co") \
+        == SUPPORTS else []
 
 
 def _condition_brief(unit):
@@ -948,7 +974,7 @@ def t2_confirm(engine, units):
                     "word per row, and the pattern of the stained cells.")
     within = within_eligible(partners) if not condition else []
     guide = ["rows", "collage_t2m" if layout else "collage_t2", "sheet", "partners",
-             "requests"] + (["within_partner"] if within else [])
+             "requests"] + (["within_partner"] if within else []) + partner_guide(partner_panels)
     packet = {
         "question": question,
         "evidence": {
@@ -1025,7 +1051,8 @@ def t3_biological(engine, units):
     condition = unit.get("condition")
     within = within_eligible(partners) if not condition else []
     guide = ["rows"] + (["collage_t2m"] if layout else ["collage_t2", "collage_t3"]) + \
-        ["sheet", "partners"] + (["within_partner"] if within else [])
+        ["sheet", "partners"] + (["within_partner"] if within else []) + \
+        partner_guide(partner_panels)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: for each "
@@ -1163,6 +1190,7 @@ def t4_candidates(engine, units):
         t4_guide[1:3] = ["collage_split", "collage_flips_split"]
     elif not layout:
         t4_guide[1:3] = ["collage_flips"]
+    t4_guide += partner_guide(partner_panels)
     question = (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
                 "call between neighbouring thresholds, nearest the current gate first. "
                 f"For EVERY row, do those cells carry their OWN {stain} stain, around "

@@ -35,7 +35,8 @@ MAX_LINE = 200
 
 #: The kind of relationship a vocabulary relation is, as the viewer names it.
 KIND = {"subset": "parent_child", "subset_any": "parent_child", "contains": "parent_child",
-        "coexpressed": "coexpression", "exclusive": "mutual_exclusion"}
+        "supports": "parent_child", "coexpressed": "coexpression",
+        "exclusive": "mutual_exclusion"}
 
 #: What a partner did for the gate, most decisive first.
 ROLE_ORDER = ("condition", "carrier", "tile_expected", "tile_not_expected", "reference_panel",
@@ -147,8 +148,12 @@ def _supporting(unit, channel_of):
             seen["looks"].add(entry.get("look"))
     for (name, role), seen in tiles.items():
         n, tile = len(seen["looks"]), seen["tile"]
-        clause = {"tile_expected": f"shown beside the cells as the expected partner in "
-                                   f"{_count(n, 'look')}",
+        supports = role == "tile_expected" and tile.get("relation") == "supports"
+        clause = {"tile_expected": (f"shown beside the cells as a supporting partner in "
+                                    f"{_count(n, 'look')} (lit, it supports a cell's own stain; "
+                                    "dark, it says nothing)") if supports else
+                                   (f"shown beside the cells as the expected partner in "
+                                    f"{_count(n, 'look')}"),
                   "tile_not_expected": f"shown beside the cells as the not-expected partner "
                                        f"in {_count(n, 'look')}",
                   "reference_panel": f"its channel was the reference panel in "
@@ -411,6 +416,8 @@ def _notes(unit, supporting, uncertainty, *, state, method, confidence, looks, n
                 lead = "Expected in any of"
             elif kind == "parent_child" and all(s["relation"] == "contains" for s in group):
                 lead = "Its lineages beneath"
+            elif kind == "parent_child" and all(s["relation"] == "supports" for s in group):
+                lead = "Supported where lit by"
             sentences.append(f"{lead} {_join([s['marker'] for s in group[:3]])}: "
                              f"{group[0]['influence']}")
     elif not empty:

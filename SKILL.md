@@ -4199,7 +4199,14 @@ deliberately left out and what should be built next.
   alone; a lineage marker with no expected partner of its own gets the
   lineage markers beneath it (`_beneath`, relation `contains`: CD3 -> "CD4
   or CD8", PanCK -> ECAD) when one of them is `coexpressed` with it, never a
-  state; a `subset_any` carrier read through a family carries its `lineage`
+  state; failing that, up to two lineage markers whose positives sit inside
+  it on stated relations (`_supports`, relation `supports`: IBA1 -> CD163,
+  HLA-DR -> "CD11c or CD19"; never a planner's tiles-only proposal, never
+  for a context channel or one expected on half the cells), drawn in the
+  expected slot but named `partner_panels.supporting` / "supporting X" with
+  the `supporting_tile` guide entry -- lit supports, dark says nothing; it
+  adds no relation to the panel context, so purity, orphan and lineage
+  numbers never see it; a `subset_any` carrier read through a family carries its `lineage`
   (`vocabulary._build`), so `context._entry_from_vocabulary` calls the group
   complete when each family has one anchor on the panel, or is one the
   marker anchors itself (`carries_own`: CD21 of FDC) -- context `VERSION` 3;
@@ -4299,9 +4306,14 @@ deliberately left out and what should be built next.
   the scale image's axis, and add other anchors' estimates as `peer:`
   candidates). The unit waits in
   `awaiting_panel`; `cell_panel` is a `LOOK_KINDS` member and in
-  `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader,
-  and a resolved leader passes `run_regression`, a failed check capping its
-  confidence and never moving it.
+  `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader
+  (after one whole-image `qc_confirm` when its reads say the stain could not
+  be read, `replan.check_unreadable`: a look >= half `artifact`, or own
+  stain <= 25 % with uncertain+artifact >= 50 % and a stain flag named;
+  `technical_failure`/`no_positive_population` close it so, any other answer
+  makes the held review close, `replan.keep_unreadable`, once per marker),
+  and a resolved leader passes `run_regression`, a failed check never
+  accepting it nor moving it (written there for review).
   `replan.py` re-plans when a marker fails (`docs/internal/GATING_REPLAN_PLAN.md`):
   every close that fails runs `after_close` (reorder the unstarted markers
   without the failed one, rescore dependents, close an accepted gate only the

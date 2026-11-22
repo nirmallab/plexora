@@ -34,6 +34,13 @@ The agent, through one `replan` packet (the planning task's, beside
   stain with confidence (`own_seen`);
 - an image whose looks keep naming the same artifact.
 
+A marker about to close for review on looks that could not read its stain
+-- most cells uncertain or artifact, a stain artifact named (`unreadable`)
+-- gets the same whole-image check first (`check_unreadable`): its failed
+or empty answer closes it as failed or empty, any other keeps the review
+close it was about to make (lsp35766_p193 panCK and NKG2A, 2026-11-22:
+both closed for review at gates with 22-80 % of cells positive).
+
 A lineage suspect the whole-image view has not judged gets that check
 first (`check_whole_image`, a `qc_confirm` packet): the planner calls a
 population absent on a picture's verdict and keeps it on numbers alone
@@ -53,11 +60,25 @@ is still the data's and the looks'.
 
 from __future__ import annotations
 
-from plexora.plugins.gating.server.autogate import hierarchy
+from plexora.plugins.gating.server.autogate import hierarchy, schemas
 
-#: [cal] An image is suspect when this many of its markers' looks named the
-#: same artifact.
-PARAMS = {"image_flag_min": 3}
+#: [cal] `image_flag_min`: an image is suspect when this many of its markers'
+#: looks named the same artifact.
+#: The stain its looks could not read (`unreadable`), all [cal] on
+#: lsp35766_p193 (2026-11-22), where the owner called panCK and NKG2A failed:
+#: `unreadable_min_cells` numbered cells read before the reads say anything
+#: (a look is about 20); `artifact_look_share` of one look's cells, of at
+#: least `artifact_look_min`, called `artifact` (NKG2A 0.93, CD19 0.75; no
+#: working stain there above 0.25); otherwise own stain at most
+#: `unreadable_own_max` of all the cells read (panCK 0.23 -- but CD8a, a
+#: working stain, 0.26: the stain flag tells them apart, not this) with
+#: uncertain and artifact at least `unreadable_other_min` (panCK 0.68).
+PARAMS = {"image_flag_min": 3, "unreadable_min_cells": 12, "artifact_look_share": 0.5,
+          "artifact_look_min": 6, "unreadable_own_max": 0.25, "unreadable_other_min": 0.5}
+
+#: The look flags that say a stain may be at fault (`schemas.ARTIFACTS` but
+#: `segmentation`, an outline's fault, named on any crowded tissue).
+STAIN_FLAGS = tuple(f for f in schemas.ARTIFACTS if f != "segmentation")
 
 #: The look flags that describe the image rather than one channel: an edge
 #: band, a fold, a bad region or tissue autofluorescence reach every marker
@@ -560,3 +581,124 @@ def _apply_image(engine, project, flags, verdict):
             tag_image_finding(unit, finding)
             tagged.append(unit["marker"])
     return {"image_finding": finding, "tagged": tagged}
+
+
+# -- a stain the looks could not read ----------------------------------------------
+
+
+def reads_of(unit) -> dict:
+    """{cells, own, not_own, uncertain, artifact, looks, worst_artifact} of
+    the unit's cell-panel looks: the valid looks' numbered cells, sentinels
+    left out (`hypotheses.evidence.counts` reads them the same way);
+    `worst_artifact` is the largest share of one look's cells called
+    `artifact`, over looks of at least `artifact_look_min` cells."""
+    out = {"cells": 0, "own": 0, "not_own": 0, "uncertain": 0, "artifact": 0, "looks": 0,
+           "worst_artifact": 0.0}
+    for obs in (unit.get("hypotheses") or {}).get("observations") or ():
+        if not obs.get("valid", True):
+            continue
+        labels = [c.get("label") for c in obs.get("cells") or () if not c.get("sentinel")]
+        labels = [x for x in labels if x]
+        if not labels:
+            continue
+        out["looks"] += 1
+        out["cells"] += len(labels)
+        for label, key in (("own_stain", "own"), ("not_own_stain", "not_own"),
+                           ("uncertain", "uncertain"), ("artifact", "artifact")):
+            out[key] += labels.count(label)
+        if len(labels) >= PARAMS["artifact_look_min"]:
+            out["worst_artifact"] = max(out["worst_artifact"],
+                                        labels.count("artifact") / len(labels))
+    return out
+
+
+def unreadable(unit) -> dict | None:
+    """Why a unit's looks read its stain as almost no cell's own -- what a
+    failed stain looks like through a cell panel -- or None. Either a look
+    called at least `artifact_look_share` of its cells `artifact` (NKG2A,
+    lsp35766_p193 2026-11-22: 14 of 19, with autofluorescence and uneven
+    staining named), or, over all its looks, `own_stain` is at most
+    `unreadable_own_max` of the cells, `uncertain` and `artifact` together
+    at least `unreadable_other_min`, and a look named a stain artifact
+    (`STAIN_FLAGS`: panCK there, 23 % own, 68 % uncertain, uneven staining).
+    The flag is what tells panCK from CD8a on that run (26 % own, 68 %
+    uncertain, the crowding of a T-cell zone and `segmentation` named): the
+    counts alone do not, and nothing closes on counts -- this only asks for
+    the picture."""
+    reads = reads_of(unit)
+    n = reads["cells"]
+    if n < PARAMS["unreadable_min_cells"]:
+        return None
+    own, other = reads["own"] / n, (reads["uncertain"] + reads["artifact"]) / n
+    flags = sorted(set(unit.get("artifact_flags") or ()) & set(STAIN_FLAGS))
+    words = (f"its looks read {reads['own']} of {n} cells as carrying their own stain "
+             f"({reads['artifact']} artifact, {reads['uncertain']} uncertain)"
+             + (f"; they named {', '.join(flags)}" if flags else ""))
+    if reads["worst_artifact"] >= PARAMS["artifact_look_share"]:
+        return {"why": "artifact_reads", "words": words, "own_share": round(own, 3),
+                "other_share": round(other, 3), "worst_artifact": round(reads["worst_artifact"], 3),
+                "flags": flags, "reads": reads}
+    if own <= PARAMS["unreadable_own_max"] and other >= PARAMS["unreadable_other_min"] and flags:
+        return {"why": "unread_stain", "words": words, "own_share": round(own, 3),
+                "other_share": round(other, 3), "worst_artifact": round(reads["worst_artifact"], 3),
+                "flags": flags, "reads": reads}
+    return None
+
+
+def check_unreadable(engine, unit, state, reason, proposed) -> bool:
+    """Before a unit closes for review (`state`) on looks that could not read
+    its stain (`unreadable`): one whole-image check first (`qc_confirm`, the
+    `image_inspection` task), the close it was about to make kept for its
+    answer (`unit["unreadable_check"]`). `technical_failure` and
+    `no_positive_population` close it through `transitions.apply_qc` (the
+    absence regions too, when the session checks absence); `real_signal` and
+    `cannot_tell` make that close (`after_unreadable`). Once per marker; not
+    for a unit a whole-image view already judged, nor one the lineage check
+    routes (`check_whole_image`). False: close as asked."""
+    if state not in _REVIEW or unit.get("unreadable_checked") or unit.get("qc_done") \
+            or unit.get("whole_image") or unit.get("artifact_verdict") \
+            or unit.get("lineage_contamination") \
+            or (unit.get("candidate") is None and not unit.get("seen")):
+        return False
+    why = unreadable(unit)
+    if why is None:
+        return False
+    unit["unreadable_checked"] = True
+    unit["unreadable_check"] = {"state": state, "reason": reason,
+                                "proposed": None if proposed is None else float(proposed),
+                                **{k: v for k, v in why.items() if k != "reads"}}
+    unit["qc_reason"] = [why["words"]]
+    unit["state"] = "qc_confirm"
+    engine.log(event="unreadable_whole_image", unit=_key(unit), why=why["why"],
+               own_share=why["own_share"], other_share=why["other_share"],
+               worst_artifact=why["worst_artifact"], flags=why["flags"])
+    return True
+
+
+def after_unreadable(engine, unit, verdict) -> bool:
+    """Route the whole-image answer for a stain its looks could not read
+    (`check_unreadable`). `technical_failure` / `no_positive_population`:
+    False, the caller closes it as for any marker (the record stays, with
+    the verdict, so an absence check that finds clear positives still ends
+    in the kept close: `keep_unreadable`). Anything else: the close the
+    unit was about to make, made now (True)."""
+    unit["whole_image"] = verdict
+    unit["unreadable_check"]["verdict"] = verdict
+    if verdict in ("no_positive_population", "technical_failure"):
+        return False
+    keep_unreadable(engine, unit, verdict)
+    return True
+
+
+def keep_unreadable(engine, unit, verdict):
+    """The close `check_unreadable` held back, made: the stain is real (or
+    the picture could not tell), so the marker is written for review where
+    its looks left it, as it would have been."""
+    held = unit.pop("unreadable_check")
+    said = {"real_signal": "called its stain real",
+            "cannot_tell": "could not tell whether its stain worked"}.get(
+        verdict, f"answered {verdict}")
+    engine.log(event="unreadable_kept", unit=_key(unit), verdict=verdict)
+    engine.close(unit, held["state"],
+                 f"{held['reason']}; a whole-image check of its unread stain {said}",
+                 proposed=held.get("proposed"))
