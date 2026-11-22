@@ -175,6 +175,34 @@ def test_a_category_switched_off_in_the_document_reaches_the_stored_calls(tmp_pa
     assert record is None or record.fingerprint != before.fingerprint
 
 
+def test_cells_the_read_spec_puts_elsewhere_map_every_region_again(tmp_path):
+    """The table key covers the spec the table is read under, not only the
+    file: a correction that rescales the coordinates moves every cell while
+    the file keeps its stamp, and centroid-mapped pairs (regions over the
+    pixel budget, z-stack masks, extent-limited regions) must follow."""
+    import os
+    from dataclasses import replace
+
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+    from plexora.server.models.project import Project
+
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    ok(invoke(session, "create_roi", {"project": "qcsynth", "category": "QC: Tissue fold",
+                                      "geometry": _box(100, 100, 400, 400)}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    stored = results.active(results.load("qcsynth"))["cells"]["inputs"]
+    assert not cell_inputs.needs_full(stored, cell_inputs.fingerprints(session.data("qcsynth")))
+    record = Project.load("qcsynth")
+    stamp = os.stat(record.dataset.src).st_mtime_ns
+    record.patch(dataset=replace(record.dataset,
+                                 correction={"scale": {"x": 0.5, "y": 0.5}})).save()
+    assert os.stat(record.dataset.src).st_mtime_ns == stamp
+    now = cell_inputs.fingerprints(AgentSession().data("qcsynth"))
+    assert cell_inputs.changed(stored, now) & set(cell_inputs.MAPPING) == {"table_fp"}
+    assert cell_inputs.needs_full(stored, now)
+
+
 def test_a_region_left_as_it_was_keeps_its_pairs(tmp_path):
     """Reshaping one of two regions reads only that one from the mask."""
     make_qc_project(tmp_path, artifacts=())

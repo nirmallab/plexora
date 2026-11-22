@@ -8,8 +8,8 @@ every gating estimate (`exclusions._stale`).
 
 Which change costs what (`write_for_active`, `exclusions`):
 
-- `MAPPING` keys (mask, table, pixel size, transform, cells version): every
-  region's overlap is computed again;
+- `MAPPING` keys (mask, table and the spec it is read under, pixel size,
+  transform, cells version): every region's overlap is computed again;
 - `DIRECT` keys (Segmentation QC, DNA retention): the per-cell flags are read
   again, no mask read;
 - the ROI revision: only the regions that changed are read (`calls`);
@@ -44,17 +44,33 @@ def _hash(value) -> str:
 
 
 def table_fingerprint(record) -> str | None:
-    """The table file's size and mtime; for a node-hosted table, what it
-    looked like when attached (no request to the node)."""
+    """The table file's size and mtime and the spec it is read under; for a
+    node-hosted table, what it looked like when attached (no request to the
+    node) and the same spec.
+
+    The read spec (`providers.local._spec_hash`, the digest a held table copy
+    is keyed on in `agent/session.py`) because the same file read differently
+    puts cells elsewhere: the coordinate columns, the subset, a correction
+    that scales positions into the image's pixels, the obs id field, the x/y
+    and cell-id roles. A region over the pixel budget, a z-stack mask and an
+    extent-limited region all map cells by centroid, so a project whose
+    coordinates were read in the wrong space and then put right would keep
+    every pair -- and `cell_exclusions.fingerprint` with them -- if only the
+    file stamp counted. The spec also carries column groups and the like,
+    which do not move a cell; their change re-reads the overlaps once, which
+    is the safe side."""
+    from plexora.server.providers.local import _spec_hash
+
+    spec = getattr(record, "dataset", None)
     binding = (record.resources or {}).get("table") if hasattr(record, "resources") else None
     if binding is not None and getattr(binding, "provider", "local") != "local":
         return _hash({"node": binding.node, "id": binding.resource_id,
-                      "fp": dict(binding.fingerprint or {})})
-    spec = getattr(record, "dataset", None)
+                      "fp": dict(binding.fingerprint or {}), "spec": _spec_hash(spec)})
     src = getattr(spec, "src", None) if spec is not None else None
     stamp = _stamp(src)
     return _hash({"src": str(src), "stamp": stamp, "table": getattr(spec, "table", None),
-                  "feature_source": getattr(record, "feature_source", None)}) if src else None
+                  "feature_source": getattr(record, "feature_source", None),
+                  "spec": _spec_hash(spec)}) if src else None
 
 
 def fingerprints(project, document=None) -> dict:
