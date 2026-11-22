@@ -421,16 +421,16 @@ wheels = [
 
 [[package]]
 name = "biocognia-markers"
-version = "0.1.0"
+version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "platformdirs" },
     { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/03/cb0abc9c90ad1123a952eb33c4cecf15e970a36bbd3a031f77c3787960f6/biocognia_markers-0.1.0.tar.gz", hash = "sha256:60400ce3064ce86782e024e3a6d461e1bac3860608fa03f0d3143803116760fe", size = 276858, upload-time = "2026-11-05T16:38:37.254Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/55/42dbf5c4013cc601eb98bcf18abb309124117f0676d6afa5765f53cab704/biocognia_markers-0.2.1.tar.gz", hash = "sha256:413fabae3c0d03fb6c2778cb2176528b88f9060568fe6643cd83c2c301719b71", size = 2229363, upload-time = "2026-11-22T01:51:44.193Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/42/42/64fca849c291f8b317ce98798c7add3af3defb7af4dbcb38d725956c3420/biocognia_markers-0.1.0-py3-none-any.whl", hash = "sha256:2b866c8e5c17f2b175b098c501641ea5e2bbffd55d21e4b194b3bf4460ddd2e2", size = 233690, upload-time = "2026-11-05T16:38:35.772Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/2e/4cc1e2796d1ecf719207fc12437f09365819f4784cdbed018c54515b0a61/biocognia_markers-0.2.1-py3-none-any.whl", hash = "sha256:f10edd2829e946af3a203f8aa50d9922109f152cc84512f9ad4aa4858ae6b6d7", size = 1215564, upload-time = "2026-11-22T01:51:42.578Z" },
 ]
 
 [[package]]
@@ -2945,7 +2945,7 @@ requires-dist = [
     { name = "anndata", specifier = ">=0.10" },
     { name = "biocognia", specifier = ">=0.1.3,<0.2" },
     { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.4" },
-    { name = "biocognia-markers", specifier = ">=0.1,<0.2" },
+    { name = "biocognia-markers", specifier = ">=0.2.1,<0.3" },
     { name = "czifile", specifier = ">=2026.11.8" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
