@@ -538,5 +538,7 @@ def test_an_exception_narrows_or_weakens_the_exclusion_it_crosses():
     # Common: PECAM-1 is also on leukocytes, S100 also on dendritic cells.
     assert relation("CD31", "CD45") is None and relation("CD45", "CD31") is None
     assert relation("CD45", "S100") is None
-    # Rare: DC x NK cell is moderate; CD11c on a few NK cells keeps it, low.
-    assert relation("CD11c", "CD16") == ("exclusive", "low")
+    # Rare: DC x NK cell is moderate; CD11c on a few NK cells keeps it, low (on NK's anchors, CD56 and NKp46; CD16
+    # is only a supporting marker of NK cells since graph 2026-11-21.4).
+    assert relation("CD11c", "CD56") == ("exclusive", "low")
+    assert relation("CD11c", "CD16") is None

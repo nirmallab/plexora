@@ -246,7 +246,9 @@ def models_command(action="show", *, force=False, out=print) -> int:
     for module, tasks in info["tasks"].items():
         out(f"{module}:")
         for task, model in tasks.items():
-            out(f"  {task.split('.', 1)[1]}: {model or '(agent chooses)'}")
+            effort = info["efforts"][module][task]
+            out(f"  {task.split('.', 1)[1]}: {model or '(agent chooses)'}"
+                + (f", effort {effort}" if effort else ""))
     for problem in info["problems"]:
         out(f"problem: {problem}")
     return 1 if info["problems"] else 0

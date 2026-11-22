@@ -44,8 +44,8 @@ def test_the_vocabulary_names_groups_and_leaves_tissue_dependent_markers_to_the_
     vocabulary.clear_cache()
     entries = vocabulary.load()["entries"]
     tigit = {p["marker"] for p in entries["TIGIT"]["partners"] if p["relation"] == "subset_any"}
-    # Graph 2026-11-21.2: T or NK cells, NK cells named by CD56, CD16 or NKp46.
-    assert tigit == {"CD3", "CD4", "CD8", "CD56", "CD16", "NKp46"}
+    # T or NK cells, NK cells named by CD56 or NKp46 (graph 2026-11-21.4: CD16 only supports NK).
+    assert tigit == {"CD3", "CD4", "CD8", "CD56", "NKp46"}
     # Which cells carry CD39 depends on the tissue: no partner, a note instead.
     assert entries["CD39"]["partners"] == []
     assert "tissue" in entries["CD39"]["expression"]
@@ -62,7 +62,7 @@ def test_a_panel_missing_a_lineage_of_a_group_says_so():
     whole = context.build(["CD3", "CD4", "CD8", "CD56", "CD16", "NKp46", "TIGIT"])
     assert "subset_any_missing" not in whole["entries"]["TIGIT"]
     part = context.build(["CD3", "TIGIT"])
-    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD4", "CD8", "CD16", "CD56", "NKp46"]
+    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD4", "CD8", "CD56", "NKp46"]
     assert {(p["marker"], p["relation"]) for p in part["entries"]["TIGIT"]["partners"]
             if p["relation"] == "subset_any"} == {("CD3", "subset_any")}
 
