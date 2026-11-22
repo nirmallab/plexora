@@ -4778,7 +4778,12 @@ deliberately left out and what should be built next.
   `seg_over` noted, `seg_small`/`seg_large` warned or excluded where
   `area.size_alone`, `seg_irregular` warned) and DNA retention's (`dna`:
   `no_nucleus` per cell, `dna_loss` per marker of a cycle the nucleus is
-  gone by); the frame carries `noted_by` and `background`, the summary
+  gone by) and `multi_channel_bright` from the table alone
+  (`cells/multibright.py`: lit above `cells.multi_bright_quantile`, a
+  clique of `cells.multi_bright_lineages` graph-exclusive lineage markers;
+  skipped with `why` when the panel spans fewer; `summary
+  ["multi_channel_bright"]`, `n_multi_channel_bright`); the frame carries
+  `noted_by` and `background`, the summary
   `n_noted`, `n_background`, `n_no_nucleus`, `note_by_reason`; a stale
   Segmentation QC or DNA retention result is left out with a
   `seg_flags_stale`/`dna_flags_stale` warning; `strictness.RETIRED_KEYS`

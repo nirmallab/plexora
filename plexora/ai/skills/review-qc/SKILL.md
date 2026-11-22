@@ -113,6 +113,13 @@ in the viewer), so a change made here makes the image's existing automatic
 gates stale (`gating_qc` `stale_qc`): tell the user, and offer to re-gate. An
 unconfirmed staining detection (`detected:<class>`) and an enriched tissue rim
 (`rim`) warn a marker's cells; dismiss the finding when it is real biology.
+A cell bright in markers of several lineages no cell combines
+(`multi_channel_bright`) is warned, excluded under `strict`: it glows in
+every channel (autofluorescence, a dying cell, debris) and would otherwise
+sit in the top of each of those markers. It is not a cell type and not a
+doublet population to report; read its evidence (the markers lit, the
+lineages) before dismissing it, and when it was skipped say why
+(`cells.multi_channel_bright.why`).
 
 ## Provenance
 

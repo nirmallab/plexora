@@ -327,6 +327,12 @@ def uns_result(ds, result, document, *, regions=None) -> dict:
             "config": {"strictness": document.get("strictness") or {},
                        "roi_overlap_fraction": table.get("cells.roi_overlap_fraction"),
                        "marker_quantile": table.get("cells.marker_quantile"),
+                       "multi_bright": {
+                           "quantile": table.get("cells.multi_bright_quantile"),
+                           "min_lineages": table.get("cells.multi_bright_lineages"),
+                           "ran": not (cells.get("multi_channel_bright") or {}).get("skipped")
+                           if cells.get("multi_channel_bright") else None,
+                           "why": (cells.get("multi_channel_bright") or {}).get("why")},
                        "disabled_categories": list(
                            (document.get("exclusion_filter") or {})
                            .get("disabled_categories") or []),
