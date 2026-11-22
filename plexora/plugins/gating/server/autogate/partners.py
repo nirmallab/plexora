@@ -27,7 +27,10 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
             `members` are drawn together (`marker` names them joined by
             " or "); then its own subset / coexpressed partners (a relation
             another marker declares about this one is not reversed), then the
-            supersets of its supersets; the most specific first;
+            supersets of its supersets; the most specific first. A broad
+            lineage marker with none of these (CD3, PanCK) gets the lineage
+            markers that declare themselves inside it instead (`contains`:
+            "CD4 or CD8a" for CD3), never a state;
       anti  exclusive partners either way, those of the marker's supersets,
             and the subsets of a marker it excludes.
     A derived relation is as confident as its weakest step, and never one a
@@ -91,6 +94,17 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
             del anti[name]
 
     group = _group(entries, marker, rel, present, gated, told)
+    if group is None and not co:
+        # A broad lineage marker (CD3, PanCK) is no other marker's subset, so
+        # it has no expected partner of its own; the lineages beneath it on
+        # this panel (CD4 or CD8 inside CD3, ECAD beside PanCK) are where its
+        # positives are, drawn as one tile. Never a state beneath it (FOXP3,
+        # PD-1): only some of its cells carry one.
+        group = _beneath(entries, marker, rel, present, gated, told, dropped)
+        if group and len(group[0]) == 1:
+            (only,), conf, proposed, _relation = group
+            co[only] = (conf, 1, "contains", proposed)
+            group = None
     # The expected tile shows the cells the marker's positives belong to. A
     # not-expected partner that lives in those same cells -- a sibling, as
     # CD8 is beside CD4 inside CD3 -- is the only tile that tells the two
@@ -145,11 +159,11 @@ def partner_plan(entries, marker, present, abundance, n, gated=(), dropped=()):
                               "confidence": words[table[name][0]], "steps": table[name][1],
                               **({"proposed": True} if table[name][3] else {})})
     if group:
-        members, conf, proposed = group
+        members, conf, proposed, relation = group
         # A proposed group stands after every stated expected partner.
         at = sum(1 for c in out["co"] if not c.get("proposed")) if proposed else 0
         out["co"].insert(at, {"marker": " or ".join(members), "members": members, "kind": "co",
-                              "relation": "subset_any", "confidence": words[conf], "steps": 1,
+                              "relation": relation, "confidence": words[conf], "steps": 1,
                               **({"proposed": True} if proposed else {})})
     return out["co"][:n] + out["anti"][:n]
 
@@ -171,7 +185,50 @@ def _group(entries, marker, rel, present, gated, told=()):
             seen.add(key)
             members.append(name)
     return (members, min(rel[(marker, b)][1] for b in members),
-            any((marker, b) in told for b in members))
+            any((marker, b) in told for b in members), "subset_any")
+
+
+#: The roles whose markers name a lineage (`context.CARRIER_ROLES`).
+_LINEAGE_ROLES = ("lineage_reliable", "lineage_other", "tumour_stromal")
+#: The most lineages one `contains` tile draws together.
+_MAX_BENEATH = 3
+
+
+def _beneath(entries, marker, rel, present, gated, told, dropped=()):
+    """(members, confidence, proposed, "contains") of the lineage markers
+    that declare themselves inside `marker` on this panel (`subset`, or
+    `coexpressed` read beneath it: CD8 and CD4 for CD3, ECAD for PanCK), or
+    None. Only for a lineage marker, and only lineage markers beneath it: a
+    state's carriers are some of the lineage's cells, never where its
+    positives are. And only when one of them is `coexpressed` with it --
+    most cells of each positive for the other -- the one statement that
+    says the marker's own cells carry it: CD66b alone inside CD11b, or CD163
+    inside IBA1, would draw most of the marker's positives dark. Gated
+    first, then the surer, at most `_MAX_BENEATH`; one channel per
+    vocabulary entry."""
+    if (entries.get(marker) or {}).get("role") not in _LINEAGE_ROLES:
+        return None
+    found = {}
+    for (x, b), (r, conf) in rel.items():
+        if b != marker or x == marker or x not in present or r not in ("subset", "coexpressed"):
+            continue
+        if (entries.get(x) or {}).get("role") not in _LINEAGE_ROLES:
+            continue
+        if any((x, marker, d) in dropped or (marker, x, d) in dropped
+               for d in ("subset", "coexpressed")):
+            continue
+        found[x] = (conf, (x, b) in told, r)
+    if not any(f[2] == "coexpressed" for f in found.values()):
+        return None
+    seen, members = set(), []
+    for name in sorted(found, key=lambda k: (k not in gated, found[k][1], -found[k][0], k)):
+        key = (entries.get(name) or {}).get("canonical") or name
+        if key not in seen:
+            seen.add(key)
+            members.append(name)
+    members = members[:_MAX_BENEATH]
+    return (members, min(found[m][0] for m in members), any(found[m][1] for m in members),
+            "contains")
 
 
 def tiles_of(panels):

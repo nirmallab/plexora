@@ -261,6 +261,17 @@ def start(call, inp):
         "type": "final", "project": project, "id": "final", "state": "pending"}
     has_table = bool(record_.has_table)
     planning_notes = []
+    if has_table:
+        # The regions come from the image, but a cell call read off a
+        # centroid (a region over the pixel budget, a signal test's
+        # neighbours) would land elsewhere: said where the report says what
+        # was not checked (lsp35766_p193_2).
+        from plexora.agent.evidence import alignment
+
+        placed = alignment.check(call.session, project)
+        if placed["status"] == "misaligned":
+            planning_notes.append({"check": "table_alignment", "status": "misaligned",
+                                   "reason": placed["message"]})
     for unit in plan_checks(call.session, record_, project, names, inp.checks,
                             notes=planning_notes):
         units[engines.unit_key(project, "check", unit["id"])] = unit

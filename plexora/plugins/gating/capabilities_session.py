@@ -753,6 +753,21 @@ def _channels_brief(match) -> dict:
             | {"unmatched": sorted({m for v in match["unmatched"].values() for m in v})})
 
 
+def _placements(session, images) -> dict:
+    """{image: digest of its cells' x/y, or None}: where the session's looks
+    are drawn (`calibration._coordinates_fingerprint`)."""
+    from plexora.agent.evidence import calibration
+
+    out = {}
+    for name in images:
+        try:
+            out[name] = calibration._coordinates_fingerprint(session, name,
+                                                             session.data(name).table)
+        except Exception:
+            out[name] = None
+    return out
+
+
 def _fingerprints(session, images) -> dict:
     """{image: "<matrix>|<log1p 0/1>"}: which values each image is read from
     (`Table.expression_fingerprint`), as the session started on them."""
@@ -930,6 +945,10 @@ def start(call, inp):
     gaps = setup_needs(call.session, asks, confirmations=False)
     if gaps and inp.setup != "wait":
         raise _setup_refusal(gaps, inp.setup)
+    # Before anything is written: a table whose cells are not on their mask
+    # labels would have every look drawn somewhere else (lsp35766_p193_2).
+    if not gaps:
+        _alignment_check(call, images)
     # Before anything is written (the expression check can set a matrix): a
     # marker with no image channel has no pixels to judge its gate on.
     plan = None if gaps else _plan(call, inp, images)
@@ -966,6 +985,7 @@ def start(call, inp):
         record["state"] = "needs_setup"
     else:
         record["expression_fingerprints"] = _fingerprints(call.session, images)
+        record["coordinate_fingerprints"] = _placements(call.session, images)
     if inp.mode == "apply":
         # The gates as they stand, kept before the run writes over them: the
         # user's hand edits since the last version (`model.save_version`
@@ -1210,6 +1230,17 @@ def _biology_brief(record):
     return out
 
 
+def _alignment_check(call, images):
+    """Refuse a session over an image whose table's cells do not sit on their
+    own mask labels (`alignment.check`); an image it cannot check passes."""
+    from plexora.agent.evidence import alignment
+
+    for name in images:
+        found = alignment.check(call.session, name)
+        if found["status"] == "misaligned":
+            raise alignment.refusal(name, found)
+
+
 def _qc_check(call, images):
     """Per image, which QC failures every estimate of this session leaves out
     (`SessionOptions.qc`): counts only, never ids."""
@@ -1443,6 +1474,7 @@ def _settle_expression(call, session_id, st):
         record["state"] = "created"
         record["bulk_job_id"] = None
         record["expression_fingerprints"] = _fingerprints(call.session, record["images"])
+        record["coordinate_fingerprints"] = _placements(call.session, record["images"])
         progress = engine.progress()
     _announce(call, record, session_id, "phase", phase="analyzing", progress=progress)
     return True
@@ -1504,6 +1536,7 @@ def _settle_setup(call, session_id, st):
             record["state"] = "created"
             record["bulk_job_id"] = None
             record["expression_fingerprints"] = _fingerprints(call.session, waiting)
+            record["coordinate_fingerprints"] = _placements(call.session, waiting)
             record["useful_lanes"] = engine.useful_lanes()
             progress = engine.progress()
     if failure is not None:
@@ -1548,6 +1581,21 @@ def _matrix_moved(call, st, session_id):
         return None
     now = _fingerprints(call.session, list(then))
     moved = {p: (then[p], now[p]) for p in then if now.get(p) != then[p]}
+    placed = record.get("coordinate_fingerprints") or {}
+    shifted = []
+    if not moved and placed:
+        here = _placements(call.session, list(placed))
+        shifted = [p for p in placed if placed[p] and here.get(p) and here[p] != placed[p]]
+    if shifted:
+        written = sum(1 for u in (record.get("units") or {}).values() if u.get("receipts"))
+        reason = (f"The cells of {shifted[0]} moved while automatic gating ran (the table's "
+                  "positions changed), so it stopped: every look so far was drawn where the "
+                  "cells were before."
+                  + (f" The {written} gate{'s' if written != 1 else ''} it wrote rest on those "
+                     "looks: roll the session back before gating again." if written else "")
+                  + " Start it again to look at the cells where they are now.")
+        _stop(call, st, session_id, "cells_moved", reason)
+        return _halted(call, st, session_id)
     if not moved:
         return None
 

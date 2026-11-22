@@ -34,7 +34,7 @@ MAX_INFLUENCE = 200
 MAX_LINE = 200
 
 #: The kind of relationship a vocabulary relation is, as the viewer names it.
-KIND = {"subset": "parent_child", "subset_any": "parent_child",
+KIND = {"subset": "parent_child", "subset_any": "parent_child", "contains": "parent_child",
         "coexpressed": "coexpression", "exclusive": "mutual_exclusion"}
 
 #: What a partner did for the gate, most decisive first.
@@ -409,6 +409,8 @@ def _notes(unit, supporting, uncertainty, *, state, method, confidence, looks, n
             lead = _LEAD[kind]
             if kind == "parent_child" and all(s["relation"] == "subset_any" for s in group):
                 lead = "Expected in any of"
+            elif kind == "parent_child" and all(s["relation"] == "contains" for s in group):
+                lead = "Its lineages beneath"
             sentences.append(f"{lead} {_join([s['marker'] for s in group[:3]])}: "
                              f"{group[0]['influence']}")
     elif not empty:

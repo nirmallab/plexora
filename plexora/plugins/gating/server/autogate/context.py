@@ -33,8 +33,10 @@ from plexora.ai import vocabulary
 
 #: 2: `no_image_channel` by the looks' channel matcher, not by exact name (a
 #: context stored under 1 flagged every marker of a panel named apart from
-#: its channels, and is rebuilt).
-VERSION = "2"
+#: its channels, and is rebuilt). 3: a `subset_any` carrier read through a
+#: family counts as marked when any anchor of the family is on the panel (a
+#: context stored under 2 called CD34's group incomplete without ERG).
+VERSION = "3"
 
 #: The vocabulary's schema (`plexora.ai.vocabulary`), which a panel entry --
 #: shipped, the user's, or an agent's -- is held to.
@@ -77,11 +79,15 @@ def _path(hash_):
 
 def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
     found = vocabulary.load()["entries"][canonical]
-    partners, missing = [], []
+    partners, lineages = [], {}
     for partner in found.get("partners") or []:
         here = [m for m in panel_by_canonical.get(partner["marker"], []) if m != marker]
-        if not here and partner["relation"] == "subset_any":
-            missing.append(partner["marker"])
+        if partner["relation"] == "subset_any":
+            # A carrier read through a family (CD34: endothelial cells) is
+            # marked when any of that family's anchors is on the panel (CD31
+            # without ERG); a carrier named on its own needs its own channel.
+            key = partner.get("lineage") or partner["marker"]
+            lineages[key] = lineages.get(key, False) or bool(here)
         for panel_marker in here:
             partners.append({"marker": panel_marker, "relation": partner["relation"],
                              "confidence": partner.get("confidence") or vocabulary.DEFAULT_CONFIDENCE})
@@ -95,6 +101,10 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
         "morphology": found.get("morphology") or "cell",
         "source": "learned" if found.get("origin") == "learned" else "vocabulary",
     }
+    for family in found.get("carries_own") or ():
+        if family in lineages:
+            lineages[family] = True
+    missing = [key for key, marked in lineages.items() if not marked]
     if missing:
         # A lineage the group names that this panel does not mark: positives
         # outside the members here are expected, so the group is not drawn.
@@ -693,9 +703,20 @@ def review_for(context, biology_record) -> dict:
     return dict((context.get("reviewed") or {}).get(proposal_key(biology_record)) or {})
 
 
+def _graph_version() -> str:
+    """The shipped graph a review read (`vocabulary.version()` without its
+    learned part, which a person's confirmations move)."""
+    return str(vocabulary.version()).split("+", 1)[0]
+
+
 def review_done(context, biology_record, markers) -> bool:
+    """A review counts while it was finished under this review rule, covers
+    the markers, and read the graph that ships now: relations a newer graph
+    states were never put to it (graph 2026-11-21.5 gave CD34, CD21 and
+    CDX2 partners a review under .4 never saw)."""
     review = review_for(context, biology_record)
     return bool(review.get("done")) and review.get("version") == REVIEW_VERSION \
+        and review.get("graph") == _graph_version() \
         and set(markers) <= set(review.get("markers") or ())
 
 
@@ -713,12 +734,14 @@ def store_review_draw(context, biology_record, draw, answers, markers, inferred=
     panel when none was named (`inferred`: {tissue, disease, confidence,
     basis}). The caller saves the context."""
     review = context.setdefault("reviewed", {}).setdefault(proposal_key(biology_record), {})
-    if review.get("done") or review.get("version") != REVIEW_VERSION:
+    if review.get("done") or review.get("version") != REVIEW_VERSION \
+            or review.get("graph") != _graph_version():
         # Asked again (the panel gained markers, or a review kept before
         # carriers were asked for): a fresh review, nothing of the settled
         # one carried into it.
         review.clear()
     review["version"] = REVIEW_VERSION
+    review["graph"] = _graph_version()
     review.setdefault("markers", [])
     review["markers"] = list(dict.fromkeys([*review["markers"], *markers]))
     review.setdefault("draws", {}).setdefault(str(draw), {}).update(

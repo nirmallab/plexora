@@ -3819,7 +3819,17 @@ deliberately left out and what should be built next.
   agent, not specific to gating: `image_qc.py` (an overview QC image per
   channel), `calibration.py` (the display calibration a session stores, in
   the plugin-store namespace `"display"`, and that `render_region`'s
-  `"auto"` windows read — `"percentiles"` keeps the old rule), `crops.py`
+  `"auto"` windows read — `"percentiles"` keeps the old rule; its `table`
+  fingerprint ends `|xy:<digest of every cell's x/y>`
+  (`_coordinates_fingerprint`), so a record anchored on cells that have
+  since moved is stale, and a vision check's choices made on them are
+  dropped (`_cells_moved`) -- lsp35766_p193_2, 2026-11-21, where a coordinate
+  fix left a window measured on glass in every look), `alignment.py`
+  (`check`: 32 seeded cells read as a look reads them, counted by whether
+  their crop holds their own mask label; `misaligned` below `MIN_ON_LABEL`
+  0.5 -- gating start refuses through `refusal`, QC start adds a
+  `table_alignment` planning note, and a running gating session stops
+  `cells_moved` when `coordinate_fingerprints` change), `crops.py`
   (batched per-tile cell crops; `_read_plane_crops` reads a panel's
   rectangles on a shared pool of `PARALLEL_READS` (4), each through a reader
   of its own from `source_image.SHELF`, and lays them out in order, so the
@@ -4186,8 +4196,16 @@ deliberately left out and what should be built next.
   pause/resume/stop/take-over to, so it never names the plugin),
   `partners.py` (`partner_plan`: the expected and not-expected partners a
   multi-view look shows, from the panel context's vocabulary relations
-  alone; `tiles_of` turns `Engine.partner_panels` — which also returns
-  `relations` and `members` — into one row a partner tile),
+  alone; a lineage marker with no expected partner of its own gets the
+  lineage markers beneath it (`_beneath`, relation `contains`: CD3 -> "CD4
+  or CD8", PanCK -> ECAD) when one of them is `coexpressed` with it, never a
+  state; a `subset_any` carrier read through a family carries its `lineage`
+  (`vocabulary._build`), so `context._entry_from_vocabulary` calls the group
+  complete when each family has one anchor on the panel, or is one the
+  marker anchors itself (`carries_own`: CD21 of FDC) -- context `VERSION` 3;
+  a partner review records the shipped graph it read (`review["graph"]`) and
+  is asked again under another; `tiles_of` turns `Engine.partner_panels` —
+  which also returns `relations` and `members` — into one row a partner tile),
   `explain.py` (pure `build(unit, *, state, method, confidence, channel_of)`:
   the gate's `review` record, `VERSION` 1 — the supporting partners the
   decision actually drew on, notes, uncertainty, `needs_review`, `not_used` —

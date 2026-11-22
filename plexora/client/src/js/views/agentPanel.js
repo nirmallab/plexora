@@ -152,6 +152,7 @@ window.PlexoraAgentPanel = (function () {
         // The session's own stops (capabilities_session._stop): the event's
         // `message` says why and what to do, under the summary.
         matrix_changed: { label: "Stopped", note: "Stopped: the expression values changed" },
+        cells_moved: { label: "Stopped", note: "Stopped: the cells' positions changed" },
         setup_failed: { label: "Stopped", note: "Stopped: the set-up cannot carry the run" },
     };
 
