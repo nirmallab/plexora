@@ -14,7 +14,10 @@
   alone, outlined; an empty not-expected one a wider field (`collage.EMPTY_SLOT`).
 - Ownership is read by the nucleus when outlines are approximate, dim own
   stain counts, and a look is told when the outlines came from another
-  platform or its looks keep naming segmentation (`segmentation.note`).
+  platform or its looks keep naming segmentation (`segmentation.note`) --
+  past the outline and dim only for a marker whose cells reach past it
+  (`packets.REACH_ROLES`), after the rerun read E-cadherin's neighbours as
+  own. A review close writes the likeliest candidate.
 """
 
 from __future__ import annotations
@@ -413,17 +416,93 @@ def test_a_look_names_the_slots_with_no_partner_and_reads_them():
 # -- 4. ownership under approximate outlines ---------------------------------------------------
 
 
-def test_the_reading_guide_reads_ownership_by_the_nucleus_and_counts_dim_own_stain():
+def test_only_markers_that_reach_past_their_outline_are_read_past_it():
+    """The owner's rerun of lsp35766_p193_2 (2026-11-22): told for every
+    marker that a stain body the outline overlaps is the cell's own and that
+    dim stain counts, the readers called E-cadherin's neighbour membranes own
+    (gate 5.37 -> 4.94, 44 % -> 63 % positive) and stopped calling panCK's
+    unread stain uncertain, so it never reached the whole-image check. Those
+    words now go only to a marker whose cells reach past the outline and
+    carry it dimmer on some -- the graph's `lineage_other` role (cKit, IBA1,
+    CD4) -- in its own guide entry; the general entries and the answer form
+    read at the outline again."""
     from plexora.plugins.gating.server.autogate import answers, packets
 
-    panel = packets.READING_GUIDE["panel"]
-    assert "approximation of the cell" in panel and "overlaps or touches" in panel
-    assert "dim populations count" in panel and "faint floor" in panel
-    # The guard against a bright neighbour's light stays.
-    assert "light only on the side facing one brighter neighbour" in panel
-    assert "overlaps or touches" in packets.READING_GUIDE["rows"]
+    guide = packets.READING_GUIDE
+    for key in ("panel", "rows"):
+        assert "overlaps or touches" not in guide[key] and "however dim" not in guide[key]
+    assert "Say `uncertain` rather than guess" in guide["panel"]
+    assert "light only on the side facing one brighter neighbour" in guide["panel"]
+    reach = guide["panel_reach"]
+    assert "approximation of the cell" in reach and "overlaps or touches" in reach
+    assert "dim populations count" in reach and "faint floor" in reach
+    assert "overlaps or touches" in guide["rows_reach"]
     described = answers.CellPanelAnswer.model_fields["cells"].description
-    assert "overlaps or touches" in described and "however dim" in described
+    assert "overlaps or touches" not in described and "however dim" not in described
+    assert "panel_reach" in packets.ENGINE_ONLY["v3"]["entries"]
+    assert "rows_reach" in packets.ENGINE_ONLY["v1"]["entries"]
+
+    def unit(role):
+        return {"marker": "m", "context": {"role": role}}
+
+    assert packets.reach_guide(unit("lineage_other"), "panel_reach") == ["panel_reach"]
+    for role in ("lineage_reliable", "tumour_stromal", "state", None):
+        assert packets.reach_guide(unit(role), "panel_reach") == []
+    assert packets.reach_guide({"marker": "m"}, "panel_reach") == []
+
+
+def test_the_segmentation_note_reads_past_the_outline_only_where_the_guide_does():
+    from plexora.plugins.gating.server.autogate import packets, segmentation
+
+    found = segmentation.note([{"signal": "mask_file", "platform": "xenium",
+                                "value": "s04_xenium_cells.ome.tif"}])
+
+    class _Engine:
+        def segmentation_note(self, project):
+            return found
+
+    cKit = {"marker": "cKit", "context": {"role": "lineage_other"}}
+    ecad = {"marker": "Ecadherin", "context": {"role": "tumour_stromal"}}
+    long_note = packets.segmentation_words(_Engine(), "p", cKit)["segmentation"]
+    short = packets.segmentation_words(_Engine(), "p", ecad)["segmentation"]
+    assert "however far it reaches past the outline" in long_note
+    assert short.startswith("this image's cell outlines are approximate (the mask file names "
+                            "xenium") and "by its nucleus" in short
+    assert "overlaps" not in short and "brighter neighbour" in short
+
+
+def test_a_review_close_writes_the_likeliest_candidate_not_the_one_nearest_the_start():
+    """CD31 on that rerun ran out of looks with the reads at 5.04 (P 0.82)
+    and 4.85 (P 0.15): the leader, among candidates the tolerance calls one
+    gate the one nearest the start, was 4.85, and 4.85 was written. A review
+    close writes the likeliest. Without a posterior, the leader; at the
+    start when the reads are not trusted."""
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    class _Checking(_Engine):
+        def close(self, unit, state, reason, *, proposed=None, confidence=None, write=False):
+            unit["proposed"] = proposed
+            super().close(unit, state, reason, proposed=proposed, confidence=confidence)
+
+    plateau = [{"index": 3, "low": 4.85, "p": 0.1475}, {"index": 4, "low": 5.04, "p": 0.8175}]
+    cd31 = _u("CD31", "awaiting_panel", candidate=4.89, seen=[4.0, 9.0],
+              hypotheses={"leader": 4.85, "start": 4.89, "observations": CD3E,
+                          "support": {"posterior": {"plateau": plateau}}})
+    engine = _Checking([cd31])
+    hypotheses.finish(engine, cd31, "budget_exhausted")
+    assert cd31["state"] == "manual_review_recommended" and cd31["proposed"] == 5.04
+    assert "5.04 (P 0.82) and 4.85 (P 0.15)" in cd31["reason"]
+    bare = _u("CD3E", "awaiting_panel", candidate=5.7, seen=[4.0, 9.0],
+              hypotheses={"leader": 5.47, "start": 5.71, "observations": CD3E, "support": {}})
+    engine = _Checking([bare])
+    hypotheses.finish(engine, bare, "budget_exhausted")
+    assert bare["proposed"] == 5.47
+    distrusted = _u("CD4", "awaiting_panel", candidate=6.9, seen=[4.0, 9.0],
+                    hypotheses={"leader": 7.3, "start": 6.86, "observations": CD3E,
+                                "support": {"posterior": {"plateau": plateau}}})
+    engine = _Checking([distrusted])
+    hypotheses.finish(engine, distrusted, "readers_unreliable")
+    assert distrusted["proposed"] == 6.86
 
 
 def _record(mask, image="LSP35766_P193.ome.tif", metadata=()):

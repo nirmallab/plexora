@@ -482,7 +482,7 @@ def packet(engine, units):
     numbers = [c["number"] for c in arranged]
     multiview = packets.partner_words(partners) if partners else {}
     guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
-        packets.partner_guide(partners)
+        packets.partner_guide(partners) + packets.reach_guide(unit, "panel_reach")
     fibrous = ((engine.panel_for(unit["project"]).get("entries") or {})
                .get(unit["marker"]) or {}).get("morphology") == "fibrous"
     if fibrous:
@@ -508,7 +508,7 @@ def packet(engine, units):
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
-                     **packets.segmentation_words(engine, unit["project"]),
+                     **packets.segmentation_words(engine, unit["project"], unit),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -609,7 +609,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
     numbers = [c["number"] for c in arranged]
     multiview = packets.partner_words(partners) if partners else {}
     guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
-        packets.partner_guide(partners)
+        packets.partner_guide(partners) + packets.reach_guide(unit, "panel_reach")
     if ((engine.panel_for(project).get("entries") or {}).get(unit["marker"]) or {}).get(
             "morphology") == "fibrous":
         guide.append("panel_fibrous")
@@ -619,7 +619,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
-                     **packets.segmentation_words(engine, project),
+                     **packets.segmentation_words(engine, project, unit),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -985,7 +985,9 @@ def finish(engine, unit, status):
     at_start = status in ("readers_unreliable", "flat_reads")
     if not at_start:
         state["reason"] += plateau_note(state)
-    proposed = leader if leader is not None and not at_start else state.get("start")
+    # A review close writes the likeliest candidate, not the leader nearest
+    # the start (`_likeliest`).
+    proposed = state.get("start") if at_start else _likeliest(state, leader)
     from plexora.plugins.gating.server.autogate import replan
 
     reason = f"cell panels: {state['reason']}"
@@ -994,6 +996,19 @@ def finish(engine, unit, status):
         # image is looked at before it closes for review (a failed stain).
         return
     engine.close(unit, CLOSE_STATE[status], reason, proposed=proposed)
+
+
+def _likeliest(state, leader):
+    """The gate a review close writes: the candidate the reads make most
+    likely to be the best gate (the posterior plateau's top member), not the
+    leader, which among candidates the tolerance calls one gate is the one
+    nearest the start (lsp35766_p193 2026-11-22: CD31 out of looks with the
+    reads at 5.04 P 0.82 was written at 4.85 P 0.15, the start's
+    neighbour). The leader without a posterior; the start without either."""
+    plateau = ((state.get("support") or {}).get("posterior") or {}).get("plateau") or []
+    if plateau:
+        return float(max(plateau, key=lambda m: (m["p"], -abs(m["low"] - (leader or 0))))["low"])
+    return leader if leader is not None else state.get("start")
 
 
 def plateau_note(state) -> str:
