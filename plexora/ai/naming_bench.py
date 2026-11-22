@@ -33,10 +33,10 @@ CASES = (
     ("R1_HLA-DR_DyLight650", "HLADR"),
     ("L26", "CD20"),                    # clones
     ("C8-144B", "CD8"),
-    ("SP7_Opal570", "CD3"),
+    ("2GV6_Opal570", "CD3"),            # SP7, the bench's first CD3 clone, is Osterix's gene in graph 2026-11-21.2
     ("E1L3N", "PDL1"),
     ("NAT105", "PD1"),
-    ("Foxp-3_Cy5", "FOXP3"),
+    ("Forkhead-box-P3_Cy5", "FOXP3"),   # Foxp-3 is a listed spelling since graph 2026-11-21.2
     ("alpha-SMA_A488", "aSMA"),
     ("Vimentin(D21H3)", "Vimentin"),
     ("aCD68_KP1", "CD68"),

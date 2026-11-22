@@ -214,7 +214,7 @@ def test_the_naming_bench_asks_every_name_and_scores_what_the_lookup_does():
     perfect = _naming(lambda m: want[m] or "unknown")
     assert perfect["naming_accuracy"] == 1.0 and perfect["wrong_name_rate"] == 0.0
     # Unknown, or a name the vocabulary lacks, leaves a marker unnamed: safe, only less useful.
-    shy = _naming(lambda m: "SP7" if m == "SP7_Opal570" else "unknown" if m == "L26" else want[m] or "unknown")
+    shy = _naming(lambda m: "2GV6" if m == "2GV6_Opal570" else "unknown" if m == "L26" else want[m] or "unknown")
     assert shy["unnamed"] == 2 and shy["wrong"] == 0
     # A clone read as another marker, or a name given to what nothing tells, is wrong.
     bold = _naming(lambda m: "CD4" if m == "NAT105" else "CD45" if m == "XQ-445" else want[m] or "unknown")
@@ -294,9 +294,16 @@ def test_the_contrast_bench_asks_the_candidate_through_the_dev_route(contrast_it
 
     answers = _contrast(contrast_items, lambda *_: True)
 
+    def stable(evidence):
+        # The QC fingerprint names the run (its files' stamps): each collection
+        # builds the scenes again, so it is no way to tell one scene from another.
+        qc = {k: v for k, v in (evidence.get("qc_exclusion") or {}).items() if k != "fingerprint"}
+        return {**evidence, "qc_exclusion": qc}
+
     def brain(packet, body):
         assert packet["kind"] == "display_setup"
-        scene = next(i["scene"] for i in contrast_items if i["packet"]["evidence"] == packet["evidence"])
+        scene = next(i["scene"] for i in contrast_items
+                     if stable(i["packet"]["evidence"]) == stable(packet["evidence"]))
         return {"kind": "display_setup", **answers[scene]}
 
     with FakeGateway(brain) as gateway:
