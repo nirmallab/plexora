@@ -71,7 +71,13 @@ passes the same whole-image checks; a gate that fails one is never accepted
 (below). A panel draws one expected partner beside each cell, or, for a
 marker with none, a supporting one (`supporting CD163` for `IBA1`: a
 lineage inside the marker's positives): lit, it supports the cell's own stain; dark,
-it says nothing, and it never counts against a cell or moves a gate.
+it says nothing, and it never counts against a cell or moves a gate. A
+slot with no partner is never black: the expected one shows the marker
+alone with the cell's outline, the not-expected one the marker and nuclei
+over a wider field. Readers judge ownership by the nucleus -- the outline
+approximates the cell -- and count dim own stain above the unstained
+cells' floor; a look on an image whose outlines came from another platform,
+or whose looks keep naming `segmentation`, carries a `segmentation` note.
 A conditional gate (a `within` answer of engine
 `v1`) or a marker with no candidates gets `v1` looks, whose reading comes with
 the packet.

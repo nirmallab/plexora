@@ -1,4 +1,4 @@
-"""Two fixes from the owner's review of lsp35766_p193 (2026-11-22).
+"""Fixes from the owner's review of lsp35766_p193 (2026-11-22).
 
 - A stain its looks could not read -- most cells `uncertain` or `artifact`,
   a stain artifact named -- is shown on the whole image before it closes for
@@ -10,6 +10,11 @@
   lineage markers whose positives sit inside its own (`partners._supports`),
   read as support only. (Owner: "for IBA1 no co-expression markers were
   used".)
+- No partner slot is drawn black: an empty expected slot shows the marker
+  alone, outlined; an empty not-expected one a wider field (`collage.EMPTY_SLOT`).
+- Ownership is read by the nucleus when outlines are approximate, dim own
+  stain counts, and a look is told when the outlines came from another
+  platform or its looks keep naming segmentation (`segmentation.note`).
 """
 
 from __future__ import annotations
@@ -317,3 +322,156 @@ def test_the_colon_panel_gets_its_supporting_tiles_from_the_vocabulary():
     assert hla["relation"] == "supports" and set(hla["members"]) == {"CD11c", "CD19"}
     assert _co(entries, "cKit") is None
     assert _co(entries, "CD3E")["relation"] == "contains"
+
+
+# -- 3. no partner slot is drawn blank ---------------------------------------------------------
+
+
+def _tile(png, tile_px, col, index, rows_before=0):
+    """The pixels of panel `index` (t2m: 0 morphology, 1 outlined, 2 co, 3 anti)
+    of the cell in column `col` of the first row."""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from plexora.agent.evidence import collage
+
+    image = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+    x = col * (2 * tile_px + collage.GAP) + (index % 2) * tile_px
+    y = collage.HEADER_H + collage.ROW_HEADER_H + (index // 2) * tile_px
+    return image[y:y + tile_px, x:x + tile_px]
+
+
+@pytest.mark.pro
+def test_an_empty_partner_slot_shows_the_marker_never_black(tmp_path):
+    """cKit had no expected partner: its expected tile was black on every
+    cell. A slot with no partner now shows the marker -- alone, outlined, in
+    the expected slot; over a wider field with nuclei in the not-expected
+    one -- says so in the manifest, and draws again byte for byte."""
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+
+    registry.discover(["gating"])
+    make_gating_project(tmp_path, grid=16, size=640)
+    session = AgentSession()
+    try:
+        ds = session.data("gsynth")
+        c = cellmod.cells(ds)
+        rows = [{"label": "a", "cells": [{"cell_id": int(c.ids[i]), "x": float(c.xs[i]),
+                                          "y": float(c.ys[i]), "value": 1.0}
+                                         for i in range(0, 30, 5)]}]
+        one = collage.render_collage(session, ds, layout="t2m", rows=rows, marker="CD8",
+                                     partners={"co": None, "anti": "CD20", "gates": {}},
+                                     fmt="png", store=False)
+        manifest = one["manifest"]
+        assert manifest["renderer"] == collage.RENDERER == "plexora.agent.evidence.collage/5"
+        assert manifest["slots"] == {"co": "stain", "anti": "partner"}
+        assert "stain" in manifest["display"]["transfer"]
+        tile = manifest["tile_px"]
+        assert any(_tile(one["png"], tile, col, 2).any() for col in range(6))
+        assert collage.rerender(session, ds, manifest)["png"] == one["png"]
+        bare = collage.render_collage(session, ds, layout="t2m", rows=rows, marker="CD8",
+                                      fmt="png", store=False)
+        assert bare["manifest"]["slots"] == {"co": "stain", "anti": "wide"}
+        assert all(_tile(bare["png"], tile, col, 3).any() for col in range(6))
+        # The wider field is not the cell's own crop: it differs from the context tile.
+        assert not np_equal(_tile(bare["png"], tile, 0, 3), _tile(bare["png"], tile, 0, 1))
+        both = collage.render_collage(session, ds, layout="t2m", rows=rows, marker="CD8",
+                                      partners={"co": "CD3", "anti": "CD20", "gates": {}},
+                                      fmt="png", store=False)
+        assert both["manifest"]["slots"] == {"co": "partner", "anti": "partner"}
+    finally:
+        session.close()
+
+
+def np_equal(a, b):
+    import numpy as np
+
+    return np.array_equal(a, b)
+
+
+def test_a_look_names_the_slots_with_no_partner_and_reads_them():
+    from plexora.plugins.gating.server.autogate import packets
+
+    anti_only = {"markers": {"anti": "CD20"}, "relations": {"anti": "exclusive"}}
+    assert packets.partner_words(anti_only) == {"partner_panels": {
+        "not_expected": "CD20", "expected_slot": "the marker alone, outlined"}}
+    assert packets._panel_words("t2m", anti_only) == \
+        "morphology | outlined context / the marker alone, outlined | not expected CD20"
+    assert packets.partner_guide(anti_only) == ["slot_marker_alone"]
+    none = {"markers": {}, "relations": {}}
+    assert packets.partner_guide(none) == ["slot_marker_alone", "slot_wider_field"]
+    assert packets._panel_words("t2m", none).endswith(
+        "/ the marker alone, outlined | a wider field")
+    guide = packets.READING_GUIDE
+    assert "no nuclei" in guide["slot_marker_alone"] and "nucleus" in guide["slot_wider_field"]
+    for key in ("collage_t2m", "collage_panel_m"):
+        assert "black when there is none" not in guide[key]
+
+
+# -- 4. ownership under approximate outlines ---------------------------------------------------
+
+
+def test_the_reading_guide_reads_ownership_by_the_nucleus_and_counts_dim_own_stain():
+    from plexora.plugins.gating.server.autogate import answers, packets
+
+    panel = packets.READING_GUIDE["panel"]
+    assert "approximation of the cell" in panel and "overlaps or touches" in panel
+    assert "dim populations count" in panel and "faint floor" in panel
+    # The guard against a bright neighbour's light stays.
+    assert "light only on the side facing one brighter neighbour" in panel
+    assert "overlaps or touches" in packets.READING_GUIDE["rows"]
+    described = answers.CellPanelAnswer.model_fields["cells"].description
+    assert "overlaps or touches" in described and "however dim" in described
+
+
+def _record(mask, image="LSP35766_P193.ome.tif", metadata=()):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        image=SimpleNamespace(src=f"/data/{image}"),
+        segmentation=SimpleNamespace(source=f"/data/{mask}", derived=None),
+        dataset=SimpleNamespace(columns=SimpleNamespace(metadata=tuple(metadata)),
+                                obs_columns=()))
+
+
+def test_outlines_from_another_platform_are_said_with_the_signal_read():
+    """lsp35766_p193_2: Xenium cell boundaries warped onto CyCIF. The mask's
+    file and the table's `mask_method` both name Xenium; the image does not.
+    A Xenium image with its own mask is not foreign."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate import segmentation
+
+    table = SimpleNamespace(columns=lambda names: {"mask_method": ["xenium_default"] * 3})
+    ds = SimpleNamespace(project=_record("LSP35766A_s04_xenium_cell_labels_cycif.ome.tif",
+                                         metadata=("mask_method",)), table=table)
+    signals = segmentation.static_signals(ds)
+    assert [(s["signal"], s["platform"]) for s in signals] == [("mask_file", "xenium"),
+                                                              ("mask_method", "xenium")]
+    note = segmentation.note(signals)["note"]
+    assert "approximate" in note and "xenium" in note and "brighter neighbour" in note
+    own = SimpleNamespace(project=_record("cells.ome.tif", image="xenium_morphology.ome.tif"),
+                          table=table)
+    assert segmentation.static_signals(own) == []
+    plain = SimpleNamespace(project=_record("mask.tif"), table=table)
+    assert segmentation.static_signals(plain) == []
+    assert segmentation.note([]) is None
+
+
+def test_looks_naming_segmentation_on_several_markers_call_the_outlines_poor():
+    from plexora.plugins.gating.server.autogate import packets, segmentation
+
+    units = [{"marker": m, "artifact_flags": ["segmentation"]} for m in ("CD8a", "CD4", "CD3E")]
+    assert segmentation.look_signal(units[:2]) is None
+    found = segmentation.look_signal(units)
+    assert found["markers"] == ["CD3E", "CD4", "CD8a"]
+
+    class _Engine:
+        def segmentation_note(self, project):
+            return segmentation.note([found])
+
+    assert packets.segmentation_words(_Engine(), "p")["segmentation"].startswith(
+        "this image's cell outlines are approximate (3 markers' looks named segmentation)")
+    assert packets.segmentation_words(object(), "p") == {}

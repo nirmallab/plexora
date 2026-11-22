@@ -813,6 +813,25 @@ class Engine(BaseEngine):
                     out["gates"][channels[m]] = float(gated[m])
         return out if out["markers"] else {}
 
+    def segmentation_note(self, project):
+        """{note, signals} when this image's cell outlines are approximate --
+        another platform's segmentation carried onto it, or its looks keep
+        naming `segmentation` (`segmentation.note`) -- else None. What the
+        record and table say is read once per session and image."""
+        from plexora.plugins.gating.server.autogate import segmentation
+
+        held = self.record.setdefault("segmentation_signals", {})
+        if project not in held:
+            try:
+                held[project] = segmentation.static_signals(_data(self.call, project))
+            except Exception:  # a note is a guide; a look never fails on it
+                held[project] = []
+        signals = list(held[project])
+        looks = segmentation.look_signal(self.units_of(project))
+        if looks:
+            signals.append(looks)
+        return segmentation.note(signals)
+
     def note_partners_drawn(self, unit, *, kind=None, tiles=None, plot=None):
         """Record on the unit which partners the look being built draws
         (`unit["partners_drawn"]`, one entry a look: {look, kind, tiles,

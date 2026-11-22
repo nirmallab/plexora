@@ -99,7 +99,17 @@ LAYOUTS = {
 
 #: Which drawing rule made a collage: bumped whenever the same manifest would
 #: draw different pixels (part of what makes a remembered answer reusable).
-RENDERER = "plexora.agent.evidence.collage/4"
+RENDERER = "plexora.agent.evidence.collage/5"
+
+#: What a multi-view partner slot (`t2m`'s `co` / `anti`) shows when it has no
+#: partner: never black (lsp35766 cKit, 2026-11-22: a black expected tile on
+#: every cell). The expected slot shows the marker alone in grey at its
+#: display window, the judged cell outlined, no nuclei (`stain`): the stain's
+#: shape and where it sits against the outline. The not-expected slot shows
+#: the marker over a field `WIDE_FIELD` times the crop, nuclei and outlines
+#: (`wide`): which nucleus a stain body belongs to.
+EMPTY_SLOT = {"co": "stain", "anti": "wide"}
+WIDE_FIELD = 2.5
 
 #: Where a partner's gate sits on its panel's grey ramp (`co` / `anti`).
 PARTNER_GATE_GREY = 0.4
@@ -325,11 +335,22 @@ def _panel(crop, kind, spec):
         panel = cropmod.blend(crop, layers, size)
         cropmod.outline(panel, crop, target=None, alpha=0.6)
         return cropmod.outline(panel, crop, target=WHITE, neighbours=None)
+    if kind == "stain":
+        panel = cropmod.blend(crop, [_layer(windows, marker, WHITE)], size)
+        cropmod.outline(panel, crop, target=None, alpha=0.6)
+        return cropmod.outline(panel, crop, target=cropmod.OUTLINE_COLOR, neighbours=None)
+    if kind == "wide":
+        wide = (spec.get("wide") or {}).get(crop.cell_id)
+        if wide is None:
+            return _panel(crop, "stain", spec)
+        panel = _panel(wide, "merge", spec)
+        return cropmod.outline(panel, wide, target=WHITE, neighbours=None)
     if kind in ("co", "anti"):
         names = [n for n in (spec.get("partners") or {}).get(kind) or ()
                  if crop.planes.get(n) is not None]
         if not names:
-            return np.zeros((size, size, 3), dtype=np.uint8)
+            # No partner: the slot shows the marker instead (`EMPTY_SLOT`).
+            return _panel(crop, EMPTY_SLOT[kind], spec)
         # A group (`subset_any`: expected in any of several lineages) is lit
         # where any member is: each at its own window, the brightest kept.
         panel = None
@@ -443,6 +464,17 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         info["reads"] += got_info["reads"]
         info["level"] = got_info["level"]
         info["side_level_px"] = got_info.get("side_level_px")
+    # What each multi-view partner slot shows: its partner, or the marker
+    # instead (`EMPTY_SLOT`) -- never black.
+    slots = {kind: ("partner" if shown.get(kind) else EMPTY_SLOT[kind])
+             for kind in ("co", "anti") if kind in panels}
+    wide = {}
+    if slots.get("anti") == "wide":
+        names = tuple(dict.fromkeys(n for n in (nuclear, marker, *row_markers) if n))
+        wide, got_info = cropmod.read_cell_crops(
+            session, record, all_cells, channels={n: windows[n]["key"] for n in names},
+            crop_px=side_px * WIDE_FIELD, tile_px=tile_px)
+        info["reads"] += got_info["reads"]
     width = row_label_px + per_row * cell_w + (per_row - 1) * gap
     empty_row_h = EMPTY_ROW_H
     height = header_h + sum((row_header_h + cell_h + caption_h + gap) if row["cells"]
@@ -491,7 +523,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
             "half_width": half_width, "radius_px": radius_px,
             "ticks": bool(spec_layout.get("ticks")),
             "partners": shown, "partner_windows": partner_windows,
-            "partner_curves": partner_curves}
+            "partner_curves": partner_curves, "wide": wide}
     manifest_rows = []
     y = header_h
     dropped = 0
@@ -550,6 +582,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         "gate": None if gate is None else {"low": float(gate),
                                            "high": None if high is None else float(high)},
         "panels": panels, "references": references, "tile_px": int(tile_px),
+        **({"slots": slots} if slots else {}),
         "crop": {"side_px": side_px, "how": crop_how, "level": info["level"],
                  "side_level_px": info.get("side_level_px")},
         "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
@@ -572,7 +605,14 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                                       "own disc p99, floored where the context window draws "
                                       f"{cropmod.MORPHOLOGY_FLOOR:g}; the window's curve",
                         "gate_relative": "log scale, gate at mid-grey, gate/4 to gate*4"
-                        if to_log else "linear, gate at mid-grey"}},
+                        if to_log else "linear, gate at mid-grey",
+                        **({"stain": "a partner slot with no partner: the marker alone "
+                                     "in grey at its window, the judged cell outlined, no "
+                                     "nuclei"} if "stain" in slots.values() else {}),
+                        **({"wide": f"a partner slot with no partner: the marker and "
+                                    f"nuclei over {WIDE_FIELD:g} times the crop, the judged "
+                                    "cell outlined white"}
+                           if "wide" in slots.values() else {})}},
         "calibration": {"version": calibration.VERSION,
                         "anchors": {n: windows[n]["anchors"] for n in needed
                                     if windows[n].get("anchors")}},

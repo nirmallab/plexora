@@ -30,7 +30,8 @@ RowVerdict = Literal[schemas.ROW_VERDICTS]
 Pattern = Literal[schemas.PATTERNS]
 _ROWS = ("One word per row about the cells around the marked nucleus (the four magenta "
          "ticks): `own_stain` (stain touching the nucleus with no other nucleus in it: a ring "
-         "or halo around it, a fill inside it, cytoplasm hugging it), `neighbour_only` "
+         "or halo around it, a fill inside it, cytoplasm hugging it, a stain body the outline "
+         "overlaps or touches; dim counts), `neighbour_only` "
          "(stain in the tile, but around another nucleus or apart from this one), "
          "`unstained` (nothing touches the nucleus), `mixed` (both kinds, about evenly), "
          "`cannot_tell`. A row is what most of its cells are; a row with no cells is "
@@ -128,7 +129,10 @@ class CellPanelAnswer(_Base):
     cells: dict[str, Literal[schemas.PANEL_LABELS]] = Field(
         description="EVERY numbered cell (the caption under it): `own_stain` -- the marker's "
                     "stain belongs to this cell, touching the nucleus the ticks mark with no "
-                    "other nucleus inside it; `not_own_stain` -- nothing touches that nucleus, "
+                    "other nucleus inside it, or a stain body the cell's outline overlaps or "
+                    "touches with no other nucleus inside it (the outline approximates the "
+                    "cell), however dim, if clearly above the unstained cells' floor; "
+                    "`not_own_stain` -- nothing touches that nucleus or outline, "
                     "or the stain is a neighbour's or apart by a dark gap; `uncertain` -- the "
                     "picture cannot say; `artifact` -- debris, a fold, an edge, a smear across "
                     "cells, or a haze or streaks lighting the field alike with no edge at this "

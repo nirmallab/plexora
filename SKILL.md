@@ -4206,7 +4206,17 @@ deliberately left out and what should be built next.
   expected slot but named `partner_panels.supporting` / "supporting X" with
   the `supporting_tile` guide entry -- lit supports, dark says nothing; it
   adds no relation to the panel context, so purity, orphan and lineage
-  numbers never see it; a `subset_any` carrier read through a family carries its `lineage`
+  numbers never see it; a `t2m` slot with no partner is never black
+  (`collage.EMPTY_SLOT`, renderer `collage/5`): `co` draws `stain` (the
+  marker alone, grey, outlines, no nuclei), `anti` draws `wide` (marker and
+  nuclei over `WIDE_FIELD` times the crop, a second crop read), recorded in
+  the manifest's `slots` and named by `packets.SLOT_WORDS` with the
+  `slot_marker_alone` / `slot_wider_field` guide entries; `segmentation.py`
+  puts a `segmentation` note in a look's evidence when the mask file or the
+  table's `mask_method` names another platform than the image's (Xenium
+  boundaries on CyCIF, lsp35766_p193_2) or `LOOK_FLAG_MIN` markers' looks
+  named `segmentation` (`Engine.segmentation_note`, static signals cached in
+  `record["segmentation_signals"]`); a `subset_any` carrier read through a family carries its `lineage`
   (`vocabulary._build`), so `context._entry_from_vocabulary` calls the group
   complete when each family has one anchor on the panel, or is one the
   marker anchors itself (`carries_own`: CD21 of FDC) -- context `VERSION` 3;
