@@ -305,6 +305,10 @@ def _build(graph) -> dict:
 
     partners = {mid: {} for mid in markers}
     stated = set()            # (mid, key): set by an edge naming both markers
+    # (mid, partner name) -> the family a `subset_any` carrier was read
+    # through: a panel marking any anchor of that family marks the lineage.
+    through = {}
+    own = {}                  # mid -> the carrier families it anchors itself
 
     def add(mid, other, relation, confidence, direct=False):
         """The pair's relation at its grade. An edge naming both markers is
@@ -350,10 +354,23 @@ def _build(graph) -> dict:
             continue
         kind, confidence = edge["type"], _grade(edge.get("confidence"))
         if kind in ("subset", "subset_any"):
+            via = {}
+            for ref in _graph.targets(edge):
+                for m in expand(ref):
+                    if _graph.is_family(ref):
+                        via.setdefault(m, _graph.family_slug(ref))
+                # A family the marker itself anchors (CD21 of follicular
+                # dendritic cells): wherever the marker is on a panel, so is
+                # that lineage -- the marker's own channel marks it.
+                if kind == "subset_any" and _graph.is_family(ref) \
+                        and edge["from"] in expand(ref) and edge["from"] in markers:
+                    own.setdefault(edge["from"], set()).add(_graph.family_slug(ref))
             group = sorted({m for ref in _graph.targets(edge) for m in expand(ref)} - {edge["from"]})
             relation = "subset_any" if kind == "subset_any" and len(group) > 1 else "subset"
             for other in group:
                 add(edge["from"], other, relation, confidence)
+                if relation == "subset_any" and other in via and edge["from"] in markers:
+                    through.setdefault((edge["from"], names[other]), via[other])
         elif kind in ("exclusive", "coexpressed"):
             left, right = expand(edge["from"]), expand(edge["to"])
             direct = not (_graph.is_family(edge["from"]) or _graph.is_family(edge["to"]))
@@ -406,13 +423,17 @@ def _build(graph) -> dict:
             if spelling != name and spelling not in spellings:
                 spellings.append(spelling)
         entry = {"canonical": name, "synonyms": spellings, "role": _graph.role(item, PRODUCT),
-                 "partners": [{"marker": other, "relation": relation, "confidence": confidence}
+                 "partners": [{"marker": other, "relation": relation, "confidence": confidence,
+                               **({"lineage": through[(mid, other)]}
+                                  if relation == "subset_any" and (mid, other) in through else {})}
                               for (other, relation), confidence in sorted(
                                   partners[mid].items(),
                                   key=lambda kv: (RELATIONS.index(kv[0][1]),
                                                   -deep(by_name[kv[0][0]]),
                                                   CONFIDENCE.index(kv[1]), fold(kv[0][0])))],
                  "caveats": list(item.get("caveats") or ()), "id": mid}
+        if own.get(mid):
+            entry["carries_own"] = sorted(own[mid])
         for field, key in (("compartment", "compartment"), ("lineage", "lineage_text"),
                            ("expression", "expression"), ("binary", "binary"),
                            ("morphology", "morphology"), ("expected_fraction", "expected_fraction")):

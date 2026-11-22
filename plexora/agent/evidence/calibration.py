@@ -620,10 +620,49 @@ def _without_observed(choices) -> dict:
 
 
 def _table_fingerprint(session, project):
+    """Which values the anchors were read from and where the cells sat: a
+    window anchored on cells that have since moved is stale too. On
+    lsp35766_p193_2 (2026-11-21) the table's coordinates were first read in
+    the wrong space; once fixed, the matrix was the same, so a window measured
+    on glass where the cells had been drawn kept reaching every look."""
     try:
-        return getattr(session.data(project).table, "expression_fingerprint", None)
+        table = session.data(project).table
     except Exception:
         return None
+    values = getattr(table, "expression_fingerprint", None)
+    if values is None:
+        return None
+    where = _coordinates_fingerprint(session, project, table)
+    return f"{values}|xy:{where}" if where else values
+
+
+def _cells_moved(before, after) -> bool:
+    """Whether two table fingerprints place the cells differently (their
+    `xy:` parts differ; a fingerprint from before coordinates were part of
+    it says nothing either way)."""
+    def where(fingerprint):
+        text = str(fingerprint or "")
+        return text.split("|xy:", 1)[1] if "|xy:" in text else None
+    a, b = where(before), where(after)
+    return a is not None and b is not None and a != b
+
+
+def _coordinates_fingerprint(session, project, table):
+    """A short digest of every cell's x and y as the table now gives them
+    (the count and the sums, rounded to a pixel), or None when there are none."""
+    import hashlib
+
+    try:
+        frame = table.geometry()
+        roles = session.project(project).roles
+        x, y = roles.get("x"), roles.get("y")
+        if frame is None or not x or not y or x not in frame.columns or y not in frame.columns:
+            return None
+        sums = (frame.height, round(float(frame[x].cast(float).sum())),
+                round(float(frame[y].cast(float).sum())))
+    except Exception:
+        return None
+    return hashlib.sha1(repr(sums).encode("utf-8")).hexdigest()[:10]
 
 
 def _qc_fingerprint(session, project):
@@ -731,6 +770,10 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
     # A vision check's choices outlive a recomputation: they are a gain over
     # whatever the rule now says, not a window.
     choices = {} if reset_choices else dict((stored or {}).get("choices") or {})
+    # Choices a vision check made looking at cells that have since moved
+    # were made looking at other places (glass, on lsp35766_p193_2): its
+    # gain and what it observed are dropped, so the check is asked again.
+    moved = bool(stored) and _cells_moved(stored.get("table"), table)
     if stored and (stored.get("table") != table or stored.get("qc") != qc or other_cells):
         stored = None       # windows anchored on another matrix's values, or other cells
     keys = {}
@@ -772,6 +815,8 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
             stored = latest
         if was and was != now:
             choices = _without_observed(choices)       # other cells than these
+        if moved:
+            choices = {}
         merged = dict(stored or {"version": VERSION, "channels": {}})
         merged["table"] = table
         merged["qc"] = qc

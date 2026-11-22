@@ -1204,6 +1204,22 @@ def test_a_matrix_switched_under_a_run_stops_it_saying_why(tmp_path):
     assert again["state"] == "stopped" and again["reason"] == halted["reason"]
 
 
+def test_cells_that_move_under_a_run_stop_it_saying_why(tmp_path, monkeypatch):
+    """The table's positions changed while gating ran (a table correction, a
+    coordinate fix): every look so far was drawn where the cells were before,
+    so the run stops (lsp35766_p193_2, 2026-11-21)."""
+    from plexora.agent.evidence import calibration
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8"])
+    sid = started["session_id"]
+    monkeypatch.setattr(calibration, "_coordinates_fingerprint", lambda *a: "elsewhere")
+    halted = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert halted["state"] == "stopped" and halted["by"] == "cells_moved"
+    assert "moved while automatic gating ran" in halted["reason"]
+
+
 def test_a_rollback_undoes_every_write_newest_first(tmp_path):
     from plexora.plugins.gating.server import model
 

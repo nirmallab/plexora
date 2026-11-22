@@ -62,7 +62,8 @@ def test_a_panel_missing_a_lineage_of_a_group_says_so():
     whole = context.build(["CD3", "CD4", "CD8", "CD56", "CD16", "NKp46", "TIGIT"])
     assert "subset_any_missing" not in whole["entries"]["TIGIT"]
     part = context.build(["CD3", "TIGIT"])
-    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD4", "CD8", "CD56", "NKp46"]
+    # Named by lineage: NK cells are missing once, not as CD56 and NKp46.
+    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["cd4_t", "cd8_t", "nk"]
     assert {(p["marker"], p["relation"]) for p in part["entries"]["TIGIT"]["partners"]
             if p["relation"] == "subset_any"} == {("CD3", "subset_any")}
 
@@ -523,3 +524,144 @@ def session_call(session):
     from types import SimpleNamespace
 
     return SimpleNamespace(session=session)
+
+
+def test_a_broad_lineage_marker_is_shown_the_lineages_beneath_it():
+    """CD3 and PanCK are no other marker's subset, so without CD45 on the panel
+    their expected tile was black. The lineage markers that declare themselves
+    inside one (CD8 a subset of CD3, CD4 read beneath it; ECAD beside PanCK)
+    are where its positives are: CD3 gets "CD4 or CD8" as one tile, PanCK gets
+    ECAD. A state beneath it (FOXP3) is never one: only some cells carry it.
+    A marker with an expected partner of its own keeps it."""
+    from plexora.plugins.gating.server.autogate.partners import partner_plan
+
+    entries = _entries(
+        CD4=[("CD3", "coexpressed", "moderate"), ("CD8", "exclusive", "moderate")],
+        CD8=[("CD3", "subset", "high"), ("CD4", "exclusive", "moderate")],
+        CD3=[("PanCK", "exclusive", "high")],
+        PanCK=[("CD3", "exclusive", "high")],
+        ECAD=[("PanCK", "coexpressed", "moderate")],
+        FOXP3=[("CD4", "subset", "moderate"), ("CD3", "subset", "moderate")],
+        CD45=[])
+    entries["FOXP3"]["role"] = "state"
+    present = {"CD3", "CD4", "CD8", "PanCK", "ECAD", "FOXP3"}
+
+    def co(marker, panel=present):
+        return next(p for p in partner_plan(entries, marker, panel - {marker}, {}, 1)
+                    if p["kind"] == "co")
+
+    cd3 = co("CD3")
+    assert cd3["relation"] == "contains" and set(cd3["members"]) == {"CD4", "CD8"}
+    assert cd3["marker"] in ("CD4 or CD8", "CD8 or CD4")
+    panck = co("PanCK")
+    assert panck == {**panck, "marker": "ECAD", "relation": "contains"} and "members" not in panck
+    # A gated child comes first.
+    gated_first = next(p for p in partner_plan(entries, "CD3", present - {"CD3"}, {}, 1,
+                                               gated={"CD4"}) if p["kind"] == "co")
+    assert gated_first["members"][0] == "CD4"
+    # Its own expected partner wins: with CD45 stated above CD3, nothing changes.
+    entries["CD3"]["partners"].append({"marker": "CD45", "relation": "subset", "confidence": "high"})
+    assert co("CD3", present | {"CD45"})["marker"] == "CD45"
+    # Only states beneath it: still none.
+    alone = {k: entries[k] for k in ("CD3", "FOXP3")}
+    assert not [p for p in partner_plan(alone, "CD3", {"FOXP3"}, {}, 1) if p["kind"] == "co"]
+    # Only subsets beneath it, none coexpressed: most of its cells lack them.
+    myeloid = _entries(CD11b=[], CD66b=[("CD11b", "subset", "moderate")])
+    assert not [p for p in partner_plan(myeloid, "CD11b", {"CD66b"}, {}, 1) if p["kind"] == "co"]
+    # A marker that is no lineage (HLA-ABC on every cell) never gets one.
+    every = _entries(HLAA=[], CD31=[("HLAA", "subset", "low")], ECAD=[("HLAA", "coexpressed", "low")])
+    every["HLAA"]["role"] = "state"
+    assert not [p for p in partner_plan(every, "HLAA", {"CD31", "ECAD"}, {}, 1) if p["kind"] == "co"]
+
+
+def test_a_family_carrier_is_marked_by_any_of_its_anchors():
+    """A group read through families (the vocabulary's partners carry the
+    family as `lineage`) is complete when each family has one anchor on the
+    panel; a family with none is what is missing, named once."""
+    from plexora.plugins.gating.server.autogate import context
+
+    def entry_with(partners):
+        real = context.vocabulary.load
+        def fake():
+            out = real()
+            entries = dict(out["entries"])
+            entries["CD34"] = {**entries.get("CD34", {"canonical": "CD34", "role": "lineage_other"}),
+                               "partners": partners}
+            return {**out, "entries": entries}
+        return fake
+
+    partners = [{"marker": "CD31", "relation": "subset_any", "confidence": "moderate",
+                 "lineage": "endothelial"},
+                {"marker": "ERG", "relation": "subset_any", "confidence": "moderate",
+                 "lineage": "endothelial"},
+                {"marker": "Vimentin", "relation": "subset_any", "confidence": "moderate",
+                 "lineage": "fibroblast"},
+                {"marker": "FAP", "relation": "subset_any", "confidence": "moderate",
+                 "lineage": "fibroblast"}]
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(context.vocabulary, "load", entry_with(partners))
+        both = context._entry_from_vocabulary("CD34", "CD34", {"CD31": ["CD31"], "Vimentin": ["VIM"]})
+        assert "subset_any_missing" not in both
+        assert {p["marker"] for p in both["partners"]} == {"CD31", "VIM"}
+        one = context._entry_from_vocabulary("CD34", "CD34", {"CD31": ["CD31"]})
+        assert one["subset_any_missing"] == ["fibroblast"]
+    finally:
+        mp.undo()
+
+
+def test_a_lineage_the_marker_anchors_itself_is_marked_by_its_own_channel():
+    """CD21 is on B cells or follicular dendritic cells, and CD21 is itself an
+    anchor of the FDC family: wherever CD21 is on a panel, that lineage is
+    marked, so a panel with CD20 and CD19 completes the group."""
+    from plexora.plugins.gating.server.autogate import context
+
+    real = context.vocabulary.load
+
+    def fake():
+        out = real()
+        entries = dict(out["entries"])
+        entries["CD21"] = {"canonical": "CD21", "role": "lineage_other", "carries_own": ["fdc"],
+                           "partners": [
+                               {"marker": "CD20", "relation": "subset_any", "confidence": "moderate",
+                                "lineage": "b_cell"},
+                               {"marker": "CD19", "relation": "subset_any", "confidence": "moderate",
+                                "lineage": "b_cell"},
+                               {"marker": "CD23", "relation": "subset_any", "confidence": "moderate",
+                                "lineage": "fdc"}]}
+        return {**out, "entries": entries}
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(context.vocabulary, "load", fake)
+        entry = context._entry_from_vocabulary("CD21", "CD21", {"CD20": ["CD20"], "CD19": ["CD19"]})
+        assert "subset_any_missing" not in entry
+        assert {p["marker"] for p in entry["partners"]} == {"CD20", "CD19"}
+        entries = dict(fake()["entries"])
+        entries["CD21"]["carries_own"] = []
+        mp.setattr(context.vocabulary, "load", lambda: {**real(), "entries": entries})
+        assert context._entry_from_vocabulary("CD21", "CD21", {"CD20": ["CD20"]})[
+            "subset_any_missing"] == ["fdc"]
+    finally:
+        mp.undo()
+
+
+def test_a_review_under_another_graph_is_asked_again(monkeypatch):
+    """A finished review read the graph that shipped then; a newer graph's
+    relations were never put to it, so it no longer counts."""
+    from plexora.plugins.gating.server.autogate import context
+
+    monkeypatch.setattr(context.vocabulary, "version", lambda: "2026-11-21.4.aa+learned.x")
+    ctx = {}
+    context.store_review_draw(ctx, None, 0, {}, ["CD3"])
+    review = context.review_for(ctx, None)
+    review["done"] = True
+    ctx["reviewed"][context.proposal_key(None)] = review
+    assert context.review_done(ctx, None, ["CD3"])
+    # A person's confirmation moves only the learned part: still done.
+    monkeypatch.setattr(context.vocabulary, "version", lambda: "2026-11-21.4.aa+learned.y")
+    assert context.review_done(ctx, None, ["CD3"])
+    monkeypatch.setattr(context.vocabulary, "version", lambda: "2026-11-21.5.bb+learned.y")
+    assert not context.review_done(ctx, None, ["CD3"])
