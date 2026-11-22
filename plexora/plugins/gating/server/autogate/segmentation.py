@@ -38,6 +38,12 @@ TEXT = ("this image's cell outlines are approximate ({why}): read which cell a s
         "other nucleus inside it, is this cell's own, however far it reaches past the "
         "outline; light only along an edge shared with a brighter neighbour is still the "
         "neighbour's")
+#: The note for a marker whose looks do not read past the outline
+#: (`packets.reaches`: a packed epithelium's membrane, a reliable lineage):
+#: the outlines are approximate, ownership is still read at the outline.
+SHORT = ("this image's cell outlines are approximate ({why}): read which cell a stain "
+         "belongs to by its nucleus; light only along an edge shared with a brighter "
+         "neighbour is the neighbour's")
 
 
 def _platform(text) -> str | None:
@@ -101,4 +107,5 @@ def note(signals) -> dict | None:
             parts.append(f"the mask file names {s['platform']}: {s['value']}")
         else:
             parts.append(f"the table's {s['signal']} is {s['value']}")
-    return {"note": TEXT.format(why="; ".join(parts)), "signals": signals}
+    why = "; ".join(parts)
+    return {"note": TEXT.format(why=why), "short": SHORT.format(why=why), "signals": signals}
