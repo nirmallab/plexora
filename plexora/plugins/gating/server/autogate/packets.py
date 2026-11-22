@@ -70,12 +70,6 @@ READING_GUIDE = {
              "panel brightens a dim cell's own stain on purpose, and a marker several cell "
              "types carry can be far dimmer on some (CD4 on monocytes and macrophages): "
              "their faint own stain is `own_stain`. Plexora places the gate from the words"),
-    "rows_reach": ("this marker's cells often reach past their outline, and some carry it "
-                   "far dimmer than others (`context.lineage`): a stain body the outline "
-                   "overlaps or touches with no other nucleus inside it is the cell's own -- the "
-                   "outline approximates the cell and is often smaller than it -- and dim stain "
-                   "inside the outline clearly above the faint floor of the unstained cells "
-                   "beside it is `own_stain`"),
     "collage_t2": ("each cell is two panels side by side, blue nuclei and the marker in "
                    "yellow. Left, morphology: the marker windowed on this cell's own "
                    "brightest pixels (a cell with no stain stays dark; a brighter neighbour "
@@ -161,16 +155,6 @@ READING_GUIDE = {
               "macrophages): a faint stain that is the cell's own is `own_stain`, judged "
               "against the unstained cells, not the brightest. Say `uncertain` rather than "
               "guess. Plexora chooses the gate from the words"),
-    "panel_reach": ("this marker's cells often reach past their outline, and some carry "
-                    "it far dimmer than others (`context.lineage`). The outline is the "
-                    "segmentation's approximation of the cell, drawn from the nucleus outward, "
-                    "and is often smaller than the cell -- a mast cell or a macrophage reaches "
-                    "past it: a stain body next to the nucleus that the outline overlaps or "
-                    "touches, with no other nucleus inside it, is this cell's own, not a "
-                    "neighbour's. Dim stain inside the outline clearly above the faint floor "
-                    "the unstained cells beside it show is `own_stain`, however dim; dim "
-                    "populations count. Say `uncertain` only when the picture cannot say, not "
-                    "because the stain is dim or the outline misses part of the cell"),
     "panel_plots": ("the second picture, beside the cells, is context for them. Left, the "
                     "marker's distribution over the cells the gate is estimated on: the range "
                     "the numbered cells were drawn from shaded, the candidate gates dashed. "
@@ -299,10 +283,10 @@ SIGNIFICANT = 4
 ENGINE_ONLY = {
     "v1": {"entries": ("rows", "collage_t2", "collage_t3", "collage_t2m",
                             "collage_flips_m", "collage_flips", "sheet_candidates",
-                            "within_partner", "requests", "rows_reach"),
+                            "within_partner", "requests"),
                 "kinds": ("t2_confirm", "t3_biological", "t4_candidates")},
     "v3": {"entries": ("panel", "panel_plots", "panel_fibrous", "collage_panel",
-                       "collage_panel_m", "panel_reach"),
+                       "collage_panel_m"),
                    "kinds": ("cell_panel",)},
 }
 
@@ -945,42 +929,15 @@ SLOT_WORDS = {"co": "the marker alone, outlined", "anti": "a wider field"}
 SLOT_GUIDE = {"co": "slot_marker_alone", "anti": "slot_wider_field"}
 
 
-#: Marker roles whose cells often reach past an approximate outline and
-#: carry the marker far dimmer on some carriers (cKit on mast cells, IBA1 and
-#: CD163 on macrophages, CD4 on monocytes): their looks read a stain body the
-#: outline overlaps, and dim stain above the unstained floor, as the cell's
-#: own (`panel_reach`, `rows_reach`). Not for a packed epithelium's membrane
-#: or a reliable lineage (E-cadherin, panCK, CD3, CD31: lsp35766_p193
-#: 2026-11-22, where those words read a neighbour's membrane as own and
-#: lowered E-cadherin's gate by 0.4) -- the graph's `role` says which.
-REACH_ROLES = ("lineage_other",)
-
-
-def reaches(unit) -> bool:
-    """Whether `unit`'s marker reads ownership past its outline and counts
-    dim own stain (`REACH_ROLES`, by the panel context's `role`)."""
-    return (unit.get("context") or {}).get("role") in REACH_ROLES
-
-
-def reach_guide(unit, key) -> list:
-    """[`key`] when the marker's looks read past the outline (`reaches`)."""
-    return [key] if reaches(unit) else []
-
-
-def segmentation_words(engine, project, unit=None) -> dict:
+def segmentation_words(engine, project) -> dict:
     """{"segmentation": note} for a look's evidence when the image's cell
-    outlines are approximate (`Engine.segmentation_note`), else {}. The
-    note's ownership reading (a stain body the outline overlaps is the
-    cell's own) only for a marker that reads past its outline (`reaches`)."""
+    outlines are approximate (`Engine.segmentation_note`), else {}."""
     finder = getattr(engine, "segmentation_note", None)
     try:
         found = finder(project) if finder is not None else None
     except Exception:
         found = None
-    if not found:
-        return {}
-    reach = unit is None or reaches(unit)
-    return {"segmentation": found["note"] if reach else found.get("short") or found["note"]}
+    return {"segmentation": found["note"]} if found else {}
 
 
 def partner_words(partners) -> dict:
@@ -1054,8 +1011,7 @@ def t2_confirm(engine, units):
                     "word per row, and the pattern of the stained cells.")
     within = within_eligible(partners) if not condition else []
     guide = ["rows", "collage_t2m" if layout else "collage_t2", "sheet", "partners",
-             "requests"] + (["within_partner"] if within else []) + partner_guide(partner_panels) \
-        + reach_guide(unit, "rows_reach")
+             "requests"] + (["within_partner"] if within else []) + partner_guide(partner_panels)
     packet = {
         "question": question,
         "evidence": {
@@ -1066,7 +1022,7 @@ def t2_confirm(engine, units):
             "within_allowed": within,
             "profile": {"class": (unit.get("summary") or {}).get("class")},
             "rows": {r["key"]: r["label"] for r in rows},
-            **multiview, **segmentation_words(engine, unit["project"], unit),
+            **multiview, **segmentation_words(engine, unit["project"]),
             "context": {"compartment": compartment}, "flags": _flags(unit),
             **_sheet_evidence(context_sheet),
             **_reading(engine, guide + _sheet_keys(context_sheet, unit)),
@@ -1133,7 +1089,7 @@ def t3_biological(engine, units):
     within = within_eligible(partners) if not condition else []
     guide = ["rows"] + (["collage_t2m"] if layout else ["collage_t2", "collage_t3"]) + \
         ["sheet", "partners"] + (["within_partner"] if within else []) + \
-        partner_guide(partner_panels) + reach_guide(unit, "rows_reach")
+        partner_guide(partner_panels)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: for each "
@@ -1152,7 +1108,7 @@ def t3_biological(engine, units):
             "rows": {r["key"]: r["label"] for r in rows},
             "context": {"compartment": compartment},
             "references": [r["marker"] for r in refs],
-            **multiview, **segmentation_words(engine, unit["project"], unit),
+            **multiview, **segmentation_words(engine, unit["project"]),
             **_sheet_evidence(second),
             **_reading(engine, guide + _sheet_keys(second, unit)),
         },
@@ -1267,7 +1223,6 @@ def t4_candidates(engine, units):
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
     t4_guide = ["rows", "collage_t2m", "collage_flips_m", "sheet_candidates", "sheet",
                 "partners"]
-    t4_guide += reach_guide(unit, "rows_reach")
     if layout == "split":
         t4_guide[1:3] = ["collage_split", "collage_flips_split"]
     elif not layout:
@@ -1297,7 +1252,7 @@ def t4_candidates(engine, units):
         "evidence": {"partners": _partner_line(numbers),
                      "marker": unit["marker"], "project": ds.name, "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
-                     **multiview, **segmentation_words(engine, unit["project"], unit),
+                     **multiview, **segmentation_words(engine, unit["project"]),
                      **({"condition": _condition_brief(unit)} if condition else {}),
                      "round": int(unit.get("rounds", 0)) + 1,
                      **_sheet_evidence(context_sheet),

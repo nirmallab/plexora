@@ -12,12 +12,11 @@
   used".)
 - No partner slot is drawn black: an empty expected slot shows the marker
   alone, outlined; an empty not-expected one a wider field (`collage.EMPTY_SLOT`).
-- Ownership is read by the nucleus when outlines are approximate, dim own
-  stain counts, and a look is told when the outlines came from another
-  platform or its looks keep naming segmentation (`segmentation.note`) --
-  past the outline and dim only for a marker whose cells reach past it
-  (`packets.REACH_ROLES`), after the rerun read E-cadherin's neighbours as
-  own. A review close writes the likeliest candidate.
+- A look is told when the outlines came from another
+  platform or its looks keep naming segmentation (`segmentation.note`).
+  Reading past the outline and counting dim stain was tried and reverted:
+  ownership is read at the outline. A review close writes the likeliest
+  candidate.
 """
 
 from __future__ import annotations
@@ -416,59 +415,28 @@ def test_a_look_names_the_slots_with_no_partner_and_reads_them():
 # -- 4. ownership under approximate outlines ---------------------------------------------------
 
 
-def test_only_markers_that_reach_past_their_outline_are_read_past_it():
-    """The owner's rerun of lsp35766_p193_2 (2026-11-22): told for every
-    marker that a stain body the outline overlaps is the cell's own and that
-    dim stain counts, the readers called E-cadherin's neighbour membranes own
-    (gate 5.37 -> 4.94, 44 % -> 63 % positive) and stopped calling panCK's
-    unread stain uncertain, so it never reached the whole-image check. Those
-    words now go only to a marker whose cells reach past the outline and
-    carry it dimmer on some -- the graph's `lineage_other` role (cKit, IBA1,
-    CD4) -- in its own guide entry; the general entries and the answer form
-    read at the outline again."""
-    from plexora.plugins.gating.server.autogate import answers, packets
+def test_ownership_is_read_at_the_outline_for_every_marker():
+    """The owner's rerun of lsp35766_p193_2 (2026-11-22): told that a stain
+    body the outline overlaps is the cell's own and that dim stain counts,
+    the readers read E-cadherin's neighbour membranes as own (gate 5.37 ->
+    4.94) and stopped calling panCK's unread stain uncertain; scoped to the
+    graph's other-lineage role, the words still reached CDX2 and CD8a. Only
+    cKit was helped. Reverted: no guide entry, answer form or segmentation
+    note reads past the outline."""
+    from plexora.plugins.gating.server.autogate import answers, packets, segmentation
 
-    guide = packets.READING_GUIDE
-    for key in ("panel", "rows"):
-        assert "overlaps or touches" not in guide[key] and "however dim" not in guide[key]
-    assert "Say `uncertain` rather than guess" in guide["panel"]
-    assert "light only on the side facing one brighter neighbour" in guide["panel"]
-    reach = guide["panel_reach"]
-    assert "approximation of the cell" in reach and "overlaps or touches" in reach
-    assert "dim populations count" in reach and "faint floor" in reach
-    assert "overlaps or touches" in guide["rows_reach"]
+    for key, text in packets.READING_GUIDE.items():
+        assert "however dim" not in text and "overlaps or touches" not in text, key
+    assert "Say `uncertain` rather than guess" in packets.READING_GUIDE["panel"]
+    assert "light only on the side facing one brighter neighbour" in \
+        packets.READING_GUIDE["panel"]
     described = answers.CellPanelAnswer.model_fields["cells"].description
     assert "overlaps or touches" not in described and "however dim" not in described
-    assert "panel_reach" in packets.ENGINE_ONLY["v3"]["entries"]
-    assert "rows_reach" in packets.ENGINE_ONLY["v1"]["entries"]
-
-    def unit(role):
-        return {"marker": "m", "context": {"role": role}}
-
-    assert packets.reach_guide(unit("lineage_other"), "panel_reach") == ["panel_reach"]
-    for role in ("lineage_reliable", "tumour_stromal", "state", None):
-        assert packets.reach_guide(unit(role), "panel_reach") == []
-    assert packets.reach_guide({"marker": "m"}, "panel_reach") == []
-
-
-def test_the_segmentation_note_reads_past_the_outline_only_where_the_guide_does():
-    from plexora.plugins.gating.server.autogate import packets, segmentation
-
-    found = segmentation.note([{"signal": "mask_file", "platform": "xenium",
-                                "value": "s04_xenium_cells.ome.tif"}])
-
-    class _Engine:
-        def segmentation_note(self, project):
-            return found
-
-    cKit = {"marker": "cKit", "context": {"role": "lineage_other"}}
-    ecad = {"marker": "Ecadherin", "context": {"role": "tumour_stromal"}}
-    long_note = packets.segmentation_words(_Engine(), "p", cKit)["segmentation"]
-    short = packets.segmentation_words(_Engine(), "p", ecad)["segmentation"]
-    assert "however far it reaches past the outline" in long_note
-    assert short.startswith("this image's cell outlines are approximate (the mask file names "
-                            "xenium") and "by its nucleus" in short
-    assert "overlaps" not in short and "brighter neighbour" in short
+    note = segmentation.note([{"signal": "mask_file", "platform": "xenium",
+                               "value": "s04_xenium_cells.ome.tif"}])["note"]
+    assert note.startswith("this image's cell outlines are approximate (the mask file names "
+                           "xenium") and "by its nucleus" in note
+    assert "overlaps" not in note and "past the outline" not in note
 
 
 def test_a_review_close_writes_the_likeliest_candidate_not_the_one_nearest_the_start():

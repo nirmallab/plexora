@@ -482,7 +482,7 @@ def packet(engine, units):
     numbers = [c["number"] for c in arranged]
     multiview = packets.partner_words(partners) if partners else {}
     guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
-        packets.partner_guide(partners) + packets.reach_guide(unit, "panel_reach")
+        packets.partner_guide(partners)
     fibrous = ((engine.panel_for(unit["project"]).get("entries") or {})
                .get(unit["marker"]) or {}).get("morphology") == "fibrous"
     if fibrous:
@@ -508,7 +508,7 @@ def packet(engine, units):
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
-                     **packets.segmentation_words(engine, unit["project"], unit),
+                     **packets.segmentation_words(engine, unit["project"]),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -609,7 +609,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
     numbers = [c["number"] for c in arranged]
     multiview = packets.partner_words(partners) if partners else {}
     guide = ["panel", "collage_panel_m" if partners else "collage_panel"] + \
-        packets.partner_guide(partners) + packets.reach_guide(unit, "panel_reach")
+        packets.partner_guide(partners)
     if ((engine.panel_for(project).get("entries") or {}).get(unit["marker"]) or {}).get(
             "morphology") == "fibrous":
         guide.append("panel_fibrous")
@@ -619,7 +619,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
                      "cell."),
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
-                     **packets.segmentation_words(engine, project, unit),
+                     **packets.segmentation_words(engine, project),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
