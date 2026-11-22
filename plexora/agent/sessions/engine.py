@@ -656,19 +656,22 @@ class BaseEngine:
             return packet, [(d, f) for d, f, _s in images], "packet"
 
     def _stamp_task(self, packet, kind, units):
-        """The packet's AI task, and the model the user's file maps it to
-        (`plexora/ai/models_config.py`) -- after the memo key, so neither
-        changes which answers replay."""
+        """The packet's AI task, and the model and effort the user's file
+        maps it to (`plexora/ai/models_config.py`) -- after the memo key, so
+        none of them changes which answers replay."""
         from plexora.ai import models_config
 
         task = self.task_of(kind, units)
         if task:
             packet["task"] = task
             model = models_config.model_for(task)
+            effort = models_config.effort_for(task)
             if model:
                 packet["model"] = model
+            if effort:
+                packet["effort"] = effort
             self.record.setdefault("models", {})[packet["packet_id"]] = {
-                "task": task, "asked": model}
+                "task": task, "asked": model, **({"effort": effort} if effort else {})}
 
     def answered_by(self, packet_id, model):
         """Record the model the answering agent says it runs on (advisory:

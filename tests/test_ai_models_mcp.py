@@ -77,6 +77,48 @@ def test_a_bad_file_is_reported_never_fatal_and_an_edit_applies_at_once(models_f
     assert models_config.model_for("qc.blur") == "model-d"
 
 
+def test_a_line_may_set_the_effort_a_worker_runs_at(models_file, tmp_path, monkeypatch):
+    from plexora import paths
+
+    models_file("gating:\n  default: {model: model-a, effort: low}\n"
+                "  threshold_evaluation: {model: model-b, effort: HIGH}\n"
+                "  final_validation: {model: model-b, effort: high}\n"
+                "  image_inspection: {model: model-a, effort: high}\n"
+                "  classifier_check: model-b\n"
+                "qc:\n  blur: {effort: medium}\n")
+    assert not models_config.load()["problems"]
+    assert models_config.effort_for("gating.planning") == "low"            # the module default
+    assert models_config.effort_for("gating.threshold_evaluation") == "high"
+    assert models_config.effort_for("gating.classifier_check") == "low"    # model alone: default effort
+    assert models_config.model_for("qc.blur") is None and models_config.effort_for("qc.blur") == "medium"
+    assert models_config.mapped("qc")
+    groups = models_config.groups("gating")
+    # One worker per model and effort: Opus-at-high and Opus-at-low are two workers.
+    assert [(g["model"], g.get("effort")) for g in groups] == [
+        ("model-a", "low"), ("model-a", "high"), ("model-b", "high"), ("model-b", "low")]
+    assert groups[2]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
+    monkeypatch.setattr(paths, "settings_path", lambda: tmp_path / "settings.json")
+    block = delegation.block("gating_worker", session_id="gs_x")
+    assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "low"]
+    assert "`effort`" in block["how"]
+    shown = []
+    setup.models_command("show", out=shown.append)
+    assert "  threshold_evaluation: model-b, effort high" in shown
+    assert models_config.describe()["efforts"]["gating"]["gating.planning"] == "low"
+
+
+def test_a_bad_effort_is_a_problem_and_the_line_is_dropped(models_file):
+    models_file("gating:\n  planning: {model: model-a, effort: extreme}\n"
+                "  final_validation: {model: model-b, speed: fast}\n"
+                "  threshold_evaluation: {model: [1], effort: high}\n")
+    problems = models_config.load()["problems"]
+    assert len(problems) == 3 and "effort is one of" in problems[0]
+    for task in ("planning", "final_validation", "threshold_evaluation"):
+        assert models_config.model_for(f"gating.{task}") is None
+        assert models_config.effort_for(f"gating.{task}") is None
+    assert not models_config.mapped("gating")
+
+
 def test_no_file_means_the_agent_chooses(tmp_path, monkeypatch):
     monkeypatch.setenv(models_config.ENV_PATH, str(tmp_path / "absent.yaml"))
     info = models_config.describe()
@@ -204,8 +246,9 @@ def drive_scoped(session_id, agent, limit=400, answer_scope=True):
 def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
         tmp_path, scene, models_file):  # noqa: F811
     registry.discover(["gating"])
-    models_file("gating:\n  default: looks-model\n  threshold_evaluation: judge-model\n"
-                "  final_validation: judge-model\n")
+    models_file("gating:\n  default: looks-model\n"
+                "  threshold_evaluation: {model: judge-model, effort: high}\n"
+                "  final_validation: {model: judge-model, effort: high}\n")
     infos = {name: scene(tmp_path, name) for name in ("gser", "gscope")}
     session = AgentSession()
     serial_id = start(session, "gser")
@@ -228,6 +271,11 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     assert set(models["gating.threshold_evaluation"]["answered_by"]) == {"judges-model"}
     assert set(models["gating.image_inspection"]["answered_by"]) == {"looks-model"}
     assert all(state in schemas.TERMINAL_STATES for state, _f, _c in scoped.values())
+    # Each packet carries the effort its task runs at; the looks have none (the agent's own).
+    store = engines.store()
+    for packet_id, entry in store.load(scoped_id)["models"].items():
+        packet, _images = store.read_packet(scoped_id, packet_id)
+        assert packet.get("effort") == ("high" if entry["task"] in JUDGES else None), entry
 
 
 @pytest.mark.pro
@@ -263,8 +311,8 @@ def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
     assert record["models"]
     for packet_id, entry in record["models"].items():
         packet, _images = store.read_packet(sid, packet_id)
-        assert packet["task"] == entry["task"] and "model" not in packet
-        assert entry["asked"] is None
+        assert packet["task"] == entry["task"] and "model" not in packet and "effort" not in packet
+        assert entry["asked"] is None and "effort" not in entry
     status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert all(set(row["answered_by"]) <= {"unstated"} for row in status["models"].values())
 

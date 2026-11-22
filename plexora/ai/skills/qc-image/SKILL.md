@@ -109,7 +109,7 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    A start (or `qc_session_status` `detail: "full"`) with `delegate` means the
    user's models file assigns QC tasks to models: do not answer packets
    yourself. Launch the entry of `delegate.workers` whose `launch` is `now`,
-   on its `model`, with its `brief` as the whole prompt and only
+   on its `model` at its `effort` (when it has one), with its `brief` as the whole prompt and only
    `delegate.tools`, in the foreground, and wait for its lines (no wake-ups,
    messages or status polls while it runs). One that returns `other_tasks <task>`: launch the worker
    whose `tasks` hold that task (an `on_demand` one only then); one that

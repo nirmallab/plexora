@@ -254,6 +254,7 @@ def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context
         reader = f"{spec['module']}-{n}"
         chosen = group["model"] or model
         workers.append({"model": chosen, **({} if chosen else {"pick": TIERS[tier]}),
+                        **({"effort": group["effort"]} if group.get("effort") else {}),
                         "tasks": group["tasks"], "reader": reader,
                         "launch": LAUNCH[0] if n - 1 == starts else LAUNCH[1],
                         "brief": brief(role, tasks=group["tasks"], reader=reader, **context)})
@@ -264,12 +265,15 @@ def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context
     out["models_file"] = models_config.load()["path"]
     out["how"] = ("the user's models file assigns these tasks to models: launch the worker whose "
                   "`launch` is `now` -- a fresh conversation with its `brief` as the whole prompt, "
-                  "on its `model` (or the model `pick` describes), given only `tools` -- in the "
+                  "on its `model` (or the model `pick` describes) at its `effort` when it has one "
+                  "(the reasoning effort; Claude Code: the Agent tool's `effort`), given only "
+                  "`tools` -- in the "
                   f"foreground: {WAIT} A worker that returns `other_tasks <task>` stopped "
                   "because what is ready is another worker's: launch the worker whose `tasks` hold "
                   "it (an `on_demand` one is launched only then). Two may run at once when each "
                   "has work. Relaunch until the work is done. A client that cannot choose a "
-                  "worker's model answers itself and says which tasks ran on another model")
+                  "worker's model or effort answers itself and says which tasks ran on another "
+                  "model or effort")
     return out
 
 
