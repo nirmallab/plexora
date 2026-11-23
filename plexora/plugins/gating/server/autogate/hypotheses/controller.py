@@ -216,6 +216,32 @@ def crowding(state, params) -> tuple:
     return "crowded", info["sizes"]
 
 
+def read_other_share(state, s) -> float:
+    """The share of the looks' cells in the window read `uncertain` or
+    `artifact`, as their readers read them: a look read again (VERSION 9,
+    `reading.reads`) counts each reading, not the labels its readings agree
+    on -- those are `uncertain` wherever two readings differ, and would
+    close a dim stain as unreadable that every reader saw stained cells of
+    (lsp35766_p193_2, 2026-11-23: CD11c failed in two runs of three, each
+    reading calling one or two cells stained, never the same one). Without
+    a look read again, the support's own `other_share`."""
+    looks = _valid(state)
+    if not any((o.get("reading") or {}).get("reads") for o in looks):
+        return s["other_share"] or 0.0
+    bounds, _ = window(state)
+    labelled = other = 0
+    for obs in looks:
+        cells = [c for c in obs.get("cells") or () if not c.get("sentinel")
+                 and evidence.interval_of(float(c["value"]), bounds) is not None]
+        readings = [r["labels"] for r in (obs.get("reading") or {}).get("reads") or ()] or [None]
+        for labels in readings:
+            for c in cells:
+                label = c.get("label") if labels is None else labels[c["number"]]
+                labelled += 1
+                other += label not in (evidence.OWN, evidence.NOT_OWN)
+    return other / labelled if labelled else 0.0
+
+
 def support(state, to_fit, params) -> dict | None:
     valid = _valid(state)
     if not valid:
@@ -663,7 +689,7 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
         float(params.get("resolve_p", 0.8)) - 1e-12 if s.get("posterior") else True
     if s["labelled"] >= params["min_labelled"] \
             and valid >= int(params.get("unreadable_looks") or 1) \
-            and (s["other_share"] or 0) > params["max_other_share"] and undecided:
+            and read_other_share(state, s) > params["max_other_share"] and undecided:
         if params.get("uncertain_state") and not state.get("rare"):
             alone = isolated(state, to_fit, params)
             if alone is not None:

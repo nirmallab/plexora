@@ -1513,3 +1513,27 @@ def test_by_default_only_a_contested_look_is_read_again_and_every_look_says_so(t
             # farther apart than the tolerance on the plateau.
             assert ("reads" in obs["reading"]) == bool(trigger["contested"] and trigger["valid"])
     assert seen and issued
+
+
+def test_readability_is_judged_per_reading_not_on_the_labels_two_readings_agree_on():
+    from plexora.plugins.gating.server.autogate import replan
+
+    # Two readings of one look, each calling a different cell stained: the
+    # labels they agree on hold no stained cell and two uncertain ones, but
+    # each reader saw one stained cell in four.
+    cells = [{"number": str(i), "value": 2.5, "label": label} for i, label in
+             enumerate(["uncertain", "uncertain", "not_own_stain", "not_own_stain"], start=1)]
+    reads = [{"labels": {"1": "own_stain", "2": "not_own_stain", "3": "not_own_stain",
+                         "4": "not_own_stain"}},
+             {"labels": {"1": "not_own_stain", "2": "own_stain", "3": "not_own_stain",
+                         "4": "not_own_stain"}}]
+    obs = {"cells": cells, "valid": True, "reading": {"reads": reads}}
+    unit = {"hypotheses": {"observations": [obs]}}
+    reads_seen = replan.reads_of(unit)
+    assert (reads_seen["cells"], reads_seen["own"], reads_seen["uncertain"]) == (8, 2, 0)
+    state = _state()
+    state["observations"] = [obs]
+    assert controller.read_other_share(state, {"other_share": 0.5}) == 0.0
+    # A look read once: the support's own share, as before.
+    state["observations"] = [{"cells": cells, "valid": True}]
+    assert controller.read_other_share(state, {"other_share": 0.5}) == 0.5
