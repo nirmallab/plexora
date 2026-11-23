@@ -56,12 +56,15 @@ def test_a_task_line_wins_over_its_module_default_and_a_blank_is_the_agents(mode
     # The note interpreter is the harness's own call, never a packet: no worker for it.
     assert groups[0] == {"model": "model-a", "tasks": [
         "gating.planning", "gating.partner_review", "gating.marker_naming", "gating.display",
-        "gating.image_inspection", "gating.classifier_check", "gating.final_validation"]}
+        "gating.image_inspection", "gating.stain_reader", "gating.classifier_check",
+        "gating.final_validation"]}
     assert models_config.model_for("gating.biological_context") == "model-a"
     # A check's or a panel's later readers are workers of their own, on the
     # model of the task they read again.
-    assert groups[1:6] == [{"model": "model-a", "tasks": ["gating.image_reader_2"]},
+    assert groups[1:8] == [{"model": "model-a", "tasks": ["gating.image_reader_2"]},
                            {"model": "model-a", "tasks": ["gating.image_reader_3"]},
+                           {"model": "model-a", "tasks": ["gating.stain_reader_2"]},
+                           {"model": "model-a", "tasks": ["gating.stain_reader_3"]},
                            {"model": "model-b", "tasks": ["gating.threshold_evaluation"]},
                            {"model": "model-b", "tasks": ["gating.panel_reader_2"]},
                            {"model": "model-b", "tasks": ["gating.panel_reader_3"]}]
@@ -103,18 +106,22 @@ def test_a_line_may_set_the_effort_a_worker_runs_at(models_file, tmp_path, monke
     # A second and a third panel reader are workers of their own on the
     # first reader's model and effort (`Task.reader_of`).
     # A whole-image check's second and third readers follow the image reader.
+    # The stain check's later readers follow its first reader (the module default here).
     assert [(g["model"], g.get("effort")) for g in groups] == [
         ("model-a", "low"), ("model-a", "high"), ("model-a", "high"), ("model-a", "high"),
+        ("model-a", "low"), ("model-a", "low"),
         ("model-b", "high"), ("model-b", "high"), ("model-b", "high"), ("model-b", "low")]
-    assert [g["tasks"] for g in groups[2:4]] == [["gating.image_reader_2"],
-                                                ["gating.image_reader_3"]]
-    assert groups[4]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
-    assert [g["tasks"] for g in groups[5:7]] == [["gating.panel_reader_2"],
+    assert [g["tasks"] for g in groups[2:6]] == [["gating.image_reader_2"],
+                                                ["gating.image_reader_3"],
+                                                ["gating.stain_reader_2"],
+                                                ["gating.stain_reader_3"]]
+    assert groups[6]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
+    assert [g["tasks"] for g in groups[7:9]] == [["gating.panel_reader_2"],
                                                 ["gating.panel_reader_3"]]
     monkeypatch.setattr(paths, "settings_path", lambda: tmp_path / "settings.json")
     block = delegation.block("gating_worker", session_id="gs_x")
-    assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "high", "high",
-                                                           "high", "high", "low"]
+    assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "high", "low",
+                                                           "low", "high", "high", "high", "low"]
     assert "`effort`" in block["how"]
     shown = []
     setup.models_command("show", out=shown.append)
@@ -177,7 +184,10 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     models_file("gating:\n  threshold_evaluation: model-b\n  final_validation: model-b\n")
     block = delegation.block("gating_worker", session_id="gs_x")
     assert "brief" not in block and block["model"] is None
-    first, image_2, image_3, second, reader_2, reader_3 = block["workers"]
+    first, image_2, image_3, stain_2, stain_3, second, reader_2, reader_3 = block["workers"]
+    # The stain check's later readers: one worker each, the first stain reader's model.
+    assert [stain_2["tasks"], stain_3["tasks"]] == [["gating.stain_reader_2"],
+                                                     ["gating.stain_reader_3"]]
     # A whole-image check's later readers: one worker each, the image reader's model.
     assert [image_2["tasks"], image_3["tasks"]] == [["gating.image_reader_2"],
                                                      ["gating.image_reader_3"]]
@@ -186,7 +196,7 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     assert [reader_2["tasks"], reader_3["tasks"]] == [["gating.panel_reader_2"],
                                                        ["gating.panel_reader_3"]]
     assert reader_2["model"] == reader_3["model"] == "model-b"
-    assert len({w["reader"] for w in block["workers"]}) == 6
+    assert len({w["reader"] for w in block["workers"]}) == 8
     assert first["model"] is None and first["pick"] == delegation.TIERS["judgement"]
     assert "gating.image_inspection" in first["tasks"]
     assert second == {**second, "model": "model-b",
@@ -199,6 +209,7 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     assert "first_task" not in first["brief"]
     later = delegation.block("gating_worker", first_task="gating.threshold_evaluation", session_id="gs_x")
     assert [w["launch"] for w in later["workers"]] == ["on_demand", "on_demand", "on_demand",
+                                                       "on_demand", "on_demand",
                                                        "now", "on_demand", "on_demand"]
     assert "`on_demand`" in block["how"]
 
