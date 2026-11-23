@@ -4093,8 +4093,8 @@ deliberately left out and what should be built next.
   and carrying the reference image's gate to the rest; `reference.background`/
   `align_bg` map an image's background onto another's, `classify_group`,
   `batch_split`, and `carry`/`carry_back` a gate into a member and a member's
-  value back onto the scale image's axis, all for engine v4), `groups.py`
-  (engine v4, `docs/internal/GATING_ENGINE_V4.md`: once every image's unit of
+  value back onto the scale image's axis, all for engines v4 and v5), `groups.py`
+  (engines v4 and v5, `docs/internal/GATING_ENGINE_V4.md`: once every image's unit of
   a marker is profiled, `partition` (pure) groups the images whose
   backgrounds align, `build` names each group's scale image and anchors, the
   scale image's unit alone decides the group with looks pooled over the
@@ -4282,14 +4282,16 @@ deliberately left out and what should be built next.
   dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
   are never read. Which steps earned their place is
   `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
-  `hypotheses/` is engine `v3` (first called `candidates`, then `v2`; the
-  default for a project since 2026-10-22, `schemas.DEFAULT_ENGINE`; `v1`,
+  `hypotheses/` is engine `v3` (first called `candidates`, then `v2`; `v1`,
   first called `classic`, is the rows engine, kept as the alternative; `v4`
-  is v3 with a dataset's aligned images gated as groups (`groups.py` above),
-  the default for scope=dataset, `schemas.DEFAULT_ENGINE_BY_SCOPE`;
+  is v3 with a dataset's aligned images gated as groups (`groups.py` above);
+  `v5`, since 2026-11-23 the default for a project and for a dataset
+  (`schemas.DEFAULT_ENGINE`, `schemas.DEFAULT_ENGINE_BY_SCOPE`), is one engine
+  for both scopes: v4's code path, v3 on one image,
+  `tests/test_gating_groups.py::test_v5_on_one_image_is_v3`;
   `schemas.ENGINES`, the earlier names in `schemas.ENGINE_ALIASES` are
-  accepted everywhere, `schemas.panel_engine` is true for v3 and v4 and
-  `schemas.is_v4` for v4 alone, and a record stored without an engine
+  accepted everywhere, `schemas.panel_engine` is true for v3 to v5 and
+  `schemas.group_engine` for v4 and v5, and a record stored without an engine
   resumes as v1; `docs/internal/GATING_ENGINE_V2.md` is v3's architecture
   and where it fails, `docs/internal/bench/CANDIDATES_PLAN.md` pre-registers
   its live bars): a marker that needs a look is decided by blind panels of single
@@ -4410,7 +4412,7 @@ deliberately left out and what should be built next.
   `transitions.strike_display` keeps the rule after two unusable answers.
   `SessionOptions.display_check` (`vision` | `rule` | `off`,
   `schemas.DISPLAY_CHECKS`; left out, `schemas.DISPLAY_CHECK_DEFAULT` by
-  engine: `vision` for v1, `off` for v3 and v4) — `rule` skips the look and keeps the
+  engine: `vision` for v1, `off` for v3 to v5) — `rule` skips the look and keeps the
   calibration's own window, `off` leaves the step out (`DISPLAY_STATES` has
   `off`); session tests that expect a look
   first pass `display_check="rule"`. The task is `gating.display` in
@@ -4950,7 +4952,7 @@ deliberately left out and what should be built next.
   `BASIC_MIN_SCORE` (0.7) or more as automatic, unapproved regions
   (`region_write.AUTOMATIC_BY`) in a `results.BASIC_ORIGIN` result, runs DNA
   retention where it can, and derives the cells' calls; it never writes over
-  another QC result. Gating engines v3 and v4 run it on an image with no QC
+  another QC result. Gating engines v3 to v5 run it on an image with no QC
   (`SessionOptions.basic_qc`, `autogate/bulk._basic_qc`, before calibration).
   An attribution pass gathers each
   object's per-channel evidence; stage 2 re-reads each merged box at the

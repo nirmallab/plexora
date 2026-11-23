@@ -99,7 +99,7 @@ the markers it cannot place in the panel context.
   - `display_setup`: how bright each marker is drawn, once per image (the
     choice outlives the session): per row, the columns where the background
     reads as a faint floor (`background_ok`) and where the row's `pattern`
-    shows with detail (`structure_ok`); code picks. Engines `v3` and `v4` leave it
+    shows with detail (`structure_ok`); code picks. Engines `v3` to `v5` leave it
     out unless `display_check: "vision"` is passed; with `v1`, `"rule"` at
     the start skips it and `"off"` drops it; for brightness alone,
     `contrast_session_start`.
@@ -107,18 +107,20 @@ the markers it cannot place in the panel context.
 ## Options worth knowing
 
 - `qc`: which QC calls leave cells out (gating/qc-cells).
-- `basic_qc`: on with `v3` and `v4`. An image with no QC result gets QC's model-free
+- `basic_qc`: on with `v3` to `v5`. An image with no QC result gets QC's model-free
   checks before it is gated (`run_basic_qc`, no model calls); the start
   output's `basic_qc` note says so. Pass it on to the user, with the advice
   to run the full QC from the QC panel to review what it left out.
 - `reuse_answers`: answers are kept under a hash of each packet (per `agent`)
   and reused by an identical later packet (status `replayed`). Pass false to
   be asked afresh.
-- `engine`: `v3` (the default) decides a marker by blind cell panels choosing
-  among candidate gates (gating/decisions); `v4` (the default for a dataset)
-  does so once per group of aligned images (gating/dataset); `v1` by rows
-  around a gate, only when the user asks. `classic`, `candidates` and `v2`
-  are their earlier names.
+- `engine`: `v5` (the default, for one image and for a dataset) decides a
+  marker by blind cell panels choosing among candidate gates
+  (gating/decisions), and across a dataset once per group of aligned images
+  (gating/dataset). `v3` (one image the same; a dataset from its reference
+  image) and `v4` (the earlier name of `v5` for a dataset) stay selectable; `v1`
+  decides by rows around a gate, only when the user asks. `classic`,
+  `candidates` and `v2` are earlier names.
 
 ## Tools
 

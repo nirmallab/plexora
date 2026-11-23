@@ -246,7 +246,7 @@ def apply_transfer(engine, packet, answer):
 
 def dataset_summary(engine) -> dict:
     """Per marker: each image's drift class, and the strategy they imply.
-    Engine v4: each marker's groups instead (`groups.summary`)."""
+    Engines v4 and v5: each marker's groups instead (`groups.summary`)."""
     ref = engine.record.get("reference_image")
     if engine.record.get("groups"):
         from plexora.plugins.gating.server.autogate import groups
@@ -260,7 +260,8 @@ def dataset_summary(engine) -> dict:
                               "role": (u.get("group") or {}).get("role")}
                              for p in engine.record["images"]
                              for u in [engine.record["units"].get(unit_key(p, marker))] if u]
-        return {"reference_image": ref, "markers": per_marker, "engine": "v4",
+        return {"reference_image": ref, "markers": per_marker,
+                "engine": schemas.engine_name(engine.options["engine"]),
                 "experimental_unit": "image", "n_images": len(engine.record["images"])}
     per_marker = {}
     for marker in engine.record["order"]:
