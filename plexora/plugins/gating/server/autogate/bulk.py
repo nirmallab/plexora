@@ -161,6 +161,21 @@ def fill_unit(unit, prepared):
     })
 
 
+def one_peak_expected(unit, hard) -> bool:
+    """True for a marker whose one peak is a shape a working stain gives: the
+    vocabulary says it is not binary (expression without a positive/negative
+    split: Rb, HLA-ABC, PD-L1), its only reason for a technical check is that
+    one peak (`unimodal`, no hard flag), and QC did not call the channel
+    failed. Such a marker takes the ordinary path, not the stain-failure
+    check, which read one peak as a failed stain: lsp35766_p193_2 Rb, whose
+    top 3.7 % (three in four Ki-67+, the cycling cells) the owner gates at
+    5.11, was called failed by five of six readers; on the ordinary path all
+    three runs accepted 5.11. A stain its looks cannot read still gets the
+    whole-image check (`replan.check_unreadable`)."""
+    return ((unit.get("context") or {}).get("binary") is False and not hard
+            and unit.get("class") == "unimodal" and unit.get("qc_verdict") != "failed")
+
+
 def decide_first(engine, unit):
     """The first decision for a unit whose numbers are recorded. Nothing here
     accepts a gate the pixels have not been shown: a clean split is written
@@ -190,7 +205,7 @@ def decide_first(engine, unit):
         # background to rise out of -- gated at that onset (`scoring`), with
         # looks that judge where real expression starts. Never skipped.
         unit["continuous"] = True
-    if tier == "QC" or hard:
+    if (tier == "QC" or hard) and not one_peak_expected(unit, hard):
         unit["qc_reason"] = hard or [unit["class"]]
         unit["state"] = "qc_confirm"
         return

@@ -1346,6 +1346,27 @@ def _pairs(rows):
 # -- confirmations -------------------------------------------------------------------
 
 
+def _not_binary_said(unit) -> str:
+    """What a whole-image check says of a marker the vocabulary calls not
+    binary: its cells need not split into two populations, so one peak is no
+    sign of a failed stain; whether the stain is real in its compartment --
+    in the magenta cells, its brightest, and beyond -- is. Asked "is there
+    real staining in some cells" with no word of that, five of six readers
+    failed lsp35766_p193_2 Rb, whose magenta cells (the top 3.7 %, three in
+    four Ki-67+: the cycling cells) are the owner's own gate, 5.11."""
+    ctx = unit.get("context") or {}
+    stain = f"{ctx['compartment']} {unit['marker']}" if ctx.get("compartment") \
+        else unit["marker"]
+    return (f" {unit['marker']} is not a binary marker"
+            + (f" (expected in {ctx['lineage']})" if ctx.get("lineage") else "")
+            + ": its cells need not split into a positive and a negative population, so "
+            "one peak is a shape a working stain gives, not a sign of failure. Judge whether "
+            f"the {stain} stain is real -- cell-shaped, in its compartment, above the "
+            "tissue's background, in the magenta cells (its brightest) and beyond, however "
+            "weak (`real_signal`) -- or the channel shows only noise, glow or artifact "
+            "(`technical_failure`).")
+
+
 def qc_confirm(engine, units):
     from plexora.agent.evidence import collage
 
@@ -1381,6 +1402,8 @@ def qc_confirm(engine, units):
                     "carry it too."
                     + (f" In the fields, cyan is {c['partner']}: judge the yellow cells that "
                        "are not cyan." if partner_channel else ""))
+    elif (unit.get("context") or {}).get("binary") is False:
+        qc_said += _not_binary_said(unit)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) needs a whole-image check: "
                      f"{', '.join(unit.get('qc_reason') or unit.get('flags') or [])}.{qc_said} "

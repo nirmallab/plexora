@@ -257,6 +257,40 @@ def test_a_continuous_vocabulary_marker_waits_for_a_look_instead_of_closing():
     assert not unknown.get("continuous")                          # None is not a statement
 
 
+def test_one_peak_of_a_marker_that_is_not_binary_is_no_reason_for_a_stain_check():
+    """lsp35766_p193_2 Rb: one tight peak whose top 3.7 % (the cycling cells)
+    is the owner's gate; the stain-failure check failed it in five of six
+    runs. Its one peak sends it to the ordinary path; a binary marker's one
+    peak, a hard flag, or QC calling the channel failed still get the
+    check."""
+    from plexora.plugins.gating.server.autogate import bulk
+
+    def unimodal(binary, **extra):
+        return {**_unit(binary), "class": "unimodal", "t1": {"recommended_tier": "QC"}, **extra}
+
+    engine = _Engine()
+    rb = unimodal(False)
+    bulk.decide_first(engine, rb)
+    assert rb["state"] == "awaiting_t2" and rb["continuous"] and "qc_reason" not in rb
+    for unit in (unimodal(True), unimodal(None), unimodal(False, qc_verdict="failed"),
+                 unimodal(False, flags=["empty_channel"]),
+                 {**unimodal(False), "class": "degenerate"}):
+        bulk.decide_first(engine, unit)
+        assert unit["state"] == "qc_confirm", unit
+
+
+def test_a_whole_image_check_of_a_marker_that_is_not_binary_does_not_read_one_peak_as_failure():
+    from plexora.plugins.gating.server.autogate import packets
+
+    said = packets._not_binary_said(
+        {"marker": "Rb", "context": {"binary": False, "compartment": "nuclear",
+                                     "lineage": "nucleated cells of any lineage"}})
+    assert "not a binary marker (expected in nucleated cells of any lineage)" in said
+    assert "nuclear Rb stain is real" in said and "not a sign of failure" in said
+    assert "in the magenta cells (its brightest) and beyond" in said
+    assert "the Rb stain is real" in packets._not_binary_said({"marker": "Rb", "context": {}})
+
+
 def test_a_channel_qc_called_usable_takes_the_ordinary_path():
     """QC reviewed the channel and found a working stain: a flag read off the
     overview (a gradient) does not send the marker to a technical check, and
