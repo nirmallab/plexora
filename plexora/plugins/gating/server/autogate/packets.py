@@ -1346,6 +1346,27 @@ def _pairs(rows):
 # -- confirmations -------------------------------------------------------------------
 
 
+def _not_binary_said(unit) -> str:
+    """What a whole-image check says of a marker the vocabulary calls not
+    binary: its cells need not split, so the cells above the gate (the
+    magenta, the bright tail of one peak) are not what is judged; the stain
+    in its compartment across the cells is. Asked of such a marker "is there
+    real staining in some cells", readers judged the tail -- tissue edges and
+    a glow -- and called a working-looking channel failed (lsp35766_p193_2
+    Rb, five of six)."""
+    ctx = unit.get("context") or {}
+    stain = f"{ctx['compartment']} {unit['marker']}" if ctx.get("compartment") \
+        else unit["marker"]
+    return (f" {unit['marker']} is not a binary marker"
+            + (f" (expected in {ctx['lineage']})" if ctx.get("lineage") else "")
+            + ": its cells need not split into positive and negative, and one peak is a "
+            "shape a working stain gives. The magenta cells are only the bright tail of "
+            "that peak, not the population to judge. Judge whether the "
+            f"{stain} stain sits in the cells, cell-shaped and above the tissue's "
+            "background, however weak or even (`real_signal`), or the channel shows only "
+            "noise, glow or artifact (`technical_failure`).")
+
+
 def qc_confirm(engine, units):
     from plexora.agent.evidence import collage
 
@@ -1381,6 +1402,8 @@ def qc_confirm(engine, units):
                     "carry it too."
                     + (f" In the fields, cyan is {c['partner']}: judge the yellow cells that "
                        "are not cyan." if partner_channel else ""))
+    elif (unit.get("context") or {}).get("binary") is False:
+        qc_said += _not_binary_said(unit)
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) needs a whole-image check: "
                      f"{', '.join(unit.get('qc_reason') or unit.get('flags') or [])}.{qc_said} "
