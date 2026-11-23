@@ -1427,6 +1427,48 @@ def qc_confirm(engine, units):
                                      "the whole image and three fields"),))
 
 
+def stain_check(engine, units):
+    """QC's stain picture of one marker, read for gating (`stain_link`):
+    QC's own question and evidence, the picture QC stored, sent in the
+    session's format. A second or third reading goes out exactly as the
+    first, its reader in a worker of its own (`evidence.check`); nothing in
+    it says what gating has seen of the marker."""
+    import io
+
+    from PIL import Image
+
+    from plexora.agent import artifacts
+
+    unit = units[0]
+    stain = unit["stain"]
+    parts = stain["packet"]
+    png, manifest = artifacts.get(stain["picture"])
+    fmt = _fmt(engine)
+    with Image.open(io.BytesIO(png)) as im:
+        size = im.size
+        image = png
+        if fmt == "webp":   # stored lossless; sent in the session's format
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, "WEBP", quality=88)
+            image = buf.getvalue()
+        else:
+            fmt = "png"
+    rendered = {"image": image, "format": fmt, "size": size,
+                "manifest": {**(manifest or {}), "size": list(size)},
+                "artifact": {"id": stain["picture"]}}
+    evidence = {**(parts.get("evidence") or {}), "how_to_read": parts.get("reading")}
+    read = int(stain.get("read") or 1)
+    if read > 1:
+        evidence["check"] = f"reader_{read}"
+    packet = {"question": parts["question"], "evidence": evidence,
+              "allowed": list(parts.get("allowed") or _allowed(answers.StainCheckAnswer,
+                                                               "verdict")),
+              "_image_meta": []}
+    return packet, _images(packet, ((rendered, "stain_picture",
+                                     f"{unit['marker']}: whole tissue, two fields, a few "
+                                     "cells"),))
+
+
 def _absence_skipped(engine, unit, why, regions=()):
     """No absence picture could be drawn: what was decided without it
     stands -- a technical check's verdict closes the marker, anything else
@@ -2081,6 +2123,7 @@ def transfer_check(engine, units):
 
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
+            "stain_check": stain_check,
             "absence_check": absence_check,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "marker_naming": marker_naming, "panel_context": panel_context,

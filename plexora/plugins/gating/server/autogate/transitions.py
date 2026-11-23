@@ -618,6 +618,28 @@ def _split_mixed(engine, unit, chain, answer, placed, passed):
 # -- confirmations -------------------------------------------------------------------
 
 
+def apply_stain(engine, packet, answer):
+    """One reading of QC's stain picture (`stain_link`): stored where QC
+    reuses it; a first `failed` waits for a second, blind reader (a third
+    when they differ). Once it settles, the marker's first decision is made
+    with it (`bulk.decide_first`)."""
+    from plexora.plugins.gating.server.autogate import bulk, stain_link
+
+    unit = _units(engine, packet)[0]
+    _note(unit, answer)
+    if not stain_link.put(engine, unit, answer):
+        return _outcome(unit, stain_reading=unit["stain"]["read"])
+    then = unit.pop("stain_then", None)
+    if then is not None:
+        # Read before a failure close (`stain_link.defer_failure`): the close
+        # is made now, the stain check heard (`Engine.close`).
+        state, reason = then.pop("state"), then.pop("reason")
+        engine.close(unit, state, reason, **then)
+    else:
+        bulk.decide_first(engine, unit)
+    return _outcome(unit, stain=stain_link.category(unit))
+
+
 def apply_qc(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import second_verdict
 
@@ -673,7 +695,11 @@ def apply_qc(engine, packet, answer):
         return _outcome(unit)
     if answer.verdict == "real_signal":
         return _qc_real_signal(engine, unit)
-    if unit.get("qc_verdict") == "usable" and not unit.get("t2_after_qc"):
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    stain_failed = stain_link.category(unit) == "failed"
+    if unit.get("qc_verdict") == "usable" and not unit.get("t2_after_qc") \
+            and not stain_failed:
         # QC reviewed this channel and found a working stain: an unsure
         # technical look does not close it; the marker gets its ordinary look.
         unit["t2_after_qc"] = True
@@ -691,6 +717,8 @@ def apply_qc(engine, packet, answer):
         if (unit.get("absence") or {}).get("clear"):
             return _qc_real_signal(engine, unit, overruled="cannot_tell")
     engine.close(unit, "manual_review_recommended",
+                 ("unreliable: " + stain_link.said(unit) + ", and gating's whole-image check "
+                  "could not tell whether the channel is usable") if stain_failed else
                  "the technical check could not tell whether the channel is usable")
     return _outcome(unit)
 
@@ -1323,7 +1351,7 @@ def apply_transfer(engine, packet, answer):
 
 
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
-         "qc_confirm": apply_qc, "absence_check": apply_absence,
+         "qc_confirm": apply_qc, "stain_check": apply_stain, "absence_check": apply_absence,
          "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "marker_naming": apply_naming, "panel_context": apply_panel,
          "partner_review": apply_review, "replan": apply_replan,

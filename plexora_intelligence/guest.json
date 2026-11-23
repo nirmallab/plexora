@@ -3356,6 +3356,16 @@
        ],
        "type": "string"
       },
+      "stain_check": {
+       "default": "reuse",
+       "description": "QC's stain check as evidence: auto, reuse (stored only), off.",
+       "enum": [
+        "auto",
+        "reuse",
+        "off"
+       ],
+       "type": "string"
+      },
       "tiles": {
        "default": false,
        "description": "Draw each look's cells as 2 x 2 blocks with two partner channels.",

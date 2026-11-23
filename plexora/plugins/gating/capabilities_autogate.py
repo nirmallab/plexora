@@ -536,6 +536,29 @@ def stale_classifier(ds) -> list:
     return out
 
 
+def stain_flags(call, ds, gated) -> list:
+    """QC's stain check on the gated markers (`stain_link`): every stain read
+    weak or failed, or called failed by one reader, with its gate's
+    confidence -- a flag for a person, never a removal. Failed and contested
+    ones are in `needs_review`."""
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    found = stain_link.fetch(call, ds.name, {"stain_check": "auto"}) or {}
+    out = []
+    for marker, entry in sorted((found.get("channels") or {}).items()):
+        unit = {"stain": entry}
+        category = stain_link.category(unit)
+        if category not in stain_link.CAPS:
+            continue
+        row = gated.get(marker) or {}
+        out.append({"marker": marker, "category": category, "said": stain_link.said(unit),
+                    "readings": [r.get("verdict") for r in entry.get("readings") or ()],
+                    "source": entry.get("source"), "gated": marker in gated,
+                    "confidence": row.get("confidence"), "no_positives": row.get("no_positives")})
+    out.sort(key=lambda s: (s["category"] == "weak", s["marker"]))
+    return out
+
+
 def gating_qc(call, inp):
     from plexora.plugins.gating.server.autogate import context, provenance
 
@@ -590,9 +613,11 @@ def gating_qc(call, inp):
     stale = stale_dependencies(ds, rows)
     qc_stale = stale_qc(ds, rows)
     classifier_stale = stale_classifier(ds)
+    stain = stain_flags(call, ds, fractions)
     needs_review = sorted(set(needs_review) | {s["marker"] for s in stale}
                           | {s["marker"] for s in qc_stale}
-                          | {s["marker"] for s in classifier_stale if s["decides"]})
+                          | {s["marker"] for s in classifier_stale if s["decides"]}
+                          | {s["marker"] for s in stain if s["category"] != "weak"})
     from plexora.agent import cell_exclusions
 
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
@@ -600,6 +625,7 @@ def gating_qc(call, inp):
             "stale_dependencies": stale[:MAX_LIST],
             "stale_qc": qc_stale[:MAX_LIST],
             "stale_classifier": classifier_stale[:MAX_LIST],
+            "stain_flags": stain[:MAX_LIST],
             "qc_exclusion": cell_exclusions.describe(ds),
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}

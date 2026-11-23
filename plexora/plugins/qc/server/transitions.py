@@ -907,7 +907,7 @@ def apply_stain_check(engine, packet, answer):
     the verdict settles (`stain.settle`) and the unit closes `decided`.
     Weak and failed are listed under Low quality staining; nothing about the
     channel, its cells or a gate changes."""
-    from plexora.plugins.qc.server import checks_result, stain
+    from plexora.plugins.qc.server import checks_result, stain, stain_ledger
 
     unit = _units(engine, packet)[0]
     _note(unit, answer)
@@ -915,6 +915,10 @@ def apply_stain_check(engine, packet, answer):
         "read": int(unit.get("stain_read") or 1), "verdict": answer.verdict,
         "structure": answer.structure, "expectation": answer.expectation,
         "observed": answer.observed, "why": answer.why})
+    stain_ledger.record(engine.call.session, unit["project"], unit["channel"],
+                        attempt=f"qc:{engine.id}", read=unit["readings"][-1]["read"],
+                        answer=unit["readings"][-1], picture=unit.get("picture"),
+                        partner=unit.get("partner"), source="qc")
     verdicts = [r["verdict"] for r in unit["readings"]]
     final = stain.settle(verdicts, rereads=bool(unit.get("rereads", True)))
     if final is None:

@@ -105,9 +105,13 @@ def prepare_unit(call, session_id, project, marker, panel, options):
                                   "marker: automatic gating judges every gate on the pixels")}
     profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]),
                                  compartment=_context_of(panel, marker)["compartment"])
+    from plexora.plugins.gating.server.autogate import stain_link
+
     return {**kept, "profile": profile, "gate": gate,
             "context": _context_of(panel, marker),
-            "image_qc": profile.get("image_qc")}
+            "image_qc": profile.get("image_qc"),
+            "stain": stain_link.prepare(call, project, marker, options,
+                                        options["_stain_found"])}
 
 
 def settle_unit(engine, unit, prepared):
@@ -133,6 +137,12 @@ def settle_unit(engine, unit, prepared):
         if unit["project"] != record.get("reference_image"):
             unit["state"] = "transfer_pending"
             return
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    if stain_link.due(unit):
+        # The stain is read first: what it says shapes the first decision.
+        unit["state"] = "awaiting_stain"
+        return
     decide_first(engine, unit)
 
 
@@ -154,6 +164,9 @@ def fill_unit(unit, prepared):
         # QC's word on the channel (`cell_exclusions.VERDICTS`), when QC ran.
         "qc_verdict": (profile.get("qc_exclusion") or {}).get("channel_verdict"),
         "context": prepared["context"],
+        # QC's stain check (`stain_link`): a stored verdict, or a picture
+        # waiting for its reading.
+        "stain": prepared.get("stain"),
         "image_qc": {k: (prepared.get("image_qc") or {}).get(k)
                      for k in ("saturation_fraction", "tissue_ratio",
                                "dynamic_range_decades", "flags")}
@@ -205,9 +218,27 @@ def decide_first(engine, unit):
         # background to rise out of -- gated at that onset (`scoring`), with
         # looks that judge where real expression starts. Never skipped.
         unit["continuous"] = True
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    if stain_link.category(unit) == "failed" and not unit.get("qc_done"):
+        # QC's stain check read the stain failed, two readers agreeing. It is
+        # wrong about half the time on weak real stains, so gating's own
+        # whole-image check reads it too -- blind to that: its question
+        # names no reason the stain check gave -- and only the two together
+        # fail the marker (`stain_link`, `Engine.close`).
+        unit["qc_reason"] = hard or [unit.get("class") or "a check of the whole image"]
+        unit["stain_routed"] = "qc_confirm"
+        unit["state"] = "qc_confirm"
+        return
     if (tier == "QC" or hard) and not one_peak_expected(unit, hard):
         unit["qc_reason"] = hard or [unit["class"]]
         unit["state"] = "qc_confirm"
+        return
+    if t1.get("accept") and stain_link.flagged(unit):
+        # A clean split of a stain read weak, or called failed by one reader:
+        # never accepted without a look at its cells.
+        unit["stain_routed"] = "look"
+        unit["state"] = "awaiting_t2"
         return
     if t1.get("accept") and engine.note_observed(unit):
         # The contrast check saw what a clean split cannot: dim cells stained
@@ -244,6 +275,7 @@ BULK_WORDS = {
     "awaiting_t2": "waiting for a look",
     "awaiting_panel": "waiting for a look at single cells",
     "qc_confirm": "the stain gets a look first",
+    "awaiting_stain": "waiting for the stain check (QC's picture)",
     "awaiting_absence": "waiting for a look at six regions",
     "transfer_pending": "waiting for the reference image",
     "group_pending": "waiting for every image, then decided with its group",
@@ -372,6 +404,23 @@ def _basic_qc(call, session_id, project):
                    reason=outcome.get("reason"), n_left_out=block.get("n_left_out"))
 
 
+def _stain_found(call, session_id, project, options):
+    """QC's stored stain verdicts for the image (`stain_link.fetch`), noted
+    on the session: how many were reused, and whether the stain check can be
+    read here at all."""
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    found = stain_link.fetch(call, project, options)
+    with engine_for(call, session_id) as engine:
+        engine.record.setdefault("stain", {})[project] = (
+            {"status": "off" if options["stain_check"] == "off" else "unavailable"}
+            if found is None else
+            {"status": "available" if found.get("available") else "unavailable",
+             "reused": sorted(found.get("channels") or {}), "note": found.get("note"),
+             "reads": bool(options["_stain_reads"]) and options["stain_check"] == "auto"})
+    return found
+
+
 def run(call, inp):
     """The bulk job's handler. A dataset's images are profiled a few at a
     time (`IMAGE_WORKERS`), each image's markers in gating order."""
@@ -382,6 +431,9 @@ def run(call, inp):
         images = list(engine.record["images"])
         order = list(engine.record["order"])
         options = dict(engine.options)
+        # One image's session may have QC's stain check read here; a dataset
+        # reuses what is stored (`stain_link`).
+        options["_stain_reads"] = engine.record.get("scope") != "dataset"
         sample_biology = engine.record.get("biology")
         stages = engine.record.setdefault("bulk_images", {})
         for project in images:
@@ -465,6 +517,7 @@ def _image_pass(call, session_id, project, options, sample_biology, order, calib
         engine.record.setdefault("bulk_images", {})[project] = "profiling"
     if options["basic_qc"]:
         _basic_qc(call, session_id, project)
+    options = {**options, "_stain_found": _stain_found(call, session_id, project, options)}
     if project not in calibrations:
         started = time.perf_counter()
         calibrations[project] = calibrate_image(

@@ -147,8 +147,23 @@ def _run_stain(call, project, unit, progress, cancelled):
     """Low quality staining has no score: its picture is drawn here (outside
     the session lock, kept as an artifact the packet and the panel read) and
     the unit waits for its look."""
-    from plexora.plugins.qc.server import stain
+    from plexora.plugins.qc.server import stain, stain_ledger
 
+    found = stain_ledger.reusable(call.session, project, unit["channel"],
+                                  partner=unit.get("partner"))
+    if found is not None:
+        # Read already -- by an earlier QC session or by automatic gating --
+        # with the same picture: the verdict stands, no picture is drawn and
+        # no reader asked (`stain_ledger`).
+        verdicts = [r["verdict"] for r in found["readings"]]
+        return None, {"_state": "decided", "verdict": found["verdict"],
+                      "low_quality": found["verdict"] in stain.LOW_QUALITY,
+                      "readings": found["readings"], "picture": found["picture"],
+                      "partner_drawn": found.get("partner"),
+                      "reused": {k: found[k] for k in ("source", "attempt", "fresh")},
+                      "reason": (f"stain {found['verdict']} (reused from {found['source']}"
+                                 + (f"; readings: {' / '.join(verdicts)}" if len(verdicts) > 1
+                                    else "") + ")")}
     progress(done=0, total=1, message=f"drawing {unit['channel']}")
     try:
         rendered = stain.render(call.session, project, unit["channel"],

@@ -78,7 +78,8 @@ SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
 
 #: A marker waiting on something: the audit sheet, a look, a check.
 #: `awaiting_replan`: a marker held for the planning task's `replan` answer.
-WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_absence", "awaiting_t2",
+WAITING_STATES = ("awaiting_stain", "accepted_t1", "qc_confirm", "awaiting_absence",
+                  "awaiting_t2",
                   "awaiting_t3", "awaiting_t4", "awaiting_panel",
                   "awaiting_regression", "regression_confirm", "transfer_check",
                   "awaiting_replan")
@@ -115,7 +116,8 @@ SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "marker_naming", "panel_context
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
 LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates", "cell_panel")
-CHECK_KINDS = ("qc_confirm", "absence_check", "regression_confirm", "transfer_check")
+CHECK_KINDS = ("qc_confirm", "stain_check", "absence_check", "regression_confirm",
+               "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
@@ -156,6 +158,8 @@ NARRATION = {
     "regression_confirm": "Checking whether the {marker} threshold is consistent across "
                           "representative tissue regions.",
     "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
+    "stain_check": "Reading the {marker} stain across scales and beside a partner marker, as "
+                   "QC's stain check does.",
     "absence_check": "Looking for cells clearly positive for {marker} in six regions of the "
                      "tissue before trusting any threshold.",
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
@@ -407,6 +411,13 @@ REREAD_DEFAULT = "contested"
 #: Whole-image checks read again (`SessionOptions.check_rereads`,
 #: `second_verdict`, 2026-11-23): every one, or none.
 CHECK_REREAD_MODES = ("all", "off")
+#: QC's stain check in automatic gating (`stain_link`): auto -- reuse a stored
+#: verdict, else (one image) have it read; reuse -- never read; off. `reuse` by
+#: default until the reads are benched live and routed at the gateway
+#: (docs/internal/bench/runs/2026-11-23-qc-aware): a stored verdict costs
+#: nothing, a read is a vision call per marker.
+STAIN_CHECK_MODES = ("auto", "reuse", "off")
+STAIN_CHECK_DEFAULT = "reuse"
 CHECK_REREAD_DEFAULT = "all"
 #: The engines whose looks are cell panels (`panel_engine`).
 PANEL_ENGINES = ("v3", "v4", "v5")
