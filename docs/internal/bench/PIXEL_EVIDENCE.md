@@ -29,6 +29,13 @@ little evidence (six distinct markers) and fails on CRC. Stage 2 is not
 started. Do not re-propose neighbour contrast as a gate, a prior, a
 tie-break or a substitute reader without a new reason. The reason is below.
 
+**Blind methods.** Three independent agents gated the LSP image from raw
+data. The best one, P1 (each cell's own dim side against the dim end of its
+neighbourhood, with blank-channel corrections), beat every baseline there:
+0.23 against the scored start's 0.31. Run frozen on CRC, it lost (0.54
+against 0.51), because without blank channels its background null fails.
+See "What this round teaches" at the end.
+
 **Why A fails.** The contrast marks spill-lit cells, not positives. Positive
 cells cluster, so a positive's brightest neighbour is often a brighter
 positive. A real dim positive therefore has a contrast *below* that of the
@@ -192,7 +199,132 @@ less right. This is the failure the rules guard against.
 
 ## Blind methods (independent agents)
 
-See the comparison section added below.
+Each agent gated 10 lsp11385_2 markers from raw data. None could see the
+gates, Plexora, the sessions or the other agents. Each designed its own
+method and kept a lab notebook. The notebooks, gates, scripts and the
+E1-E4 outputs are kept out of git, in
+`runs/2026-11-23-pixel-evidence/` of the main checkout.
+
+| marker | person | table only | P1: own dim side vs neighbours' dim end | P2: stain shape in own outline | scored start | engine (newest) |
+|---|---|---|---|---|---|---|
+| CD45 | 7.37 | 6.90 | **7.22** | 6.76 | 7.26 | 7.45 |
+| CD3e | 7.02 | 6.40 | **6.66** | 6.18 | 6.62 | 6.72 |
+| CD4 | 6.58 | 6.40 | **6.67** | 6.21 | 6.86 | 7.21 |
+| CD8a | 6.32 | 6.00 | **6.24** | 6.23 | 6.12 | 6.79 |
+| FOXP3 | 6.30 | 5.80 | **6.22** | 5.82 | 5.71 | 5.78 |
+| CD163 | 7.31 | 6.40 | **6.92** | 6.33 | 6.41 | 7.94 |
+| SOX10 | 6.49 | 6.10 | 6.39 | 6.38 | 6.49 | 6.57 |
+| PD1 | 6.97 | 6.80 | 6.35 | 6.38 | 6.53 | 6.69 |
+| Ki67 | 6.27 | 6.30 | 6.29 | 6.21 | 6.47 | 6.36 |
+| CD31 | 5.97 | 6.10 | 6.38 | 5.75 | 5.97 | 6.02 |
+| **mean miss** | | 0.37 | **0.23** | 0.43 | 0.31 | 0.31 |
+| signed bias | | −0.34 | −0.13 | −0.43 | −0.22 | +0.09 |
+
+**P1 differs from signal A in the two places A failed.**
+
+- **A cell is measured at its own dim side.** P1 takes the 25th percentile of
+  8 angular sectors of the cell's own mask, so light from one bright
+  neighbour is ignored. A, by contrast, compared the cell with its
+  *brightest* neighbour.
+- **The reference is the dim end of the neighbourhood.** It is the 10th
+  percentile of that measure over the 150 nearest cells, about 15 radii.
+  This removes haze, and a positive among positives is not penalised.
+
+P1 also regresses the marker on the blank (AF) channels to remove
+autofluorescence bleed, and takes the background null's right-skew from
+the blank channels. Each cell gets p = 1 − lfdr, and the gate is where the
+isotonic curve of p against the table value reaches 0.5.
+
+**Caveats.** P1 changed its method twice while looking at this image (the
+reference and the null), before any gate was final. Six of its ten gates
+are low confidence. Ten markers on one image is development evidence.
+
+**The table-only method** splits each band into cells explained by spill
+from a brighter neighbour, by autofluorescence and by an exclusive lineage.
+The gate is where the unexplained share passes 0.5. **P2** calls a cell
+own-stained from the stain's depth profile inside its own outline: nuclear
+enrichment over its own cytoplasm, or the deep-core level. Both land
+0.3-0.4 low.
+
+**Every method lands below these person gates** (the engine aside). The
+gates in `truth_dev.json` were set on 2026-10-22, before the owner's
+"dimmest reliable point" definition (2026-11-04). Part of every miss here
+may be the reference, not the method.
+
+### P1, frozen, on a second image
+
+The cross-image test ran P1's procedure unchanged on lsp35766_p193_2. That
+image differs in tissue, panel and segmentation (warped Xenium outlines),
+and it has no blank channels. Before the run, P1 declared its fallback:
+
+- no autofluorescence regression;
+- the null's skew carried over from LSP (alpha 1.86).
+
+It made one mechanical fix after the first pass: the mode estimate on narrow
+peaks, which moved IBA1, CD4 and CD20.
+
+| marker | owner | P1 frozen | scored start | Otsu | mixture | engine (newest)* |
+|---|---|---|---|---|---|---|
+| CD3E | 5.25 | 4.97 | 5.71 | - | 5.26 | 5.18 |
+| CD4 | 6.20 | 5.92 | 7.08 | 6.29 | - | 7.89 |
+| CD8a | 7.28 | 7.18 | 8.02 | - | 7.28 | 7.28 |
+| CD20 | 5.51 | 4.10 | 3.99 | 4.63 | 4.06 | 5.51 |
+| FOXP3 | 4.98 | 4.58 | 4.79 | - | 4.98 | 4.98 |
+| Ki67 | 4.79 | 4.88 | 4.86 | 4.54 | 4.56 | 5.25 |
+| PD1 | 6.01 | 5.87 | 5.93 | 5.74 | - | 6.01 |
+| CD163 | 6.36 | 6.06 | 6.36 | 5.97 | 4.96 | 6.36 |
+| IBA1 | 7.68 | 5.40 | 6.21 | 5.72 | 6.63 | 6.80 |
+| CD11c | 5.44 | 5.26 | 5.18 | 4.64 | 4.39 | 5.34 |
+| cKit | 5.45 | 5.31 | 5.46 | 5.33 | 5.60 | 5.45 |
+| CD31 | 5.31 | 4.42 | 4.89 | 4.58 | 5.04 | 5.31 |
+| **mean miss** | | 0.54 | 0.51 | 0.61 (9) | 0.56 (10) | 0.27 |
+| median miss | | 0.28 | 0.34 | | | |
+| signed bias | | −0.52 | −0.15 | | | |
+
+\* The owner set several of these gates by accepting the engine's, so the
+engine column is flattered.
+
+**P1 did not generalise.** Against the scored start it is better on 5
+markers (CD3E, CD4, CD8a, CD20, CD11c) and worse on 7. IBA1 (+0.81) and
+CD31 (+0.47) are more than 0.30 worse, so it fails the rule. The failure is
+the one P1 named itself: without blank channels, nothing measures how far
+the background spreads to the bright side. On broad negative peaks (CD31,
+CD8a, CD11c, CD3E), 19-39% of cells end up above the gate, which puts the
+gate inside the background. The LSP win came with blank channels and a
+design tuned on that image. The CRC loss came with neither.
+
+## What this round teaches
+
+1. **Measure a cell against the dim end of its surroundings, not the bright
+   end.** Comparing with the brightest neighbour reads clusters of positives
+   as spill (signal A). The cell's own dim side, against the dim end of its
+   neighbourhood, does not (P1 on LSP). That is the transferable part of the
+   pixel idea.
+2. **The background's right tail is the unsolved piece.** It decided
+   P1's result on both images:
+   - With blank channels to measure it, P1 beat every baseline on LSP.
+   - Without them, P1 gated into the background on CRC.
+   - A symmetric null failed on LSP PD1 too.
+
+   A null measured on the marker's own pixels between cells would work on
+   any image. It is the next thing worth testing, offline, on both images at
+   once.
+3. **Deterministic estimates do not transfer across images yet.** Ten
+   estimators ran on both images: the five A variants, the two local-peak
+   onsets, Otsu, the mixture and P1. None beat the scored start on both.
+   Otsu wins on LSP and loses on CRC; P1 does the same. The
+   tie-break oracle shows that the gain sits inside the plateau. The reads
+   are the only signal that has found it so far.
+4. **The reference gates are of two kinds.** Every blind method lands
+   0.2-0.4 below the 2026-10-22 LSP gates (`truth_dev.json`), which predate
+   the "dimmest reliable point" definition. They land close to the owner's
+   current CRC gates. Re-checking a handful of the LSP gates under the
+   current definition would make the LSP numbers mean what the rules
+   assume.
+5. **The agents' notebooks are a usable design record.** Each logged its
+   choices as general, biology or tuned. Each named its own failure mode
+   before it was tested: P1 predicted the missing-blank-channel failure
+   exactly.
 
 ## Rules this followed
 
