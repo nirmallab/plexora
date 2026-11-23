@@ -626,6 +626,9 @@ So nobody repeats them. Numbers are in CANDIDATES_PLAN.md.
 | Per-marker or per-image window rule | Not learnable from 4 label sets (+1 %, noise) |
 | Wider field around each cell (36 µm) | Worse everywhere (lsp 0.39) |
 | Conditional gates, partner revisits, saturation stops, fibrous shape detector | Dropped on stored v1 records: no error separation |
+| Neighbour-referenced contrast (own − brightest touching neighbour; table or centroid-disk) as a gate, a plateau tie-break, a review check or a reader of uncertain cells (2026-11-23, `bench/PIXEL_EVIDENCE.md`) | Separates own from spill-lit near-gate cells on four platforms (AUC 0.69-0.84), but marks spill, not positives: clustered positives are darker than their brightest neighbour. Gate 0.98 / 0.62 vs the scored start 0.35 / 0.39 (lsp11385_2 / p193_2); tie-break and uncertain-to-contrast worse than the reads |
+| Spill-controlled exclusive background as a "gate too low" check (2026-11-23) | Right in direction 32 of 42 fires on lsp11385_2 but over 4 markers only (Ecad wrong by 0.9); 0 of 2 on p193_2 |
+| A deterministic prior to pick among plateau members (background ceiling, Otsu, onset, scored start; 2026-11-23) | Each wins on one image and loses on the other; the oracle member would cut 0.26 → 0.16 and 0.35 → 0.21, so the gain is there, but only reads find it |
 
 ## 6. Opportunities
 
