@@ -1,0 +1,3 @@
+```json
+{"expectation":"Nuclear stain, not membrane or cytoplasm. If total histone H3, nearly all nuclei carry it, brightest in dense epithelium. If mitotic (phospho-H3), only rare, bright, scattered nuclei in crypt epithelium. In gut tissue, signal sits on nuclei, DAPI-aligned.","observed":"A: yellow follows the epithelium and dense tissue, with edge glow on the left and diffuse haze in the stroma. B and C: yellow overlaps many epithelial nuclei, but some cytoplasmic haze, lumen blobs and stromal fibres are also lit. D: bright blobs partly on nuclei, partly offset.","structure":"unclear","verdict":"weak","why":"Yellow sits on epithelial nuclei, which fits a nuclear marker, but contrast is low and haze, edge glow and off-nucleus blobs weaken the case."}
+```

@@ -1,0 +1,21 @@
+The visual pass is finished and QC session `qs_20261123T195218_5cfce6` on `visualbench_damage` is now **decided** (9 of 9 units done). I stopped there as you asked and did not close it with `qc_session_finish`.
+
+**What I found and outlined**
+- **One region:** damaged or detached tissue in the lower left of the tissue (image pixels about x 149–331, y 685–806, roughly 20,700 µm², 0.76% of the tissue).
+  - The nuclei there are faint in DNA_1 and missing in DNA_2. CD3, CD8 and CD20 show no cells there, and all channels are dark together.
+  - I outlined it with the segmentation model on DNA_1 and DNA_2, as severe and sure. The session set it to **exclude**.
+  - Region `qcroi_f1e4020e1f`, receipt `op_20261123T195325_15347f0e`, reversible.
+  - It took in the detector's own candidate for the same spot (c1), and that candidate was merged rather than asked about separately.
+- **Nothing else:** after zooming in, the rest of the tissue, its edges and corners looked uniform, so I left no places unoutlined.
+
+**Other packets**
+- **Channel audit (`pk_0001`):** I marked all 5 channels (DNA_1, CD3, CD8, DNA_2, CD20) suspicious for tissue damage at c1, since the hole shows in every channel. The final review then counted all 5 as **clean**, probably because the problem is now held by the region rather than flagged on the channels. If you need the staining table to show something, check the channels table in the report.
+- **Final review (`pk_0003`):** I answered consistent: the one excluded region fits its artifact and nothing real is excluded.
+
+**Background region:** the background region (`qcroi_33ba25e23d`, the glass outside the tissue) is a note only: its cells are kept.
+
+**DNA retention:** reliable through cycle 2 of 2. No nucleated cells lose their nucleus by cycle 2, and 2.4% of labels have no nucleus.
+
+**Next step:** `qc_session_finish` with `action: "close"`, then `qc_report`. I can run both if you want.
+
+--- stderr

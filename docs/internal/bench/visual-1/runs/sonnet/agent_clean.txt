@@ -1,0 +1,13 @@
+The session is decided (7 of 7 units done). I did not close it, because you only asked me to run the visual pass.
+
+- **`pk_0001` (channel audit):** I judged all five channels `clean`: DNA_1, CD3, CD8, DNA_2 and CD20. Both DNA channels show a regular grid of nuclei. The three marker channels are sparse and tissue-patterned, with no fold, blur, bubble, debris, saturation or uneven illumination. The sheet is `art_57f123cc179444a7e548`.
+- **`pk_0002` (visual scan):** I answered `nothing_found`, so I wrote no regions and left no places for a person. I judged this from the four-view overview, `art_1700ded9033be1890d6f`, and did not zoom on any place. The first-cycle and last-cycle DNA overlay is all white, so no tissue was lost or shifted. The pan and agreement views show only the normal tissue edge.
+- **Final review:** the server closed it without a packet for me (reported as `reviewed`).
+
+My first answer to each packet used the wrong field names and was rejected. I resubmitted both against the schema each error returned, and the rejected attempts changed nothing.
+
+The next step the server names is `qc_session_finish` with `action: "close"`, then `qc_report`, which makes the result the project's active QC. Do you want me to run those?
+
+I created no worktrees.
+
+--- stderr

@@ -1,0 +1,3 @@
+```json
+{"kind":"stain_check","expectation":"Membrane ring on a minority of lymphocytes: naive/memory T cells, memory B cells and plasma cells. It should be sparse single cells or clusters in lymphoid aggregates, partly on CD20 B cells, and absent from stroma and tumour.","observed":"A: signal varies from core to core, with diffuse yellow over stroma-like streaks and fibres in some cores and almost none in others. B and C: nearly empty, with a few specks. D: one smeared blob with no ring. E: broad grainy signal, strongest over CD20-negative tissue, not on discrete CD20 cells.","structure":"no","verdict":"failed","why":"Signal is diffuse haze that follows tissue texture and stroma rather than a defined lymphocyte subset on CD20 cells."}
+```

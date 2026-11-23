@@ -1,0 +1,3 @@
+```json
+{"expectation":"CD303 (BDCA-2) is a membrane marker on pDCs. It should light rare, scattered single cells with a ring-like outline, sometimes in small clusters near vessels or lymphoid aggregates. It should not stain epithelium or most cells.","observed":"A: several tiles have sparse, discrete bright yellow cells (row 1 col 3, row 2 cols 3-4, row 3 cols 1 and 4). Other tiles show diffuse yellow haze that traces epithelial folds. B and C are mostly haze following tissue density, with no clear cells. D: a few bright blobs on a dim blue field.","structure":"yes","verdict":"weak","why":"Rare discrete bright cells recur across ROIs as expected for pDCs, but strong tissue-following haze and unclear B/C fields lower the contrast."}
+```

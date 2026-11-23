@@ -1,0 +1,16 @@
+round 1:       75 due
+round 2:       16 due
+round 3:        3 due
+round 4:        0 due
+Low quality staining (stain-1) on 75 channels (9 failed, 54 real, 12 weak; 94 readings):
+  failed recall 0.7778, real called failed 0.0741, weak called failed 0.3333, invalid answers 0.0%, unsettled 0.0%
+  lsp35766_p193_2        CDX2           real   -> failed (failed / failed)
+  lsp35766_p193_2        FOXP3          weak   -> failed (failed / weak / failed)
+  lsp35766_p193_2        PD1            failed -> weak (weak)
+  lsp35766_p193_2        CD103          weak   -> failed (failed / failed)
+  lsp35766_p193_2        CD66b          weak   -> failed (failed / failed)
+  lsp35766_p193_2        CD11b          real   -> failed (failed / failed)
+  lsp35766_p193_2        KLF2           weak   -> failed (failed / failed)
+  lsp35766_p193_2        betaTUBULIN    failed -> weak (weak)
+  imc-immucan-example    CD27           real   -> failed (failed / weak / failed)
+  imc-immucan-example    CD33           real   -> failed (failed / failed)

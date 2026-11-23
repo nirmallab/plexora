@@ -1,0 +1,13 @@
+The QC session is decided, with all 9 of 9 units done. I wrote one region, an exclusion over a damaged patch in the lower left of the tissue. I did not call `qc_session_finish` or `qc_report`, so the session is still open.
+
+- **Channel audit:**
+  - **Verdicts:** DNA_1 and DNA_2 are suspicious, with class tissue damage or detachment, for candidate c1. CD3, CD8 and CD20 are clean; their antibody-aggregate hints were weak and the spots looked like ordinary positive cells.
+  - **Judgement call:** I marked the marker channels clean because the void is explained by the DNA channels.
+- **Visual pass:** The detector's candidate c1 was a rectangular patch of about 20,500 µm² in grid squares E1–E2. The nuclei there are dim in both DNA cycles and the marker signal is depleted. It is present in both cycles, so it is not cycle-specific tissue loss.
+  - **Region written:** `qcroi_4110206269`, receipt `op_20261123T195150_f8da8aa1`. It is class tissue damage or detachment, severity moderate, confidence fairly_sure, action exclude, and covers 0.74% of the tissue. `undo_operation` on that receipt reverses it.
+  - **Elsewhere:** I did not zoom into the other tissue corners. The overview showed nothing else abnormal.
+- **Final review:** I answered consistent. The single region matches the artifact and nothing real is excluded.
+
+Nothing was written to your source files.
+
+--- stderr

@@ -1,0 +1,3 @@
+```json
+{"expectation":"HH3 (total histone H3) should be a nuclear stain in nearly every cell, so it should follow nuclear density and sit on the DAPI nuclei. Dense epithelium and crypts should be brightest and sparse stroma dimmer. A single bright subset would be unexpected.","observed":"A: yellow outlines villi and crypt epithelium, with extra glow along the left edge. B and C: epithelial nuclei are yellow-white where they overlap blue, but there is diffuse haze in stroma and bright blobs in the lumen. D: yellow is partly on nuclei and partly between them.","structure":"unclear","verdict":"weak","why":"Epithelial nuclei carry nuclear-localised signal that follows density, as expected for pan-nuclear H3, but haze, edge glow and extranuclear blobs lower contrast."}
+```

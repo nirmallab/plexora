@@ -1,0 +1,7 @@
+Visual artifact pass (visual-1): recall 1.0, precision 0.8, IoU 0.6335 (4 regions, 5 outlines), unfinished 0%
+  fold       matched 1/1, outlines 2 (2 on an artifact) ['tissue_fold', 'tissue_fold']
+  damage     matched 1/1, outlines 1 (1 on an artifact) ['tissue_damage_or_detachment']
+  clean      matched 0/0, outlines 0 (0 on an artifact) []
+  fold_b     matched 1/1, outlines 1 (0 on an artifact) ['tissue_fold']
+  damage_b   matched 1/1, outlines 1 (1 on an artifact) ['tissue_damage_or_detachment']
+{"region_recall": 1.0, "region_precision": 0.8, "region_iou": 0.6335, "regions": 4, "outlines": 5, "failure_rate": 0.0}

@@ -44,7 +44,7 @@ from plexora.plugins.qc.server import schemas
 #: Bumped when the picture or the question changes: memo answers to the old
 #: pictures are not replayed (`memo_versions`).
 VERSION = "1"
-RENDERER = "plexora.qc.stain/1"
+RENDERER = "plexora.qc.stain/2"
 KIND = "qc_stain"
 VERDICTS = ("real", "weak", "failed", "cannot_tell")
 #: What the Low quality staining section lists.
@@ -179,6 +179,17 @@ def note(names, marker) -> dict:
     _canonical, entry = info.get(marker, (None, {}))
     return {k: entry.get(k) for k in ("compartment", "lineage", "expression", "morphology")
             if entry.get(k)}
+
+
+def evidence(names, marker, project, manifest) -> dict:
+    """A stain packet's evidence beside its picture's `manifest`: the
+    packet builder's and the stain bench's (`plexora.ai.stain_bench`), so
+    the bench reads what a session sends."""
+    return {"marker": marker, "project": project,
+            "expression": note(names, marker),
+            "partner": manifest.get("partner"),
+            "partner_relation": manifest.get("partner_words"),
+            "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um")}
 
 
 def settle(verdicts, *, rereads=True):
@@ -405,6 +416,13 @@ def _cell_box(ctx, name, plane_ov):
     return x0, y0, x0 + side, y0 + side
 
 
+def _tissue_range(ctx, plane_ov, q=(0.005, 0.998)):
+    """A channel's display range over the tissue of the overview alone."""
+    pool = plane_ov[ctx.tissue] if ctx.tissue.any() else plane_ov.ravel()
+    lo, hi = np.quantile(pool, q)
+    return float(lo), float(max(hi, lo + 1e-6))
+
+
 def _partner_box(ctx, partner_name):
     """Row E's field (at the crop level): the field-sized grid square
     holding the most of the partner's top-decile cells, off the image's
@@ -477,9 +495,14 @@ def render(session, project, channel, *, partner_name=None, partner_words=None,
     e_tiles = []
     if ebox is not None:
         rows = 2
-        plo, phi = ctx._range(p_ov, [ep], (0.005, 0.998))
-        M, P, N = _norm(em, mlo, mhi), _norm(ep, plo, phi), _norm(en, ctx.nlo, ctx.nhi)
-        merge_m = _norm(em, max(mlo, float(np.median(em))), mhi)
+        # Row E's contrast is each channel's range over the whole tissue: the
+        # field it was drawn in may hold a blob of debris that, pooled in,
+        # draws the rest of the field black (lsp35766_p193_2 E-cadherin: the
+        # top went from 823 to 5882).
+        elo, ehi = _tissue_range(ctx, ov)
+        plo, phi = _tissue_range(ctx, p_ov)
+        M, P, N = _norm(em, elo, ehi), _norm(ep, plo, phi), _norm(en, ctx.nlo, ctx.nhi)
+        merge_m = _norm(em, max(elo, float(np.median(em))), ehi)
         for arr in (np.stack([M, M, 0.45 * N], -1), np.stack([P, 0 * P, np.clip(P + 0.45 * N, 0, 1)], -1),
                     np.stack([P, merge_m, P], -1)):
             e_tiles.append(_fit((np.clip(arr, 0, 1) * 255).astype(np.uint8), panel)[0]

@@ -1,0 +1,3 @@
+```json
+{"expectation":"Nuclear FOXP3 in a minority of CD4+ T cells: small, discrete, round nuclear spots, scattered or in lymphoid aggregates. They should sit on CD4 cells, with a dark background and no signal off tissue.","observed":"A: broad haze that follows the tissue, with bright round blobs on and off tissue and tile or stripe artefacts. B/C: haze, one streak, and blobs at the edge of the stroma. D: the brightest 'cell' is a uniform hazy patch. E: dim speckle, and green mostly lies beside the CD4 cells rather than on them.","structure":"no","verdict":"failed","why":"Signal is haze and off-tissue debris, and the sparse E1 speckle largely misses the CD4 cells, so there is no clear specific population."}
+```
