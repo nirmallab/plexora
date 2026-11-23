@@ -188,7 +188,9 @@ def test_a_session_shows_a_failed_stain_whole_and_closes_it_on_the_answer(tmp_pa
     agent = _FailedStain(Oracle(info), "CD4", verdict)
     seen = drive(session, started["session_id"], agent, limit=80)
     cd4 = engines.store().load(started["session_id"])["units"]["gsynth::CD4"]
-    assert len(agent.checked) == 1 and "its looks read 0 of" in agent.checked[0]
+    # Asked twice: a second reader answers the whole-image check again
+    # (`second_verdict`), blind to the first; the two agree.
+    assert len(agent.checked) == 2 and all("its looks read 0 of" in q for q in agent.checked)
     kinds = [p["kind"] for p in seen if p["units"] and p["units"][0]["marker"] == "CD4"]
     assert kinds.index("qc_confirm") > kinds.index("cell_panel")
     assert cd4["state"] == state and cd4["whole_image"] == verdict

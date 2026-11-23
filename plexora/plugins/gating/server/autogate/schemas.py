@@ -404,6 +404,10 @@ ENGINES = ("v1", "v3", "v4", "v5")
 #: farther apart than the tolerance, every one, or none.
 REREAD_MODES = ("contested", "all", "off")
 REREAD_DEFAULT = "contested"
+#: Whole-image checks read again (`SessionOptions.check_rereads`,
+#: `second_verdict`, 2026-11-23): every one, or none.
+CHECK_REREAD_MODES = ("all", "off")
+CHECK_REREAD_DEFAULT = "all"
 #: The engines whose looks are cell panels (`panel_engine`).
 PANEL_ENGINES = ("v3", "v4", "v5")
 #: The engines that gate a dataset's aligned images as groups (`groups`).

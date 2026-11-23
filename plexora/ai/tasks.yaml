@@ -91,6 +91,28 @@ modules:
         max_tokens: 16000
         effort: medium
         kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm, absence_check]
+      image_reader_2:
+        label: Second image reader
+        blurb: Answers a whole-image check again, blind to the first answer, so no single verdict fails a stain.
+        # The first verdict's picture and question in a conversation of its
+        # own (`reader_of`): one reader's verdict on the same picture flipped
+        # between runs of lsp35766_p193_2 (2026-11-23) -- PD1, KLF2, NGFR
+        # failed in some runs and gated in others, bCAT accepted or not.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: medium
+        kinds: ["qc_confirm:reader_2", "t1_strip:reader_2"]
+        reader_of: image_inspection
+      image_reader_3:
+        label: Third image reader
+        blurb: Answers a whole-image check a third time when the first two verdicts differ, blind to both.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: medium
+        kinds: ["qc_confirm:reader_3", "t1_strip:reader_3"]
+        reader_of: image_inspection
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.

@@ -58,7 +58,13 @@ def test_a_task_line_wins_over_its_module_default_and_a_blank_is_the_agents(mode
         "gating.planning", "gating.partner_review", "gating.marker_naming", "gating.display",
         "gating.image_inspection", "gating.classifier_check", "gating.final_validation"]}
     assert models_config.model_for("gating.biological_context") == "model-a"
-    assert groups[1] == {"model": "model-b", "tasks": ["gating.threshold_evaluation"]}
+    # A check's or a panel's later readers are workers of their own, on the
+    # model of the task they read again.
+    assert groups[1:6] == [{"model": "model-a", "tasks": ["gating.image_reader_2"]},
+                           {"model": "model-a", "tasks": ["gating.image_reader_3"]},
+                           {"model": "model-b", "tasks": ["gating.threshold_evaluation"]},
+                           {"model": "model-b", "tasks": ["gating.panel_reader_2"]},
+                           {"model": "model-b", "tasks": ["gating.panel_reader_3"]}]
     qc = models_config.groups("qc")
     assert {"model": "model-c", "tasks": ["qc.blur"]} in qc
     assert next(g for g in qc if g["model"] is None)["tasks"][0] == "qc.planning"
@@ -96,16 +102,19 @@ def test_a_line_may_set_the_effort_a_worker_runs_at(models_file, tmp_path, monke
     # One worker per model and effort: Opus-at-high and Opus-at-low are two workers.
     # A second and a third panel reader are workers of their own on the
     # first reader's model and effort (`Task.reader_of`).
+    # A whole-image check's second and third readers follow the image reader.
     assert [(g["model"], g.get("effort")) for g in groups] == [
-        ("model-a", "low"), ("model-a", "high"), ("model-b", "high"), ("model-b", "high"),
-        ("model-b", "high"), ("model-b", "low")]
-    assert groups[2]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
-    assert [g["tasks"] for g in groups[3:5]] == [["gating.panel_reader_2"],
+        ("model-a", "low"), ("model-a", "high"), ("model-a", "high"), ("model-a", "high"),
+        ("model-b", "high"), ("model-b", "high"), ("model-b", "high"), ("model-b", "low")]
+    assert [g["tasks"] for g in groups[2:4]] == [["gating.image_reader_2"],
+                                                ["gating.image_reader_3"]]
+    assert groups[4]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
+    assert [g["tasks"] for g in groups[5:7]] == [["gating.panel_reader_2"],
                                                 ["gating.panel_reader_3"]]
     monkeypatch.setattr(paths, "settings_path", lambda: tmp_path / "settings.json")
     block = delegation.block("gating_worker", session_id="gs_x")
     assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "high", "high",
-                                                           "low"]
+                                                           "high", "high", "low"]
     assert "`effort`" in block["how"]
     shown = []
     setup.models_command("show", out=shown.append)
@@ -168,12 +177,16 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     models_file("gating:\n  threshold_evaluation: model-b\n  final_validation: model-b\n")
     block = delegation.block("gating_worker", session_id="gs_x")
     assert "brief" not in block and block["model"] is None
-    first, second, reader_2, reader_3 = block["workers"]
+    first, image_2, image_3, second, reader_2, reader_3 = block["workers"]
+    # A whole-image check's later readers: one worker each, the image reader's model.
+    assert [image_2["tasks"], image_3["tasks"]] == [["gating.image_reader_2"],
+                                                     ["gating.image_reader_3"]]
+    assert image_2["model"] is None and image_3["model"] is None
     # The panel readers after the first: one worker each, the first reader's model.
     assert [reader_2["tasks"], reader_3["tasks"]] == [["gating.panel_reader_2"],
                                                        ["gating.panel_reader_3"]]
     assert reader_2["model"] == reader_3["model"] == "model-b"
-    assert len({w["reader"] for w in block["workers"]}) == 4
+    assert len({w["reader"] for w in block["workers"]}) == 6
     assert first["model"] is None and first["pick"] == delegation.TIERS["judgement"]
     assert "gating.image_inspection" in first["tasks"]
     assert second == {**second, "model": "model-b",
@@ -185,8 +198,8 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     assert (first["launch"], second["launch"]) == ("now", "on_demand")
     assert "first_task" not in first["brief"]
     later = delegation.block("gating_worker", first_task="gating.threshold_evaluation", session_id="gs_x")
-    assert [w["launch"] for w in later["workers"]] == ["on_demand", "now", "on_demand",
-                                                       "on_demand"]
+    assert [w["launch"] for w in later["workers"]] == ["on_demand", "on_demand", "on_demand",
+                                                       "now", "on_demand", "on_demand"]
     assert "`on_demand`" in block["how"]
 
 
@@ -221,6 +234,8 @@ LOOKS = ["gating.planning", "gating.partner_review", "gating.marker_naming",
 JUDGES = ["gating.threshold_evaluation", "gating.final_validation"]
 #: A panel read again goes to a reader that never saw it: one worker per reading.
 SECOND, THIRD = ["gating.panel_reader_2"], ["gating.panel_reader_3"]
+#: A whole-image check answered again: likewise, on the image reader's model.
+IMAGE_2, IMAGE_3 = ["gating.image_reader_2"], ["gating.image_reader_3"]
 
 
 def drive_scoped(session_id, agent, limit=400, answer_scope=True):
@@ -230,7 +245,8 @@ def drive_scoped(session_id, agent, limit=400, answer_scope=True):
     `answer_scope=False`: the workers pass their scope to `gating_next` only,
     never to `gating_answer` (what a worker did on 2026-10-03)."""
     session = AgentSession()
-    readers = {"looks": LOOKS, "judges": JUDGES, "second": SECOND, "third": THIRD}
+    readers = {"looks": LOOKS, "judges": JUDGES, "second": SECOND, "third": THIRD,
+               "image_2": IMAGE_2, "image_3": IMAGE_3}
     order = list(readers)
     got = {name: [] for name in readers}
     turn, idle = "looks", 0
@@ -276,10 +292,11 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     assert scoped == serial
     assert got["looks"] and got["judges"], got
     for reader, tasks in (("looks", LOOKS), ("judges", JUDGES), ("second", SECOND),
-                          ("third", THIRD)):
+                          ("third", THIRD), ("image_2", IMAGE_2), ("image_3", IMAGE_3)):
         for task, model, kind in got[reader]:
             assert task in tasks, (reader, task, kind)
-            assert model == ("looks-model" if task in LOOKS else "judge-model")
+            assert model == ("looks-model" if task in LOOKS + IMAGE_2 + IMAGE_3
+                             else "judge-model")
     assert any(kind == "t4_candidates" for _t, _m, kind in got["judges"])
     # Which model answered each task, as the answers named it.
     models = status["models"]
@@ -291,7 +308,8 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     store = engines.store()
     for packet_id, entry in store.load(scoped_id)["models"].items():
         packet, _images = store.read_packet(scoped_id, packet_id)
-        assert packet.get("effort") == (None if entry["task"] in LOOKS else "high"), entry
+        assert packet.get("effort") == (None if entry["task"] in LOOKS + IMAGE_2 + IMAGE_3
+                                        else "high"), entry
 
 
 @pytest.mark.pro
@@ -307,7 +325,7 @@ def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
     sid = start(session, "gnoscope", engine="v2")
     got = drive_scoped(sid, Oracle(info), answer_scope=False)
     for reader, tasks in (("looks", LOOKS), ("judges", JUDGES), ("second", SECOND),
-                          ("third", THIRD)):
+                          ("third", THIRD), ("image_2", IMAGE_2), ("image_3", IMAGE_3)):
         for task, _model, kind in got[reader]:
             assert task in tasks, (reader, task, kind)
     # v2's cell panels choose its gates: the judges' task reads them.

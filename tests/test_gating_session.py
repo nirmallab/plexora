@@ -186,9 +186,12 @@ def unlooked_closes(session_id):
 
 def start(session, **options):
     """A session on the synthetic project, engine v1 unless `options` names
-    another: `Oracle` answers v1's looks."""
+    another: `Oracle` answers v1's looks. A whole-image check is answered
+    once (`check_rereads` off): these tests script what follows a verdict;
+    a second reader's is test_gating_second_verdict's subject."""
     started = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "project",
-                                                          "project": "gsynth", **options}))
+                                                          "project": "gsynth",
+                                                          "check_rereads": "off", **options}))
     jobs.drain(120)
     # The partner review is the subject of test_gating_partner_groups: here
     # it is answered with nothing to change, which changes nothing.

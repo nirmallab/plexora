@@ -3087,6 +3087,15 @@
        ],
        "type": "string"
       },
+      "check_rereads": {
+       "default": "all",
+       "description": "Whole-image checks answered by a second, blind reader (a third if they differ): all, off.",
+       "enum": [
+        "all",
+        "off"
+       ],
+       "type": "string"
+      },
       "classifier": {
        "default": "layer",
        "description": "The Single Cell Classifier beside each gate. layer: trained at each written gate, kept beside the threshold (which decides) until the user adopts it; check: also show the cells it disagrees on in a look; off.",
@@ -3247,7 +3256,7 @@
       },
       "panel_rereads": {
        "default": "contested",
-       "description": "Engines v3 to v5: which cell panels a second reader reads again, blind to the first (a third reader when the two differ by three or more own-stain calls; a cell counts the label the readings agree on). contested: a panel whose reading leaves candidate gates farther apart than the tolerance; all: every panel; off.",
+       "description": "Cell panels a second, blind reader reads again (a third if 3+ own-stain calls apart; cells keep agreed labels): contested (gates left beyond the tolerance), all, off.",
        "enum": [
         "contested",
         "all",

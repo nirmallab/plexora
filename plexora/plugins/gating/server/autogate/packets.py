@@ -1397,6 +1397,9 @@ def qc_confirm(engine, units):
         "allowed": _allowed(answers.QCAnswer, "verdict"),
         "_image_meta": [],
     }
+    from plexora.plugins.gating.server.autogate import second_verdict
+
+    second_verdict.tag(packet, "qc_confirm", [unit])
     return packet, _images(packet, ((view, "context_sheet",
                                      "the whole image and three fields"),))
 
@@ -1811,6 +1814,9 @@ def t1_strip(engine, units):
     }
     image, meta = _image(sheet, "audit_sheet", "near-gate cells, one row per marker")
     packet["_image_meta"].append(meta)
+    from plexora.plugins.gating.server.autogate import second_verdict
+
+    second_verdict.tag(packet, "t1_strip", listed)
     return packet, [image]
 
 
