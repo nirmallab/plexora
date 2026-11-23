@@ -947,6 +947,44 @@ table and a mask, puts the summary on `result["dna_retention"]` and the
 digest in the final review's evidence; a failure is a planning note. Free
 tools: `run_dna_retention` (job), `get_dna_retention`, `clear_dna_retention`.
 
+## 12b. Low quality staining
+
+*`server/stain.py`, `static/qcStaining.js`; the session check `stain` (`QCChecks.stain`, on
+by default).* Did each marker's stain work? One check unit per marker channel
+(`stain.checked_channels`: every channel but the nuclear stains and
+autofluorescence, blank, control and background cycles), its picture drawn in the
+bulk pass and kept as an artifact, then one `stain_check` packet:
+
+- **A** the whole tissue; **B, C** two 200 µm fields of typical cell density, the
+  same two places for every channel (chosen on the nuclear stain, never the marker);
+  **D** about 50 µm round one cell of the marker's top 0.5 % by its table value, its
+  top 0.05 % left out (often debris); **E** co-expression with a partner from the
+  marker graph in a field holding the most of the partner's top-decile cells (marker
+  alone, partner alone, merge). Partner: the vocabulary's forward `subset` /
+  `coexpressed` partners by confidence, then the entry's `subset_any` carriers, then a
+  marker stated as a subset of this one; a candidate another candidate sits inside is
+  dropped (CD4 for TIGIT, never CD45). QC reads the vocabulary itself: it never
+  imports gating.
+- The question asks for the expectation first (compartment, cells, how common, how
+  they sit in the tissue), then whether there is clear non-random biological
+  structure; `real`, `weak`, `failed`, `cannot_tell`.
+- A first `failed` is read again by `qc.stain_reader_2` (`reader_of: stain_check`), a
+  worker that never saw the first answer: the packet is identical, `stain_read` is in
+  the memo key only. Two `failed` stand; when the second differs, `qc.stain_reader_3`,
+  blind to both, decides -- best of three: `failed` when two say so, else the verdict
+  two share, else `weak` when one said weak, else `cannot_tell` (`stain.settle`).
+- `result["checks"]["stain"][channel]` keeps the verdict, every reading, the partner
+  and the picture's artifact id; `get_qc_results` adds `low_quality_staining` (counts
+  and the weak and failed channels, failed first); the report (HTML and PDF) has its
+  own section with the pictures; the panel's **Low quality staining** fold lists them, a click
+  showing the picture.
+
+**A flag, never a removal.** On the owner's labels of 209 channels on seven images
+(2026-11-23, `docs/internal/bench/runs/2026-11-23-channel-labels`), two blind readers
+with row E caught 7 of 9 failed stains and called 5 real and 5 weak ones failed. So a
+verdict here changes no channel status, no cell call and no gate; how automatic
+gating should use it is not decided.
+
 ## 13. Categories, thresholds and provenance
 
 **Five categories over the classes.** `schemas.CATEGORIES` (Blur / focus,

@@ -18,6 +18,7 @@ import numpy as np
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import polygons, schemas, sheets
+from plexora.plugins.qc.server import stain as stain_module
 
 MAX_IMAGES = 2
 SIGNIFICANT = 4
@@ -1129,10 +1130,61 @@ def visual_scan(engine, units):
                                      "the whole tissue in four views")])
 
 
+def stain_check(engine, units):
+    """One marker's stain picture (`stain.py`): is there a real, specific
+    population of cells? A second reading goes out exactly as the first
+    did -- nothing in it says a reading came before."""
+    import io
+
+    from PIL import Image
+
+    from plexora.agent import artifacts
+
+    stain = stain_module
+    unit = units[0]
+    project = unit["project"]
+    rendered = None
+    if unit.get("picture"):
+        try:
+            png, manifest = artifacts.get(unit["picture"])
+            with Image.open(io.BytesIO(png)) as im:
+                size = im.size
+            rendered = {"image": png, "format": "png", "size": size, "manifest": manifest,
+                        "artifact": {"id": unit["picture"]}}
+        except Exception:  # noqa: BLE001 -- swept or unreadable: draw it again
+            rendered = None
+    if rendered is None:
+        rendered = stain.render(engine.call.session, project, unit["channel"],
+                                partner_name=unit.get("partner"),
+                                partner_words=unit.get("partner_words"), fmt=_fmt(engine))
+        unit["picture"] = (rendered.get("artifact") or {}).get("id")
+    if unit.get("picture") and unit["picture"] not in (unit.get("artifacts") or []):
+        _record_artifact([unit], rendered)
+    manifest = rendered["manifest"]
+    names = engine.call.session.project(project).image.real_channels
+    names = [c.get("fullname") or c.get("name") for c in names]
+    marker = unit["channel"]
+    evidence = {"marker": marker, "project": project,
+                "expression": stain.note(names, marker),
+                "partner": manifest.get("partner"),
+                "partner_relation": manifest.get("partner_words"),
+                "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um"),
+                **_reading(engine, ["stain"])}
+    packet = {"question": stain.QUESTION.format(marker=marker), "evidence": evidence,
+              "allowed": list(stain.VERDICTS), "_image_meta": [],
+              "_stain_read": int(unit.get("stain_read") or 1)}
+    return packet, _images(packet, [(rendered, "stain_picture",
+                                     f"{marker}: whole tissue, two fields, a few cells"
+                                     + (", co-expression" if manifest.get("partner") else ""))])
+
+
+READING_GUIDE["stain"] = stain_module.READING
+
 BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm,
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
-            "score_review": score_review, "visual_scan": visual_scan}
+            "score_review": score_review, "visual_scan": visual_scan,
+            "stain_check": stain_check}
 
 
 def _narrated_channel(channels) -> str:

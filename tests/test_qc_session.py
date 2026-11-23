@@ -136,6 +136,12 @@ class QCOracle:
         if kind == "visual_scan":
             # The oracle draws nothing: the visual pass is tests/test_qc_visual_session.py's.
             return {"kind": kind, "status": "nothing_found"}
+        if kind == "stain_check":
+            # A channel the scene failed reads failed; every other reads real.
+            failed = truth["channels"].get(unit.get("channel")) == "failed"
+            return {"kind": kind, "expectation": "", "observed": "",
+                    "structure": "no" if failed else "yes",
+                    "verdict": "failed" if failed else "real", "why": "the oracle's truth"}
         raise AssertionError(kind)
 
     #: The class of the painted region each check should find.

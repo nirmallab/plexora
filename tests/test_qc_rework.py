@@ -33,8 +33,9 @@ def test_blur_falls_back_to_every_channel_when_no_dna_is_recognisable(no_referen
     assert sorted(u["channel"] for u in units if u["check"] == "blur") == names
     # The visual pass notes itself not run wherever magic select is absent:
     # not this test's concern (tests/test_qc_visual_session.py pins it).
+    # Low quality staining needs a DNA channel to choose its shared fields.
     assert {n["check"]: n["status"] for n in notes if n["check"] != "visual"} == {
-        "blur": "widened", "registration": "not_run"}
+        "blur": "widened", "registration": "not_run", "stain": "not_run"}
 
 
 def test_registration_compares_every_dna_channel_without_a_cap(no_reference):

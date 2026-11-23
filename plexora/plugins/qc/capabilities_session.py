@@ -110,6 +110,12 @@ class QCChecks(AgentModel):
                          description="After the checks, one look at the whole tissue on which "
                                      "you outline large artifacts the detectors missed "
                                      "(segment_qc_roi).")
+    #: One picture per marker channel (`server/stain.py`): real, weak or
+    #: failed. A flag for a person -- it never fails a channel or its cells.
+    stain: bool = Field(default_factory=lambda: _check_default("stain"),
+                        description="Low quality staining: one picture per marker channel, "
+                                    "judged real, weak or failed (a first `failed` read again "
+                                    "by a second, blind reader). Flags only.")
     blur_channels: list[str] | None = Field(
         None, description="The channels Blur QC scores (default: the session's nuclear "
                           "channels, else every channel).")
@@ -421,6 +427,23 @@ def plan_checks(session, record, project, names, checks, *, notes=None) -> list:
                           "reason": "magic select is not installed, so the agent cannot "
                                     "outline what it sees on the overview",
                           "channels": []})
+    if checks.stain:
+        from plexora.plugins.qc.server import stain
+
+        if not nuclear:
+            notes.append({"check": "stain", "status": "not_run",
+                          "reason": "no DNA channel is recognisable by name, so the fields "
+                                    "every stain picture shares cannot be chosen",
+                          "channels": []})
+        else:
+            for name in stain.checked_channels(names, nuclear):
+                try:
+                    partner, words = stain.partner(names, name, exclude=nuclear)
+                except Exception:  # noqa: BLE001 -- a partner is a help, never required
+                    partner, words = None, None
+                units.append(unit("stain", name, channel=name, channels=[name],
+                                  partner=partner, partner_words=words, readings=[],
+                                  stain_read=1, rereads=bool(stain.STAIN["rereads"])))
     return units
 
 
@@ -639,6 +662,8 @@ def packet_subject(packet) -> str:
         return "the whole image"
     if packet.get("kind") == "visual_scan":
         return "the whole tissue, large artifacts"
+    if packet.get("kind") == "stain_check":
+        return f"{evidence.get('marker') or 'a marker'}, is the stain real"
     if packet.get("kind") == "score_review":
         words = schemas.CHECK_WORDS.get(evidence.get("check"), evidence.get("check") or "")
         # Segmentation QC scores the mask; the Artifact Detector, every channel.
@@ -689,6 +714,8 @@ def answer_narration(outcome, closed, kind) -> str:
                 lines.append(f"{name} {_VERBS[state]}" + (f": {detail}" if detail else ""))
             else:
                 lines.append(f"{name} {LABELS['outcomes'].get(state, state)}")
+        elif unit.get("check") == "stain" and unit.get("verdict"):
+            lines.append(f"{unit.get('channel')} stain: {unit['verdict']}")
         else:
             name = unit.get("channel") or unit.get("id") or "A unit"
             lines.append(f"{name} {LABELS['outcomes'].get(state, str(state).replace('_', ' '))}")
@@ -698,6 +725,13 @@ def answer_narration(outcome, closed, kind) -> str:
     state = (outcome or {}).get("state")
     if kind == "channel_audit":
         return "Channel audit read; the flagged regions are looked at next."
+    if kind == "stain_check":
+        verdict = (outcome or {}).get("verdict")
+        if verdict:
+            return f"Stain check: {verdict}."
+        if int((outcome or {}).get("reading") or 1) >= 2:
+            return "Stain check: the two readers differ; a third, blind reader decides."
+        return "Stain check: read as failed; a second, blind reader looks next."
     if kind == "visual_scan":
         found = (outcome or {}).get("regions") or {}
         n = int(found.get("written") or 0)

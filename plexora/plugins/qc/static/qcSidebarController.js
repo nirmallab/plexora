@@ -135,6 +135,8 @@ class QcSidebarController {
         this.segmentation = new QcSegmentationQc(ctx, this.api, this);
         this.blur = new QcBlurQc(ctx, this.api, this);
         this.artifacts = new QcArtifactsQc(ctx, this.api, this);
+        // Low quality staining: what a QC session read as weak or failed.
+        this.staining = window.QcStaining ? new QcStaining(ctx, this.api, this) : null;
         // A z-stack's own checks (qcStack.js): hidden on a flat image.
         this.stack = window.QcStack ? new QcStack(ctx, this.api, this) : null;
         this.tree = new QcTree({
@@ -324,6 +326,7 @@ class QcSidebarController {
             this.segmentation.adopt((this.state.checks || {}).segmentation);
             this.blur.adopt((this.state.checks || {}).blur);
             this.artifacts.adopt((this.state.checks || {}).artifacts);
+            this.staining?.adopt(this.state.low_quality_staining);
         } catch (error) {
             this.status("error", "QC could not be read");
         }

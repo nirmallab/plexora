@@ -77,7 +77,7 @@ PLUGIN = Plugin(
     # checks' rows.
     scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcHover.js",
              "qcRegistration.js", "qcBlur.js", "qcArtifacts.js", "qcSegmentation.js",
-             "qcStack.js",
+             "qcStack.js", "qcStaining.js",
              "qcSidebarController.js", "qcAgentBridge.js"),
     styles=("qc.css",),
     # An image is all image QC needs; a table (and a mask) add the cell half.

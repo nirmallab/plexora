@@ -661,7 +661,8 @@ FINAL_STATES = ("pending", "awaiting_review", "reviewed", "manual_review_recomme
 #: on one channel or comparison, scored in the bulk stage and settled by one
 #: `score_review` look at tiles sampled across its score distribution.
 CHECK_STATES = ("pending", "scanned", "awaiting_score_review", "awaiting_visual_scan",
-                "decided", "skipped_not_applicable", "manual_review_recommended")
+                "awaiting_stain_check", "decided", "skipped_not_applicable",
+                "manual_review_recommended")
 
 TERMINAL_STATES = ("clean", "flagged", "failed_channel", "manual_review_recommended",
                    "skipped_no_image", "skipped_brightfield",
@@ -679,7 +680,8 @@ FINISHED_STATES = ("done", "cancelled", "rolled_back", "failed")
 ASKS = {"audit_uncertain": "artifact_confirm", "awaiting_confirm": "artifact_confirm",
         "awaiting_scope": "artifact_scope", "awaiting_localize": "artifact_localize",
         "awaiting_grid": "artifact_grid", "awaiting_review": "final_qc_review",
-        "awaiting_score_review": "score_review", "awaiting_visual_scan": "visual_scan"}
+        "awaiting_score_review": "score_review", "awaiting_visual_scan": "visual_scan",
+        "awaiting_stain_check": "stain_check"}
 
 # -- the image checks inside a session -----------------------------------------
 
@@ -697,6 +699,9 @@ CHECK_WORDS = {"blur": "blur", "registration": "registration mismatch",
                # The visual pass: not a score but a look over the whole tissue
                # (`overview.py`), settled by the regions the agent outlines.
                "visual": "large artifacts seen on the overview",
+               # Low quality staining (`stain.py`): one picture per marker,
+               # read for whether its stain worked.
+               "stain": "low quality staining",
                # Not checks a session reviews: the steps before them, named in
                # a planning note when they could not run.
                "background": "the background outside the tissue",
@@ -749,7 +754,7 @@ SETUP_KINDS = ("pixel_setup",)
 #: `artifact_confirm` may carry several candidates (answered per candidate
 #: label).
 LOOK_KINDS = ("channel_audit", "artifact_confirm", "artifact_localize", "artifact_grid",
-              "score_review", "visual_scan")
+              "score_review", "visual_scan", "stain_check")
 CHECK_KINDS = ("artifact_scope", "final_qc_review")
 PACKET_KINDS = SETUP_KINDS + LOOK_KINDS + CHECK_KINDS
 #: Looks a unit's allowance pays for; the audit, scope and final review are
@@ -789,6 +794,22 @@ QC_UNIT_DEFAULT = {"packets": 5, "images": 10, "pixels": 8_000_000, "chars": 40_
 VISUAL = {"max_regions": 8, "channel_sheet_top": 8, "min_on_tissue": 0.2,
           "overview_px": 512, "overview_px_large": 768, "context_pad": 3.0,
           "grid_side": 6, "overview_max_pixels": 6_000_000, "preview_px": 512}
+
+#: [cal] Low quality staining (`stain.py`, the `stain_check` packet): one
+#: picture per marker channel. `field_um` the side of the two tissue-scale
+#: fields B and C and of row E's field, read at the coarsest level giving at
+#: least `field_min_px` pixels (`field_px_no_pixel` level-0 pixels without a
+#: pixel size); `cells_um` the side of D, a few cells (`cells_px_no_pixel`);
+#: `overview_max_px` the largest side of the level A is read at;
+#: `overview_px` / `overview_max_h` A's drawn size; `panel_px` each lower
+#: panel. `rereads`: a first `failed` read again by a second, blind reader
+#: (`qc.stain_reader_2`); when they differ a third (`qc.stain_reader_3`)
+#: decides, best of three (`stain.settle`). The owner's labels
+#: (2026-11-23) set these: a 200 um field shows vessels and lymphoid
+#: structures, a 50 um one single cells.
+STAIN = {"field_um": 200.0, "field_min_px": 300, "field_px_no_pixel": 640,
+         "cells_um": 50.0, "cells_px_no_pixel": 154, "overview_max_px": 1600,
+         "overview_px": 900, "overview_max_h": 560, "panel_px": 300, "rereads": True}
 
 #: [cal] the engine's own cut-points.
 ENGINE = {
@@ -964,6 +985,7 @@ NARRATION = {
     "final_qc_review": "Reviewing the whole QC picture before I close.",
     "score_review": "I'm checking tiles across the {check_words} score in {channel}.",
     "visual_scan": "I'm looking over the whole tissue for large artifacts to outline.",
+    "stain_check": "I'm checking whether the {channel} stain worked.",
 }
 
 EVIDENCE_LABELS = {

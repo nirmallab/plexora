@@ -266,6 +266,28 @@
         </div>
     </div>
 
+    {# -- Low quality staining -------------------------------------------------- #}
+    {# The marker channels a QC session read as weak or failed (qcStaining.js):
+       failed first, each with the readers' reason; a click on one shows the
+       picture they judged. Read inside a session only, so no Run; a flag for
+       review, never a removal. #}
+    <div class="qc-tool" id="qc_tool_stain" data-tool="stain" data-open="true" data-state="idle">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_stain_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_stain_body" title="Low quality staining: marker channels read as weak or failed">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-droplet-slash" aria-hidden="true"></span>
+                <span class="qc-tool-title">Low quality staining</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_stain_summary"></span>
+        </div>
+        <div class="qc-tool-body" id="qc_stain_body">
+            <div class="qc-lines qc-stain-list" id="qc_stain_list" role="list"
+                 aria-label="Marker channels read as weak or failed"></div>
+            <div class="qc-tool-note" id="qc_stain_note"></div>
+        </div>
+    </div>
+
     {# -- Segmentation QC ------------------------------------------------------ #}
     <div class="qc-tool" id="qc_tool_seg" data-tool="seg" data-open="true" data-state="idle">
         <div class="qc-tool-head">

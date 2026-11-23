@@ -237,7 +237,8 @@ def test_checks_can_be_turned_off(tmp_path):
     make_qc_project(tmp_path, artifacts=())
     session = AgentSession()
     started = start(session, checks={"blur": False, "registration": False,
-                                     "segmentation": False, "artifacts": False})
+                                     "segmentation": False, "artifacts": False,
+                                     "stain": False})
     assert started["checks"] == []
     skipped = _record(started["session_id"])["scan"]["qcsynth"]["skipped_detectors"]
     assert not any(s.get("superseded_by") for s in skipped)

@@ -20,7 +20,10 @@ KEEP = ("check", "channel", "reference", "fingerprint", "auto_threshold", "thres
         "denominator", "at_threshold", "confirm_groups", "one_cycle", "manual_overflow",
         "notes",
         # The visual pass: what the agent wrote and what it left for a person.
-        "written", "left", "status", "channels_used", "max_regions")
+        "written", "left", "status", "channels_used", "max_regions",
+        # Low quality staining: the verdict, every reading, the picture.
+        "verdict", "low_quality", "why", "readings", "picture", "partner", "partner_words",
+        "partner_drawn", "field_um", "cells_um")
 
 
 def entry_of(unit) -> dict:
@@ -62,6 +65,31 @@ def record(engine, unit):
 def record_all(engine):
     for unit in engine.units_of("check"):
         record(engine, unit)
+
+
+def low_quality_staining(result) -> dict | None:
+    """The Low quality staining section of a result: {n_read, counts:
+    {real, weak, failed, cannot_tell, unread}, channels: [{channel, verdict,
+    readings, why, partner, picture}]} for every marker read weak or failed
+    (failed first), or None when the session read no stain. A flag for a
+    person: nothing in it changed a channel, a cell or a gate."""
+    per = (result.get("checks") or {}).get("stain") or {}
+    if not per:
+        return None
+    counts = {"real": 0, "weak": 0, "failed": 0, "cannot_tell": 0, "unread": 0}
+    channels = []
+    for name, entry in per.items():
+        verdict = entry.get("verdict")
+        counts[verdict if verdict in counts else "unread"] += 1
+        if verdict in ("weak", "failed"):
+            channels.append({"channel": name, "verdict": verdict,
+                             "readings": [r.get("verdict") for r in entry.get("readings") or []],
+                             "why": entry.get("why"), "partner": entry.get("partner_drawn"),
+                             "picture": entry.get("picture")})
+    channels.sort(key=lambda c: (c["verdict"] != "failed", c["channel"]))
+    return {"n_read": len(per) - counts["unread"], "counts": counts, "channels": channels,
+            "note": "a flag for review: weak stains are sometimes read as failed, so no "
+                    "channel, cell or gate was changed"}
 
 
 # -- the registration table ------------------------------------------------------------
