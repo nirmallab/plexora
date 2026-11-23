@@ -303,14 +303,17 @@ class SessionOptions(AgentModel):
                     "v5, off with v1.")
     panel_looks: int = Field(3, ge=1, le=6, description="Engines v3 and v4: the most cell "
                              "panels a marker is shown before review.")
+    #: A whole-image check (the QC check, the T1 strip) answered by a second
+    #: reader that never saw it, a third when they differ (`second_verdict`).
+    check_rereads: Literal[schemas.CHECK_REREAD_MODES] = Field(
+        schemas.CHECK_REREAD_DEFAULT, description="Whole-image checks answered by a second, "
+        "blind reader (a third if they differ): all, off.")
     #: A second reader, blind to the first, in a worker of its own; a third
     #: when the two differ by `reread_gap` own-stain calls (`hypotheses`).
     panel_rereads: Literal[schemas.REREAD_MODES] = Field(
-        schemas.REREAD_DEFAULT, description="Engines v3 to v5: which cell panels a second "
-        "reader reads again, blind to the first (a third reader when the two differ by three "
-        "or more own-stain calls; a cell counts the label the readings agree on). contested: "
-        "a panel whose reading leaves candidate gates farther apart than the tolerance; all: "
-        "every panel; off.")
+        schemas.REREAD_DEFAULT, description="Cell panels a second, blind reader reads again "
+        "(a third if 3+ own-stain calls apart; cells keep agreed labels): contested (gates "
+        "left beyond the tolerance), all, off.")
     #: The pattern, dim cells seen stained, bright cells seen to be debris:
     #: starts the gate no higher than the dim stained cells, keeps the fields
     #: from the debris, caps confidence on a doubt, gives a clean split with a
@@ -1915,8 +1918,13 @@ def next_packet(call, inp):
             # Briefings (`packets.briefed`) are kept for one reader, so a lane
             # of a parallel session is sent its packets whole.
             several = reader != DEFAULT_READER or inp.parallel > 1
-            sent = (packets.as_sent(packet, record, options, full=not fresh or several,
-                                    register_sheets=not several)
+            # A reading after the first (a panel or a whole-image check read
+            # again, `evidence.check`) goes whole: a pointer into what was
+            # sent before could name the reading it must not see.
+            again = str(((packet or {}).get("evidence") or {}).get("check") or "") \
+                .startswith("reader_")
+            sent = (packets.as_sent(packet, record, options, full=not fresh or several or again,
+                                    register_sheets=not (several or again))
                     if status in ("packet", "again") else None)
             snapshot = {"images": record["images"], "state": state,
                         "outstanding_kind": record.get("outstanding_kind"),

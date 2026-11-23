@@ -619,8 +619,17 @@ def _split_mixed(engine, unit, chain, answer, placed, passed):
 
 
 def apply_qc(engine, packet, answer):
+    from plexora.plugins.gating.server.autogate import second_verdict
+
     unit = _units(engine, packet)[0]
     _note(unit, answer)
+    # One reader's verdict on the whole picture waits for a second reader's
+    # (a third when they differ): the verdict two give is the one acted on.
+    verdict = second_verdict.settle(engine, unit, packet, answer.verdict)
+    if verdict is None:
+        return _outcome(unit, verdict_reading=second_verdict.read_due(unit, "qc_confirm"))
+    if verdict != answer.verdict:
+        answer = answer.model_copy(update={"verdict": verdict})
     unit["qc_done"] = True
     if unit.get("lineage_check"):
         from plexora.plugins.gating.server.autogate import replan
@@ -866,14 +875,23 @@ def _reopen(engine, unit) -> bool:
 def apply_strip(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import groups
 
+    from plexora.plugins.gating.server.autogate import second_verdict
+
     units = _units(engine, packet)
     outcomes = []
     for unit in units:
         verdict = answer.verdicts.get(unit["marker"], "cannot_tell")
-        unit["strip_verdict"] = verdict
         if unit["state"] in TERMINAL:
+            unit["strip_verdict"] = verdict
             outcomes.append(_outcome(unit))
             continue
+        # Each row's verdict waits for a second reader's (`second_verdict`).
+        verdict = second_verdict.settle(engine, unit, packet, verdict)
+        if verdict is None:
+            outcomes.append(_outcome(unit, verdict_reading=second_verdict.read_due(
+                unit, "t1_strip")))
+            continue
+        unit["strip_verdict"] = verdict
         if verdict == "ok":
             # The audit agrees with the split; the numeric checks every
             # other write passes still run (`Engine.settle`). A gate carried

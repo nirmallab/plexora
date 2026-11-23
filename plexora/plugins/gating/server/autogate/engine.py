@@ -1709,7 +1709,7 @@ class Engine(BaseEngine):
         that reading, `gating.panel_reader_<n>` (`hypotheses.rereads`): a
         worker of its own, which never read the picture."""
         from plexora.ai import tasks
-        from plexora.plugins.gating.server.autogate import cellcalls, hypotheses
+        from plexora.plugins.gating.server.autogate import cellcalls, hypotheses, second_verdict
 
         if kind == "t4_candidates" and any(cellcalls.pending(u) for u in units or ()):
             return tasks.task_for(self.MODULE, kind, check="classifier")
@@ -1717,7 +1717,24 @@ class Engine(BaseEngine):
             read = max((hypotheses.read_due(u) for u in units or ()), default=1)
             if read > 1:
                 return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
+        if kind in second_verdict.CHECK_KINDS:
+            # A whole-image check answered again: `gating.image_reader_<n>`.
+            read = max((second_verdict.read_due(u, kind) for u in units or ()), default=1)
+            if read > 1:
+                return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
         return super().task_of(kind, units)
+
+    @staticmethod
+    def _one_reading(strip):
+        """The strip's units waiting for one and the same reading of it
+        (`second_verdict`): a strip read again goes out as it was, before
+        rows that have not been read yet join a strip of their own."""
+        from plexora.plugins.gating.server.autogate import second_verdict
+
+        if not strip:
+            return strip
+        read = max(second_verdict.read_due(u, "t1_strip") for u in strip)
+        return [u for u in strip if second_verdict.read_due(u, "t1_strip") == read]
 
     def panel_for(self, project):
         """The image's panel context with the session's biology laid over it
@@ -2415,7 +2432,7 @@ class Engine(BaseEngine):
                 # before this image's later markers or the next image.
                 if picks:
                     return picks, None
-                return ([], "busy") if held else ([("t1_strip", strip)], None)
+                return ([], "busy") if held else ([("t1_strip", self._one_reading(strip))], None)
             if due:
                 return blocked("wait")
         if picks:
@@ -2617,7 +2634,7 @@ class Engine(BaseEngine):
                     # has not reached yet is asked about.
                     if bulk_running:
                         if strip:
-                            return "t1_strip", strip
+                            return "t1_strip", self._one_reading(strip)
                         return "wait", []
                     self.close(unit, "manual_review_recommended",
                                "the deterministic pass did not reach this marker",
@@ -2628,7 +2645,7 @@ class Engine(BaseEngine):
                     # Its partners' T1 gates are not all known yet: it waits,
                     # and nothing past it goes, as for a unit not reached.
                     if strip:
-                        return "t1_strip", strip
+                        return "t1_strip", self._one_reading(strip)
                     return "wait", []
                 kind = self._decision(unit)
                 if kind:
@@ -2636,9 +2653,9 @@ class Engine(BaseEngine):
                 if unit["state"] == "accepted_t1":
                     strip.append(unit)
                     if len(strip) >= ENGINE["strip_batch"]:
-                        return "t1_strip", strip
+                        return "t1_strip", self._one_reading(strip)
             if strip:
-                return "t1_strip", strip
+                return "t1_strip", self._one_reading(strip)
         waiting = self.waiting_for_user()
         if waiting:
             return "wait_user", waiting
