@@ -2224,3 +2224,31 @@ def test_a_lone_clear_region_is_looked_at_again_before_it_keeps_the_marker_open(
                                                            "r3": "few", "r4": "clear"}))
     assert out["absent"] is False and "absence_confirming" not in unit
 
+
+
+def test_a_readout_leans_on_a_readout_it_is_stated_to_nest_in_and_a_lineage_marker_never_does():
+    """lsp35766_p193_2 Rb (a functional readout, the role `state`): its cells
+    above the owner's 5.11 are three in four Ki-67+. Ki-67 serves Rb as a
+    reference once a relation between the two is stated; it never serves a
+    lineage marker, and one derived through the tree does not count."""
+    import copy
+
+    from plexora.plugins.gating.server.autogate import context
+
+    panel = context.build(["DNA", "CD45", "CD3", "Ki67", "Rb"])
+    assert context.references_for(panel, "Rb", {"Ki67": "high"}) == []      # nothing stated
+    stated = copy.deepcopy(panel)
+    stated["entries"]["Rb"].setdefault("partners", []).append(
+        {"marker": "Ki67", "relation": "subset", "confidence": "moderate"})
+    assert [r["marker"] for r in context.references_for(stated, "Rb", {"Ki67": "high"})] == ["Ki67"]
+    assert context.references_for(stated, "Rb", {"Ki67": "low"}) == []      # Ki-67's own gate unreliable
+    weak = copy.deepcopy(stated)                                            # a tumour: the graph grades it low
+    weak["entries"]["Rb"]["partners"][-1]["confidence"] = "low"
+    assert [r["marker"] for r in context.references_for(weak, "Rb", {"Ki67": "high"})] == ["Ki67"]
+    lineage = copy.deepcopy(panel)
+    lineage["entries"]["CD3"].setdefault("partners", []).append(
+        {"marker": "Ki67", "relation": "subset", "confidence": "moderate"})
+    assert "Ki67" not in {r["marker"] for r in context.references_for(lineage, "CD3", {"Ki67": "high"})}
+    flat = copy.deepcopy(stated)
+    flat["entries"]["Ki67"]["binary"] = False                              # a partner whose gate splits nothing
+    assert context.references_for(flat, "Rb", {"Ki67": "high"}) == []

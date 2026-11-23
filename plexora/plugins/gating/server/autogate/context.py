@@ -1059,15 +1059,33 @@ def references_for(context, marker, gated, *, limit=MAX_REFERENCES):
     (`high`, `moderate`, `low`, `failed`, ...). A partner qualifies when the
     relation (stated, or implied by the tree) is of moderate or high
     confidence, it was gated at moderate or better, and it is not itself a
-    state or signalling readout.
+    state or signalling readout -- unless the marker is one too, the relation
+    between the two is stated (not derived through the tree), and the
+    partner's gate splits cells (binary): a cell-cycle readout checked
+    against Ki-67 (lsp35766_p193_2 Rb, whose cells above the owner's 5.11 are
+    three in four Ki-67+). Such a relation counts even at low confidence --
+    the graph grades most cell-cycle relations weak in tumours, where arrest
+    and proliferation proteins can share a cell -- and weighs little there
+    (`hierarchy.relations`' relevance). A lineage marker never leans on a
+    readout.
     """
     from plexora.plugins.gating.server.autogate import hierarchy
 
     entries = context.get("entries") or {}
+    readout = (entries.get(marker) or {}).get("role") in ("state", "signalling")
+
+    def between_readouts(r):
+        partner = entries.get(r["marker"]) or {}
+        return partner.get("role") in ("state", "signalling")
+
+    def usable(r):
+        if not between_readouts(r):
+            return CONFIDENCE_RANK.get(r["confidence"], 0) >= 1
+        return readout and not r["derived"] \
+            and (entries.get(r["marker"]) or {}).get("binary") is not False
+
     rels = [r for r in hierarchy.relations(context, marker)
-            if r["kind"] in ("positive", "negative")
-            and CONFIDENCE_RANK.get(r["confidence"], 0) >= 1
-            and (entries.get(r["marker"]) or {}).get("role") not in ("state", "signalling")]
+            if r["kind"] in ("positive", "negative") and usable(r)]
     chosen = hierarchy.select(rels, gated, min_grade="moderate", limit=limit)
     return [{"marker": r["marker"], "relation": r["relation"], "confidence": r["confidence"],
              "grade": r["grade"], "weight": r["weight"], "derived": r["derived"]}

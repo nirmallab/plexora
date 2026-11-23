@@ -352,7 +352,11 @@ def _build(graph) -> dict:
     for edge in graph.edges:
         if not graph.applies(edge) or not counts(edge):
             continue
-        kind, confidence = edge["type"], _grade(edge.get("confidence"))
+        # With no context named, an edge tumour cells break does not apply
+        # (`Graph.edge_scope`) and one they keep only in part is weak
+        # (`Graph.edge_grade`); a named tissue lays its own grade on
+        # (`biology.load`).
+        kind, confidence = edge["type"], _grade(graph.edge_grade(edge))
         if kind in ("subset", "subset_any"):
             via = {}
             for ref in _graph.targets(edge):
