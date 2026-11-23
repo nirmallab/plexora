@@ -214,6 +214,9 @@ def get_results(call, inp):
         table = checks_result.registration_table(result)
         if table:
             out["registration"] = table
+        staining = checks_result.low_quality_staining(result)
+        if staining:
+            out["low_quality_staining"] = staining
     out["cells"] = {k: v for k, v in (result.get("cells") or {}).items() if k != "modules"}
     retention = result.get("dna_retention")
     if retention is None:

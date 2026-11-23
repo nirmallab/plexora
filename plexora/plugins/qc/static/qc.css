@@ -2463,3 +2463,35 @@
     font-size: var(--panel-font-note);
     line-height: 1.4;
 }
+
+/* -- Low quality staining (qcStaining.js) ------------------------------------ */
+.qc-stain-line[data-verdict="failed"] { --qc-row-color: #d14b4b; }
+.qc-stain-line[data-verdict="weak"] { --qc-row-color: #d8a23a; }
+.qc-stain-name {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.qc-stain-verdict {
+    margin-left: auto;
+    color: var(--text-secondary);
+    font-size: var(--panel-font-note);
+}
+.qc-stain-why {
+    color: var(--text-secondary);
+    font-size: var(--panel-font-note);
+    line-height: 1.4;
+    margin: 0 0 4px 18px;
+}
+.qc-stain-picture {
+    display: block;
+    width: 100%;
+    margin: 2px 0 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    cursor: zoom-in;
+}

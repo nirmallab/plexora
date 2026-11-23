@@ -238,6 +238,35 @@ modules:
         # magic-select tools while the packet is out, which a worker scoped
         # to packets does not have. No worker group claims it.
         mcp: false
+      stain_check:
+        label: Low quality staining
+        blurb: Looks at each marker's stain across scales and with a partner marker, and says whether it worked.
+        # One picture per marker channel (qc/server/stain.py), benched on the
+        # owner's labels of 209 channels on seven images (2026-11-23,
+        # docs/internal/bench/runs/2026-11-23-channel-labels).
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: [stain_check]
+      stain_reader_2:
+        label: Second stain reader
+        blurb: Reads a stain picture called failed again, blind to the first answer, so no single reading fails a stain.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["stain_check:reader_2"]
+        reader_of: stain_check
+      stain_reader_3:
+        label: Third stain reader
+        blurb: Reads a stain picture a third time when the first two readers differ, blind to both; best of three decides.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["stain_check:reader_3"]
+        reader_of: stain_check
   chat:
     label: Chat
     tasks:

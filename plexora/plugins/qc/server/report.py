@@ -448,6 +448,7 @@ def to_html(call, report) -> str:
         png = _safe(_overview, call, report["project"], report, channel=channel["name"],
                     regions=mine, size=CHANNEL_PX)
         parts.append(f"<h3>{esc(channel['name'])}</h3>" + image(png, channel["name"]))
+    parts.extend(_stain_html(report, esc, image))
     cells = report["cells"]
     if cells.get("n"):
         parts.append("<h2>Cells</h2><p class='muted'>Every cell is kept in every export; a "
@@ -607,6 +608,8 @@ def _checks_html(report, esc):
     where that bar came from, what its look said, what became of it."""
     rows = []
     for check, per in (report.get("checks") or {}).items():
+        if check == "stain":
+            continue  # its own section (`_stain_html`)
         for key, entry in per.items():
             if check == "visual":
                 found = entry.get("regions") or {}
@@ -650,6 +653,70 @@ def _checks_html(report, esc):
     if notes:
         out += ["<p>Not checked, or checked differently from the default:</p><ul>", *notes,
                 "</ul>"]
+    return out
+
+
+#: What the Low quality staining section is, in both reports.
+STAIN_WORDS = ("Each marker channel was shown at several scales and beside a partner marker, "
+               "and read for a real, specific population of cells; a first 'failed' was read "
+               "again by a second reader who never saw the first, and a third decided when "
+               "the two differed. A flag for review: weak stains are sometimes read as failed, "
+               "so nothing here changed a channel, a cell or a gate.")
+
+
+def _stain_brief(report):
+    """{sentence, low: [(channel, entry)] weak and failed (failed first),
+    readings: {channel: 'failed / real / real'}}, or None when no stain was
+    read."""
+    per = (report.get("checks") or {}).get("stain") or {}
+    if not per:
+        return None
+    low = [(k, e) for k, e in per.items() if e.get("verdict") in ("weak", "failed")]
+    low.sort(key=lambda ke: (ke[1].get("verdict") != "failed", ke[0]))
+    count = {v: sum(1 for e in per.values() if e.get("verdict") == v)
+             for v in ("real", "weak", "failed")}
+    unsure = [k for k, e in per.items() if e.get("verdict") == "cannot_tell"]
+    sentence = (f"{len(per)} channels read: {count['real']} real, {count['weak']} weak, "
+                f"{count['failed']} failed"
+                + (f", {len(unsure)} could not be told ({', '.join(unsure)})" if unsure else "")
+                + ".")
+    readings = {k: " / ".join(str(r.get("verdict")) for r in e.get("readings") or []) or "-"
+                for k, e in low}
+    return {"sentence": sentence, "low": low, "readings": readings}
+
+
+def _stain_png(entry):
+    from plexora.agent import artifacts
+
+    try:
+        return artifacts.get(entry["picture"])[0] if entry.get("picture") else None
+    except Exception:  # noqa: BLE001 -- a swept picture is no reason to fail the report
+        return None
+
+
+def _stain_html(report, esc, image):
+    """Low quality staining: the marker channels read weak or failed, each
+    with what the readers said and its picture; a count of those read real.
+    A flag for a person: nothing here changed a channel, a cell or a gate."""
+    staining = _stain_brief(report)
+    if not staining:
+        return []
+    out = [f"<h2>Low quality staining</h2><p class='muted'>{esc(STAIN_WORDS)}</p>",
+           f"<p>{esc(staining['sentence'])}</p>"]
+    if not staining["low"]:
+        return out
+    out.append("<table><tr><th>channel</th><th>verdict</th><th>readings</th>"
+               "<th>partner</th><th>why</th></tr>")
+    for key, entry in staining["low"]:
+        out.append(f"<tr><td>{esc(key)}</td><td>{esc(str(entry.get('verdict')))}</td>"
+                   f"<td>{esc(staining['readings'][key])}</td>"
+                   f"<td>{esc(str(entry.get('partner_drawn') or '-'))}</td>"
+                   f"<td>{esc(str(entry.get('why') or '-'))}</td></tr>")
+    out.append("</table>")
+    for key, entry in staining["low"][:12]:
+        png = _stain_png(entry)
+        if png:
+            out.append(f"<h3>{esc(key)}: {esc(str(entry.get('verdict')))}</h3>" + image(png, key))
     return out
 
 
@@ -768,6 +835,23 @@ def to_pdf(call, report, path):
         rows.append([channel["name"], _n(channel.get("cycle")), channel.get("status"),
                      verdict, klass, why, ", ".join(channel.get("flags") or [])])
     story.append(grid(rows, [36, 12, 30, 22, 36, 86, 40]))
+    staining = _stain_brief(report)
+    if staining:
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("Low quality staining", heading))
+        story.append(Paragraph(esc(STAIN_WORDS), muted))
+        story.append(Paragraph(esc(staining["sentence"]), body))
+        if staining["low"]:
+            story.append(grid([["channel", "verdict", "readings", "partner", "why"]]
+                              + [[k, e.get("verdict"), staining["readings"][k],
+                                  e.get("partner_drawn") or "-", e.get("why") or "-"]
+                                 for k, e in staining["low"]], [30, 18, 34, 24, 96]))
+            for key, entry in staining["low"][:6]:
+                png = _stain_png(entry)
+                if png:
+                    story.append(Spacer(1, 2 * mm))
+                    story.append(Paragraph(esc(f"{key}: {entry.get('verdict')}"), small))
+                    story.append(picture(png, frame_w, (page_h - 2 * margin) * 0.6))
     cells = report["cells"]
     if cells.get("n"):
         story.append(Spacer(1, 4 * mm))

@@ -261,6 +261,10 @@ class QCTruthAgent:
         if kind == "visual_scan":
             # The bench draws nothing by eye: the detectors are what it scores.
             return {"kind": kind, "status": "nothing_found"}
+        if kind == "stain_check":
+            # The synthetic images carry no stain truth: every stain reads real.
+            return {"kind": kind, "expectation": "", "observed": "", "structure": "yes",
+                    "verdict": "real", "why": "the bench scores artifacts, not stains"}
         raise ValueError(kind)
 
     #: The class of the painted region each image check should find.

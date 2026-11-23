@@ -190,7 +190,28 @@ class QCEngine(BaseEngine):
             # agent draws with its tools while the packet is out, so an
             # earlier `done` would end a pass before it began.
             return None
+        if packet.get("kind") == "stain_check":
+            # The second reader is shown exactly what the first was; its
+            # answer is its own (`stain_read` in the key only, never in what
+            # it is sent, which would say a first reading came before).
+            from plexora.plugins.qc.server import stain
+
+            return memo.key(packet, images, versions=(
+                *memo_versions(), stain.RENDERER, f"stain_read:{packet.get('_stain_read', 1)}"))
         return memo.key(packet, images, versions=memo_versions())
+
+    def task_of(self, kind, units):
+        """A stain picture read again is the task of that reading,
+        `qc.stain_reader_<n>` (`tasks.yaml`): a worker of its own on the
+        stain reader's model, which never saw the first answer."""
+        from plexora.ai import tasks
+
+        if kind == "stain_check":
+            read = max((int(u.get("stain_read") or 1) for u in units or ()), default=1)
+            if read > 1:
+                return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
+            return tasks.task_for(self.MODULE, kind)
+        return super().task_of(kind, units)
 
     def memo_get(self, project, key):
         from plexora.agent.sessions import memo
@@ -1096,6 +1117,13 @@ class QCEngine(BaseEngine):
         for unit in self.units_of("check", project):
             if unit.get("check") == "visual" and unit["state"] == "awaiting_visual_scan":
                 return "visual_scan", [unit]
+        # Low quality staining: one picture per marker, in channel order; a
+        # picture read as failed goes out again to a second, blind reader.
+        for unit in sorted((u for u in self.units_of("check", project)
+                            if u.get("check") == "stain"
+                            and u["state"] == "awaiting_stain_check"),
+                           key=lambda u: (order.get(u.get("channel"), 0), u["id"])):
+            return "stain_check", [unit]
         candidates = sorted(self.units_of("candidate", project),
                             key=lambda u: (order.get(u.get("audit_channel"), 0),
                                            -float(u.get("score") or 0), u["id"]))

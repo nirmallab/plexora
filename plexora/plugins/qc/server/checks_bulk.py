@@ -143,9 +143,29 @@ def _run_visual(call, project, unit, progress, cancelled):
                   "max_regions": int(schemas.VISUAL["max_regions"]), "written": []}
 
 
+def _run_stain(call, project, unit, progress, cancelled):
+    """Low quality staining has no score: its picture is drawn here (outside
+    the session lock, kept as an artifact the packet and the panel read) and
+    the unit waits for its look."""
+    from plexora.plugins.qc.server import stain
+
+    progress(done=0, total=1, message=f"drawing {unit['channel']}")
+    try:
+        rendered = stain.render(call.session, project, unit["channel"],
+                                partner_name=unit.get("partner"),
+                                partner_words=unit.get("partner_words"), store=True)
+    except ValueError as exc:
+        raise _Skip(str(exc)) from exc
+    manifest = rendered["manifest"]
+    return None, {"_state": "awaiting_stain_check",
+                  "picture": (rendered.get("artifact") or {}).get("id"),
+                  "partner_drawn": manifest.get("partner"),
+                  "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um")}
+
+
 RUNNERS = {"blur": _run_blur, "registration": _run_registration,
            "segmentation": _run_segmentation, "artifacts": _run_artifacts,
-           "visual": _run_visual}
+           "visual": _run_visual, "stain": _run_stain}
 
 
 class _Skip(Exception):

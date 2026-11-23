@@ -239,9 +239,29 @@ class VisualScanAnswer(_Base):
                                               "outlined, each with why, for a person.")
 
 
+class StainCheckAnswer(_Base):
+    """Is the marker's stain real? Expectation first, then what the picture
+    shows, then the verdict (`stain.py`)."""
+
+    kind: Literal["stain_check"] = "stain_check"
+    expectation: Annotated[str, clipped(300)] = Field(
+        max_length=300, description="Written BEFORE weighing the picture: how a working "
+        "stain of this marker should look -- compartment, which cells, how common, how they "
+        "sit in this tissue.")
+    observed: Annotated[str, clipped(300)] = Field(
+        max_length=300, description="What A to E show, at each scale.")
+    structure: Literal["yes", "no", "unclear"] = Field(
+        description="Is there clear non-random biological structure: a distinct subset of "
+                    "cells stained where the stain belongs, arranged as expected?")
+    verdict: Literal["real", "weak", "failed", "cannot_tell"] = Field(
+        description="real: a clear specific population; weak: a real one at low contrast; "
+                    "failed: no specific population; cannot_tell.")
+    why: Annotated[str, clipped(200)] = Field(max_length=200, description="One sentence.")
+
+
 MODELS = (ChannelAuditAnswer, ArtifactConfirmAnswer, ArtifactScopeAnswer,
           ArtifactLocalizeAnswer, ArtifactGridAnswer, ScoreReviewAnswer,
-          FinalReviewAnswer, VisualScanAnswer)
+          FinalReviewAnswer, VisualScanAnswer, StainCheckAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

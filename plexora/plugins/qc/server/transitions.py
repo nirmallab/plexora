@@ -901,7 +901,41 @@ def _absorb(engine, decided, *, because=None):
         engine.store_channels(decided)
 
 
+def apply_stain_check(engine, packet, answer):
+    """One reading of a marker's stain picture. A first `failed` waits for a
+    second, blind reader (the unit is asked again with `stain_read` 2); else
+    the verdict settles (`stain.settle`) and the unit closes `decided`.
+    Weak and failed are listed under Low quality staining; nothing about the
+    channel, its cells or a gate changes."""
+    from plexora.plugins.qc.server import checks_result, stain
+
+    unit = _units(engine, packet)[0]
+    _note(unit, answer)
+    unit.setdefault("readings", []).append({
+        "read": int(unit.get("stain_read") or 1), "verdict": answer.verdict,
+        "structure": answer.structure, "expectation": answer.expectation,
+        "observed": answer.observed, "why": answer.why})
+    verdicts = [r["verdict"] for r in unit["readings"]]
+    final = stain.settle(verdicts, rereads=bool(unit.get("rereads", True)))
+    if final is None:
+        unit["stain_read"] = len(unit["readings"]) + 1
+        unit["state"] = "awaiting_stain_check"
+        return _outcome(unit, reading=len(unit["readings"]))
+    unit["verdict"] = final
+    unit["low_quality"] = final in stain.LOW_QUALITY
+    # The reason of a reading that gave the verdict (the last one that did).
+    last = next((r for r in reversed(unit["readings"]) if r["verdict"] == final),
+                unit["readings"][-1])
+    unit["why"] = last.get("why")
+    reason = (f"stain {final}" + (f" (readings: {' / '.join(verdicts)})" if len(verdicts) > 1
+                                  else "") + (f": {last['why']}" if last.get("why") else ""))
+    engine.close(unit, "decided", reason[:300])
+    checks_result.record(engine, unit)
+    return _outcome(unit, verdict=final)
+
+
 APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,
          "artifact_scope": apply_scope, "artifact_localize": apply_localize,
          "artifact_grid": apply_grid, "final_qc_review": apply_final,
-         "score_review": apply_score_review, "visual_scan": apply_visual_scan}
+         "score_review": apply_score_review, "visual_scan": apply_visual_scan,
+         "stain_check": apply_stain_check}
