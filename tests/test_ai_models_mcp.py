@@ -94,12 +94,18 @@ def test_a_line_may_set_the_effort_a_worker_runs_at(models_file, tmp_path, monke
     assert models_config.mapped("qc")
     groups = models_config.groups("gating")
     # One worker per model and effort: Opus-at-high and Opus-at-low are two workers.
+    # A second and a third panel reader are workers of their own on the
+    # first reader's model and effort (`Task.reader_of`).
     assert [(g["model"], g.get("effort")) for g in groups] == [
-        ("model-a", "low"), ("model-a", "high"), ("model-b", "high"), ("model-b", "low")]
+        ("model-a", "low"), ("model-a", "high"), ("model-b", "high"), ("model-b", "high"),
+        ("model-b", "high"), ("model-b", "low")]
     assert groups[2]["tasks"] == ["gating.threshold_evaluation", "gating.final_validation"]
+    assert [g["tasks"] for g in groups[3:5]] == [["gating.panel_reader_2"],
+                                                ["gating.panel_reader_3"]]
     monkeypatch.setattr(paths, "settings_path", lambda: tmp_path / "settings.json")
     block = delegation.block("gating_worker", session_id="gs_x")
-    assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "low"]
+    assert [w.get("effort") for w in block["workers"]] == ["low", "high", "high", "high", "high",
+                                                           "low"]
     assert "`effort`" in block["how"]
     shown = []
     setup.models_command("show", out=shown.append)
@@ -162,7 +168,12 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     models_file("gating:\n  threshold_evaluation: model-b\n  final_validation: model-b\n")
     block = delegation.block("gating_worker", session_id="gs_x")
     assert "brief" not in block and block["model"] is None
-    first, second = block["workers"]
+    first, second, reader_2, reader_3 = block["workers"]
+    # The panel readers after the first: one worker each, the first reader's model.
+    assert [reader_2["tasks"], reader_3["tasks"]] == [["gating.panel_reader_2"],
+                                                       ["gating.panel_reader_3"]]
+    assert reader_2["model"] == reader_3["model"] == "model-b"
+    assert len({w["reader"] for w in block["workers"]}) == 4
     assert first["model"] is None and first["pick"] == delegation.TIERS["judgement"]
     assert "gating.image_inspection" in first["tasks"]
     assert second == {**second, "model": "model-b",
@@ -174,7 +185,8 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     assert (first["launch"], second["launch"]) == ("now", "on_demand")
     assert "first_task" not in first["brief"]
     later = delegation.block("gating_worker", first_task="gating.threshold_evaluation", session_id="gs_x")
-    assert [w["launch"] for w in later["workers"]] == ["on_demand", "now"]
+    assert [w["launch"] for w in later["workers"]] == ["on_demand", "now", "on_demand",
+                                                       "on_demand"]
     assert "`on_demand`" in block["how"]
 
 
@@ -207,16 +219,19 @@ def test_a_session_with_lanes_hands_out_one_worker_per_lane_launched_together(
 LOOKS = ["gating.planning", "gating.partner_review", "gating.marker_naming",
          "gating.image_inspection"]
 JUDGES = ["gating.threshold_evaluation", "gating.final_validation"]
+#: A panel read again goes to a reader that never saw it: one worker per reading.
+SECOND, THIRD = ["gating.panel_reader_2"], ["gating.panel_reader_3"]
 
 
 def drive_scoped(session_id, agent, limit=400, answer_scope=True):
-    """Two workers, each scoped to its tasks, taking turns as a coordinator
+    """The workers, each scoped to its tasks, taking turns as a coordinator
     would relaunch them: each runs until `other_tasks` (or busy), then the
-    other goes. Returns {reader: [(task, model, kind), ...]} of what each got.
+    next goes. Returns {reader: [(task, model, kind), ...]} of what each got.
     `answer_scope=False`: the workers pass their scope to `gating_next` only,
     never to `gating_answer` (what a worker did on 2026-10-03)."""
     session = AgentSession()
-    readers = {"looks": LOOKS, "judges": JUDGES}
+    readers = {"looks": LOOKS, "judges": JUDGES, "second": SECOND, "third": THIRD}
+    order = list(readers)
     got = {name: [] for name in readers}
     turn, idle = "looks", 0
     for _ in range(limit):
@@ -237,8 +252,8 @@ def drive_scoped(session_id, agent, limit=400, answer_scope=True):
         if result["state"] == "other_tasks":
             assert result["needs"]["task"] not in readers[turn]
         idle += 1
-        assert idle < 6, ("both workers stood idle", result)
-        turn = "judges" if turn == "looks" else "looks"
+        assert idle < 2 * len(order) + 2, ("every worker stood idle", result)
+        turn = order[(order.index(turn) + 1) % len(order)]
     raise AssertionError("the scoped session did not finish")
 
 
@@ -260,10 +275,11 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     scoped, status = finals(session, scoped_id)
     assert scoped == serial
     assert got["looks"] and got["judges"], got
-    for reader, tasks in (("looks", LOOKS), ("judges", JUDGES)):
+    for reader, tasks in (("looks", LOOKS), ("judges", JUDGES), ("second", SECOND),
+                          ("third", THIRD)):
         for task, model, kind in got[reader]:
             assert task in tasks, (reader, task, kind)
-            assert model == ("judge-model" if task in JUDGES else "looks-model")
+            assert model == ("looks-model" if task in LOOKS else "judge-model")
     assert any(kind == "t4_candidates" for _t, _m, kind in got["judges"])
     # Which model answered each task, as the answers named it.
     models = status["models"]
@@ -275,7 +291,7 @@ def test_scoped_readers_reach_the_unscoped_gates_each_given_only_its_tasks(
     store = engines.store()
     for packet_id, entry in store.load(scoped_id)["models"].items():
         packet, _images = store.read_packet(scoped_id, packet_id)
-        assert packet.get("effort") == ("high" if entry["task"] in JUDGES else None), entry
+        assert packet.get("effort") == (None if entry["task"] in LOOKS else "high"), entry
 
 
 @pytest.mark.pro
@@ -290,7 +306,8 @@ def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
     session = AgentSession()
     sid = start(session, "gnoscope", engine="v2")
     got = drive_scoped(sid, Oracle(info), answer_scope=False)
-    for reader, tasks in (("looks", LOOKS), ("judges", JUDGES)):
+    for reader, tasks in (("looks", LOOKS), ("judges", JUDGES), ("second", SECOND),
+                          ("third", THIRD)):
         for task, _model, kind in got[reader]:
             assert task in tasks, (reader, task, kind)
     # v2's cell panels choose its gates: the judges' task reads them.

@@ -3245,6 +3245,16 @@
        "minimum": 1,
        "type": "integer"
       },
+      "panel_rereads": {
+       "default": "contested",
+       "description": "Engines v3 to v5: which cell panels a second reader reads again, blind to the first (a third reader when the two differ by three or more own-stain calls; a cell counts the label the readings agree on). contested: a panel whose reading leaves candidate gates farther apart than the tolerance; all: every panel; off.",
+       "enum": [
+        "contested",
+        "all",
+        "off"
+       ],
+       "type": "string"
+      },
       "project": {
        "description": "With scope=project.",
        "type": "string"

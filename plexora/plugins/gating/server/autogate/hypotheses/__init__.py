@@ -52,15 +52,17 @@ from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 #: member the reads resolve on leads; "8": a review close writes the
 #: likeliest candidate, and a marker whose stain is off its compartment on
 #: the image -- a nuclear stain off the nuclei, `qc.cells.compartment` --
-#: has its looks told so).
-VERSION = "8"
+#: has its looks told so; "9": a look the reads leave contested is read
+#: again by a second reader blind to the first, and by a third when the two
+#: differ, and a cell counts the label the reads agree on, `rereads`).
+VERSION = "9"
 
 #: The VERSION 5 rules, for a bench arm or a replay of stored records
 #: (`tools/bench_gates/ablate.py ABL=v5`, `replay_v6.py`).
 V5_RULES = {"decision": "wilson", "sampling": "survey_refine", "split_at_close": True,
             "added_min_reads": 0, "strata": None, "uncertain_state": False,
             "positive_sentinels": 0, "flat_reads": None, "carriers": None,
-            "redraw_invalid": False, "leader": "prior"}
+            "redraw_invalid": False, "leader": "prior", "rereads": "off"}
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -204,6 +206,22 @@ PARAMS = {
     # A look its controls discard is drawn again instead of counting
     # against `looks_max` (`controller.looks_spent`).
     "redraw_invalid": True,
+    # -- VERSION 9 (2026-11-23) --
+    # Which looks a second reader reads again, blind to the first, in a
+    # conversation of its own (`gating.panel_reader_2`): "contested" -- the
+    # first read leaves the posterior's plateau holding candidates farther
+    # apart than `tolerance` (`reread_due`); "all"; "off". The session's
+    # `panel_rereads` sets it. Two reads whose own_stain calls on the
+    # look's evidence cells differ by `reread_gap` or more are read a third
+    # time (`gating.panel_reader_3`) and each cell takes the label two of
+    # the three gave; otherwise a cell keeps the label both gave, and is
+    # `uncertain` where they differ (`combine_reads`). lsp35766_p193_2 read
+    # three times (2026-11-23): of 2,771 repeat reads of one cell 26% went
+    # between a call and `uncertain` and 0.5% between own and not own, and
+    # 16% of identical panels differed by three or more own_stain calls;
+    # "a firm call wins" sided with the readier reader in 57 of 80 pairs.
+    "rereads": "contested",
+    "reread_gap": 3,
 }
 
 #: Terminal status -> the unit's closed state (a review state writes the
@@ -281,7 +299,8 @@ def start(engine, unit) -> dict:
         unit["hypotheses"] = {"version": VERSION, "status": "no_candidates",
                               "reason": "the lattice has fewer than two candidate gates"}
         return unit["hypotheses"]
-    params = {**PARAMS, "looks_max": int(engine.options["panel_looks"])}
+    params = {**PARAMS, "looks_max": int(engine.options["panel_looks"]),
+              "rereads": str(engine.options["panel_rereads"])}
     if pool:
         # One more look per anchor past the first, up to the groups' cap.
         from plexora.plugins.gating.server.autogate import groups
@@ -391,9 +410,18 @@ def packet(engine, units):
     unit = units[0]
     state = start(engine, unit)
     ds, col = _column(engine, unit)
+    # A look read again (`apply`, `rereads`): its plan on the same seed, with
+    # the same cells excluded, draws the same cells in the same order; the
+    # partners its first reading showed are kept, since the gates they
+    # stand on may have moved since.
+    again = state.get("rereading")
     with engine.timed("plan"):
-        pending = state.pop("pending", None)
-        plan = pending or controller.next_action(state, col.to_fit, state["params"])
+        if again is not None:
+            plan = again["plan"]
+            pending = plan if again.get("pending") else None
+        else:
+            pending = state.pop("pending", None)
+            plan = pending or controller.next_action(state, col.to_fit, state["params"])
     # A change to the range comes first (each records itself, so none
     # repeats), then the look at the cells it adds.
     for _ in range(4):
@@ -418,7 +446,7 @@ def packet(engine, units):
         project = pool["anchors"][len(state["observations"]) % len(pool["anchors"])]
         if project != unit["project"]:
             pooled = _pooled_packet(engine, unit, state, plan, bounds, project, positive,
-                                    above_top)
+                                    above_top, again)
             if pooled is not None:
                 return pooled
     # Every look records which cells a brighter neighbour crowds (a record,
@@ -448,7 +476,7 @@ def packet(engine, units):
                 state["carriers_unsupported"] = str(exc)[:200]
         if sampled is None:
             sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", payload)
-    if sampled.get("anchors") is not None:
+    if sampled.get("anchors") is not None and again is None:
         state.setdefault("anchors", []).append(sampled["anchors"])
     if sampled.get("crowding") is not None:
         state["crowding"] = {"bounds": [float(b) for b in bounds], "sizes": sampled["crowding"]}
@@ -461,7 +489,7 @@ def packet(engine, units):
         finish(engine, unit, "unresolved_evidence")
         return None
     channel = views.image_channel(ds, unit["marker"])
-    partners = engine.partner_panels(unit)
+    partners = again["partners"] if again is not None else engine.partner_panels(unit)
     layout = "t2m" if partners else "t2"
     per_row = views._per_row(layout)
     # The picture's manifest is served to any client (`get_artifact`): it
@@ -476,7 +504,8 @@ def packet(engine, units):
             pixel=engine.pixel_for(ds.name), partners=partners or None,
             title=f"{unit['marker']} · numbered cells in random order (each cell: "
                   f"{packets._panel_words(layout, partners) or 'morphology | context'})")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    if again is None:
+        unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
     compartment = (unit.get("context") or {}).get("compartment")
     # Which cells carry the marker, so a dim population of its own is read as
     # stained; not the caveats, which can speak of gates.
@@ -501,10 +530,11 @@ def packet(engine, units):
             multiview["plots"] = {"partner": density["partner"],
                                   "relation": density["relation"]}
             guide.append(f"plot:{density['relation']}")
-    engine.note_partners_drawn(
-        unit, kind="cell_panel", tiles=tiles_of(partners),
-        plot={"marker": density["partner"], "relation": density["relation"]}
-        if density else None)
+    if again is None:
+        engine.note_partners_drawn(
+            unit, kind="cell_panel", tiles=tiles_of(partners),
+            plot={"marker": density["partner"], "relation": density["relation"]}
+            if density else None)
     pkt = {
         "question": (f"{unit['marker']} ({ds.name}): for EVERY numbered cell, does it carry "
                      f"its OWN {stain} stain, around the nucleus the ticks mark? One word per "
@@ -531,14 +561,30 @@ def packet(engine, units):
     shown = [(main, "panel_collage", "numbered cells, random order")]
     if plots is not None:
         shown.append((plots, "panel_plots", "the distribution and a partner"))
-        unit.setdefault("artifacts", []).extend(
-            a["id"] for a in (plots.get("artifact"),) if a)
+        if again is None:
+            unit.setdefault("artifacts", []).extend(
+                a["id"] for a in (plots.get("artifact"),) if a)
     images = packets._images(pkt, tuple(shown))
     unit["last_manifest"] = main["manifest"]
-    return pkt, images
+    return _as_read(pkt, again, partners, pending), images
 
 
-def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_top):
+def _as_read(pkt, again, partners, pending):
+    """A look's packet with what reading it again needs (`_panel`: the
+    partners it showed, whether it was a pending look); a reading after the
+    first says which (`evidence.check`: the task it goes to,
+    `gating.panel_reader_<n>`, a conversation that never read it)."""
+    pkt["_panel"]["partners"] = partners or {}
+    pkt["_panel"]["pending"] = pending is not None
+    if again is not None:
+        n = len(again["reads"]) + 1
+        pkt["_panel"]["read"] = n
+        pkt["evidence"]["check"] = f"reader_{n}"
+    return pkt
+
+
+def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_top,
+                   again=None):
     """Engine v4: the look `plan` asks for, drawn from another of the group's
     anchors (`project`) -- an ordinary single-image panel there. The
     intervals and sentinel bars are carried into that image through its
@@ -592,8 +638,11 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
         # Nothing to show in that image: this look is the scale image's.
         return None
     channel = views.image_channel(ds, unit["marker"])
-    partners = engine.partner_panels(other) if other else None
-    engine.note_partners_drawn(unit, kind="cell_panel", tiles=tiles_of(partners))
+    if again is not None:
+        partners = again["partners"]
+    else:
+        partners = engine.partner_panels(other) if other else None
+        engine.note_partners_drawn(unit, kind="cell_panel", tiles=tiles_of(partners))
     layout = "t2m" if partners else "t2"
     per_row = views._per_row(layout)
     rows = panelmod.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}
@@ -605,7 +654,8 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
             pixel=engine.pixel_for(ds.name), partners=partners or None,
             title=f"{unit['marker']} · numbered cells in random order (each cell: "
                   f"{packets._panel_words(layout, partners) or 'morphology | context'})")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    if again is None:
+        unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
     context = other.get("context") or unit.get("context") or {}
     compartment = context.get("compartment")
     lineage = context.get("lineage")
@@ -642,7 +692,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
     }
     images = packets._images(pkt, ((main, "panel_collage", "numbered cells, random order"),))
     unit["last_manifest"] = main["manifest"]
-    return pkt, images
+    return _as_read(pkt, again, partners, None), images
 
 
 def _carrier_payload(unit, params, bounds, col) -> dict | None:
@@ -827,30 +877,144 @@ def _unit_seed(engine, unit) -> int:
 
 
 def apply(engine, packet, answer) -> dict:
-    """Record the labels as one observation; decide; ask again, finish, or
+    """Record the labels as one observation -- or, when the look is read
+    again (`rereads`), as one reading of it, the observation coming once its
+    readings are combined (`combine_reads`); decide; ask again, finish, or
     close."""
     from plexora.agent.errors import AgentError
     from plexora.plugins.gating.server.autogate import transitions
 
     unit = transitions._units(engine, packet)[0]
     state = start(engine, unit)
-    shown = (packet.get("_panel") or {}).get("cells") or []
+    panel = packet.get("_panel") or {}
+    shown = panel.get("cells") or []
     numbers = [c["number"] for c in shown]
     missing = [n for n in numbers if n not in answer.cells]
     if missing:
         raise AgentError("invalid_input", "label EVERY numbered cell",
                          detail={"missing": missing, "allowed": numbers})
     transitions._note(unit, answer)
-    cells = [dict(c, label=answer.cells[c["number"]]) for c in shown]
+    name = f"{unit['project']}::{unit['marker']}"
+    waiting = {"unit": name, "state": unit["state"], "look": len(state["observations"])}
+    reading = {"packet_id": packet.get("packet_id"),
+               "labels": {n: answer.cells[n] for n in numbers}}
+    again = state.get("rereading")
+    read = int(panel.get("read") or 1)
+    plan, packet_id, record = panel.get("plan"), packet.get("packet_id"), None
+    if read > 1:
+        if again is None or read != len(again["reads"]) + 1 or \
+                [c["cell_id"] for c in again["cells"]] != [c["cell_id"] for c in shown]:
+            # Not the reading this look waits for (a packet from before the
+            # look was settled): not counted.
+            engine.log(event="reread_dropped", unit=name, packet_id=packet_id, read=read)
+            return waiting
+        again["reads"].append(reading)
+        combined = combine_reads([r["labels"] for r in again["reads"]], _evidence_numbers(shown),
+                                 int(state["params"]["reread_gap"]))
+        if combined is None:
+            engine.log(event="reread", unit=name, read=read + 1,
+                       own=[_own_calls(r["labels"], _evidence_numbers(shown))
+                            for r in again["reads"]])
+            return waiting
+        state.pop("rereading")
+        cells = [dict(c, label=combined[c["number"]]) for c in shown]
+        plan, packet_id = again["plan"], again["reads"][0]["packet_id"]
+        record = {"reads": again["reads"], "trigger": again["trigger"],
+                  "rule": "agreed" if len(again["reads"]) == 2 else "majority"}
+    else:
+        cells = [dict(c, label=reading["labels"][c["number"]]) for c in shown]
+        due, trigger = reread_due(engine, unit, state, cells)
+        if due:
+            state["rereading"] = {"plan": plan, "pending": bool(panel.get("pending")),
+                                  "partners": panel.get("partners") or {},
+                                  "cells": [dict(c) for c in shown], "reads": [reading],
+                                  "trigger": trigger}
+            engine.log(event="reread", unit=name, read=2, trigger=trigger)
+            return waiting
+        if trigger is not None:
+            record = {"trigger": trigger}
+    valid, sentinels = _checked(state, cells)
+    state["observations"].append({
+        "packet_id": packet_id, "plan": plan, "cells": cells, "valid": valid,
+        "sentinels": sentinels, **({"reading": record} if record else {})})
+    return step(engine, unit)
+
+
+def _checked(state, cells) -> tuple:
+    """`sentinel_check` of one look's labelled cells against the unit's
+    reads so far."""
     own_read = any(c.get("label") == evidence.OWN and not c.get("sentinel")
                    for o in [*controller._valid(state), {"cells": cells}]
                    for c in o.get("cells") or ())
-    valid, record = sentinel_check(cells, int(state["params"]["sentinel_misses"]),
-                                   own_read=own_read)
-    state["observations"].append({
-        "packet_id": packet.get("packet_id"), "plan": (packet.get("_panel") or {}).get("plan"),
-        "cells": cells, "valid": valid, "sentinels": record})
-    return step(engine, unit)
+    return sentinel_check(cells, int(state["params"]["sentinel_misses"]), own_read=own_read)
+
+
+def _evidence_numbers(shown) -> list:
+    return [c["number"] for c in shown if not c.get("sentinel")]
+
+
+def _own_calls(labels, numbers) -> int:
+    return sum(1 for n in numbers if labels[n] == evidence.OWN)
+
+
+UNCERTAIN = "uncertain"
+
+
+def combine_reads(reads, numbers, gap):
+    """The label each cell of a look takes from its readings ({number:
+    label} each), or None while another reading is due. One reading: its
+    own. Two: a label both gave, else `uncertain` -- not the firmer of the
+    two, which sides with the readier reader (lsp35766_p193_2, 2026-11-23:
+    57 of 80 pairs) -- unless their own_stain calls on the evidence cells
+    (`numbers`) differ by `gap` or more, which asks for a third. Three: the
+    label two gave, else `uncertain`."""
+    if len(reads) == 1:
+        return dict(reads[0])
+    if len(reads) == 2:
+        a, b = reads
+        if abs(_own_calls(a, numbers) - _own_calls(b, numbers)) >= int(gap):
+            return None
+        return {n: a[n] if a[n] == b[n] else UNCERTAIN for n in a}
+    out = {}
+    for n in reads[0]:
+        votes = {}
+        for r in reads:
+            votes[r[n]] = votes.get(r[n], 0) + 1
+        label, count = max(votes.items(), key=lambda kv: kv[1])
+        out[n] = label if count >= 2 else UNCERTAIN
+    return out
+
+
+def reread_due(engine, unit, state, cells) -> tuple:
+    """(due, trigger) for a look's first reading: whether a second reader
+    reads it again (`rereads`), and the record of why. `contested` -- the
+    reading leaves the posterior's plateau holding candidates farther apart
+    than the tolerance -- is recorded whatever the mode, so a session read
+    with "all" says which looks "contested" would have read again. A look
+    its controls discard is never read again (it is drawn again instead)."""
+    params = state["params"]
+    mode = params.get("rereads") or "off"
+    if mode == "off":
+        return False, None
+    valid, _ = _checked(state, cells)
+    contested = False
+    if valid:
+        _ds, col = _column(engine, unit)
+        trial = {**state, "observations": [*state["observations"],
+                                           {"cells": cells, "valid": True}]}
+        s = controller.support(trial, col.to_fit, params)
+        fits = [float(m["fit"]) for m in
+                (((s or {}).get("posterior") or {}).get("plateau") or ())]
+        contested = bool(fits) and max(fits) - min(fits) > float(params["tolerance"]) + 1e-9
+    trigger = {"mode": mode, "contested": contested, "valid": valid}
+    return valid and (mode == "all" or contested), trigger
+
+
+def read_due(unit) -> int:
+    """Which reading of its look the unit waits for: 1, or 2 and 3 while a
+    look is read again (`rereads`)."""
+    again = (unit.get("hypotheses") or {}).get("rereading")
+    return len(again["reads"]) + 1 if again else 1
 
 
 def sentinel_check(cells, bar, *, own_read=True) -> tuple:

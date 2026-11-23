@@ -399,6 +399,11 @@ CLASSIFIER_MODES = ("off", "layer", "check")
 #: note). v3 and v4 stay selectable, so a stored session or a caller that
 #: names one keeps it.
 ENGINES = ("v1", "v3", "v4", "v5")
+#: Which cell panels a second reader reads again (`SessionOptions.panel_rereads`,
+#: `hypotheses` VERSION 9, 2026-11-23): those whose reading leaves candidates
+#: farther apart than the tolerance, every one, or none.
+REREAD_MODES = ("contested", "all", "off")
+REREAD_DEFAULT = "contested"
 #: The engines whose looks are cell panels (`panel_engine`).
 PANEL_ENGINES = ("v3", "v4", "v5")
 #: The engines that gate a dataset's aligned images as groups (`groups`).

@@ -935,6 +935,11 @@ class Engine(BaseEngine):
         if self.vision_first_on():
             # Other starts and other candidates: off, the key is today's.
             extra += ("vision_first:1",)
+        check = str((packet.get("evidence") or {}).get("check") or "")
+        if check.startswith("reader_"):
+            # A look read again is the same picture: its readings are kept
+            # apart, so a reuse replays each reading, never the first twice.
+            extra += (f"read:{check}",)
         project = (packet.get("evidence") or {}).get("project")
         if self.observations_on() and project:
             # What the contrast check saw shapes the start and the fields:
@@ -1700,12 +1705,18 @@ class Engine(BaseEngine):
     def task_of(self, kind, units):
         """A look at candidates that is a classifier check is its own task,
         `gating.classifier_check` (`tasks.yaml`), so its model is set apart
-        from the candidate look's."""
+        from the candidate look's. A cell panel read again is the task of
+        that reading, `gating.panel_reader_<n>` (`hypotheses.rereads`): a
+        worker of its own, which never read the picture."""
         from plexora.ai import tasks
-        from plexora.plugins.gating.server.autogate import cellcalls
+        from plexora.plugins.gating.server.autogate import cellcalls, hypotheses
 
         if kind == "t4_candidates" and any(cellcalls.pending(u) for u in units or ()):
             return tasks.task_for(self.MODULE, kind, check="classifier")
+        if kind == "cell_panel":
+            read = max((hypotheses.read_due(u) for u in units or ()), default=1)
+            if read > 1:
+                return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
         return super().task_of(kind, units)
 
     def panel_for(self, project):

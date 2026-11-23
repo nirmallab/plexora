@@ -1367,3 +1367,149 @@ def test_a_leader_the_reads_favour_is_not_closed_unreadable_while_its_sides_are_
     assert controller.decide(state, IDENTITY, dict(params, **{"decision": "wilson",
                                                              "sampling": "survey_refine"}))[0] \
         == "unreadable"
+
+
+# -- VERSION 9: a look read again by readers that never saw it -----------------------------
+
+
+def test_two_readings_keep_the_labels_they_agree_on_and_nothing_firmer():
+    from plexora.plugins.gating.server.autogate.hypotheses import combine_reads
+
+    a = {"1": "own_stain", "2": "own_stain", "3": "not_own_stain", "4": "uncertain", "s": "own_stain"}
+    b = {"1": "own_stain", "2": "uncertain", "3": "not_own_stain", "4": "not_own_stain",
+         "s": "not_own_stain"}
+    # A call against `uncertain` is not kept: the firmer of two readings is
+    # the readier reader's, and would side with it every time.
+    assert combine_reads([a, b], ["1", "2", "3", "4"], 3) == {
+        "1": "own_stain", "2": "uncertain", "3": "not_own_stain", "4": "uncertain",
+        "s": "uncertain"}
+    assert combine_reads([a], ["1", "2", "3", "4"], 3) == a
+
+
+def test_readings_three_own_calls_apart_take_a_third_and_two_of_three_decide():
+    from plexora.plugins.gating.server.autogate.hypotheses import combine_reads
+
+    numbers = [str(i) for i in range(1, 7)]
+    ready = {n: "own_stain" for n in numbers}
+    shy = {**{n: "uncertain" for n in numbers[:3]}, **{n: "own_stain" for n in numbers[3:]}}
+    assert combine_reads([ready, shy], numbers, 3) is None
+    # The sentinels' calls never ask for a third reading: only the evidence cells count.
+    assert combine_reads([{**ready, "s": "own_stain"}, {**ready, "s": "not_own_stain"}],
+                         numbers, 3) == {**ready, "s": "uncertain"}
+    third = {**{n: "not_own_stain" for n in numbers[:2]}, **{n: "own_stain" for n in numbers[2:]}}
+    combined = combine_reads([ready, shy, third], numbers, 3)
+    # 1-2: own / uncertain / not own -- no two agree; 3: two own; 4-6: three own.
+    assert combined == {"1": "uncertain", "2": "uncertain", "3": "own_stain",
+                        "4": "own_stain", "5": "own_stain", "6": "own_stain"}
+
+
+def _drive_rereads(tmp_path, rereads, *, shy_second=False):
+    """A blind-panel session read by a truthful reader; with `shy_second`
+    the second reading of a look calls `uncertain` on every cell the first
+    called stained. Returns (stored packets in order, the session record)."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from tests.test_gating_session import Oracle, ok
+
+    registry.discover(["gating"])
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": list(HARD),
+        "engine": "v5", "panel_rereads": rereads}))
+    jobs.drain(120)
+    sid = started["session_id"]
+    oracle = Oracle(info)
+    index = {c["id"]: i for i, c in enumerate(info["cells"])}
+    issued = []
+    result = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))
+    for _ in range(400):
+        if result["state"] != "decision":
+            break
+        packet = result["packet"]
+        if packet["kind"] == "cell_panel":
+            stored, _ = engines.store().read_packet(sid, packet["packet_id"])
+            issued.append((packet, stored))
+            truth = oracle.truth[packet["units"][0]["marker"]]
+            read = int(stored["_panel"].get("read") or 1)
+            reply = {"kind": "cell_panel", "cells": {
+                c["number"]: ("uncertain" if shy_second and read == 2 and not c.get("sentinel")
+                              and truth[index[c["cell_id"]]] else
+                              "own_stain" if truth[index[c["cell_id"]]] else "not_own_stain")
+                for c in stored["_panel"]["cells"]}}
+        else:
+            reply = oracle.answer(packet)
+        result = ok(invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"], "answer": reply}))["next"]
+    assert result["state"] in ("decided", "done"), result
+    return issued, engines.store().load(sid)
+
+
+@pytest.mark.pro
+def test_every_look_is_read_again_blind_by_a_reader_of_its_own(tmp_path):
+    issued, record = _drive_rereads(tmp_path, "all", shy_second=True)
+    firsts = [(p, s) for p, s in issued if not s["_panel"].get("read")]
+    assert firsts, "no marker was looked at"
+    by_id = {s["packet_id"]: (p, s) for p, s in issued}
+    looks = 0
+    for unit in record["units"].values():
+        hyp = unit.get("hypotheses") or {}
+        assert not hyp.get("rereading"), unit["marker"]      # nothing left half read
+        for obs in hyp.get("observations") or ():
+            if not obs.get("valid", True):
+                continue
+            looks += 1
+            reads = obs["reading"]["reads"]
+            assert obs["reading"]["trigger"]["mode"] == "all"
+            # The first reading's packet is the look's; each later reading is
+            # the same cells in the same order on the same pictures, sent to
+            # the task of that reading, which no other reading goes to.
+            first, first_stored = by_id[reads[0]["packet_id"]]
+            assert obs["packet_id"] == first["packet_id"]
+            assert first["task"] == "gating.threshold_evaluation"
+            for n, r in enumerate(reads[1:], start=2):
+                again, again_stored = by_id[r["packet_id"]]
+                assert again["task"] == f"gating.panel_reader_{n}"
+                assert again["evidence"]["check"] == f"reader_{n}"
+                assert again_stored["_panel"]["read"] == n
+                assert [c["cell_id"] for c in again_stored["_panel"]["cells"]] == \
+                    [c["cell_id"] for c in first_stored["_panel"]["cells"]]
+                assert [i["artifact_id"] for i in again["images"]] == \
+                    [i["artifact_id"] for i in first["images"]]
+                assert again["evidence"]["look"] == first["evidence"]["look"]
+            # The shy second reading moved every stained call to uncertain:
+            # three or more apart asks for a third, whose truthful calls the
+            # first's agree with.
+            own = sum(1 for c in first_stored["_panel"]["cells"]
+                      if not c.get("sentinel") and reads[0]["labels"][c["number"]] == "own_stain")
+            assert len(reads) == (3 if own >= 3 else 2), (unit["marker"], own, len(reads))
+            assert obs["reading"]["rule"] == ("majority" if len(reads) == 3 else "agreed")
+            if len(reads) == 3:
+                assert [c["label"] for c in obs["cells"]] == \
+                    [reads[0]["labels"][c["number"]] for c in obs["cells"]]
+        assert len(hyp.get("observations") or ()) <= (hyp.get("params") or {}).get("looks_max", 9)
+    assert looks
+
+
+@pytest.mark.pro
+def test_with_rereads_off_a_look_is_one_reading_as_in_version_8(tmp_path):
+    issued, record = _drive_rereads(tmp_path, "off")
+    assert issued and all(not s["_panel"].get("read") for _p, s in issued)
+    assert all(p["task"] == "gating.threshold_evaluation" for p, _s in issued)
+    for unit in record["units"].values():
+        for obs in (unit.get("hypotheses") or {}).get("observations") or ():
+            assert "reading" not in obs
+
+
+@pytest.mark.pro
+def test_by_default_only_a_contested_look_is_read_again_and_every_look_says_so(tmp_path):
+    issued, record = _drive_rereads(tmp_path, "contested")
+    seen = 0
+    for unit in record["units"].values():
+        for obs in (unit.get("hypotheses") or {}).get("observations") or ():
+            trigger = obs["reading"]["trigger"]
+            assert trigger["mode"] == "contested"
+            seen += 1
+            # Read again exactly when the first reading left candidates
+            # farther apart than the tolerance on the plateau.
+            assert ("reads" in obs["reading"]) == bool(trigger["contested"] and trigger["valid"])
+    assert seen and issued
