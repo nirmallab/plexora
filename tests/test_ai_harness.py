@@ -680,9 +680,12 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
         body = call["body"]
         assert "model" not in body
         assert "capability" not in body
-        # Each packet names its task, so the gateway can serve each with its own model.
-        kind = json.loads(body["request"]["messages"][-1]["content"][-1]["text"])["kind"]
-        assert body["task"] == tasks.wire_id(tasks.task_for("gating", kind), module="gating"), kind
+        # Each packet names its task, so the gateway can serve each with its own model
+        # (a cell panel read again, by the task of that reading: `evidence.check`).
+        shown = json.loads(body["request"]["messages"][-1]["content"][-1]["text"])
+        kind, check = shown["kind"], (shown.get("evidence") or {}).get("check")
+        assert body["task"] == tasks.wire_id(tasks.task_for("gating", kind, check=check),
+                                             module="gating"), (kind, check)
         assert body["request"]["output_schema"]["additionalProperties"] is False
         assert body["context"]["run_id"] == "run_1"
         assert body["context"]["session_id"] == summary["session_id"]

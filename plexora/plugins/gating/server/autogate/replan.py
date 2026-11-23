@@ -591,24 +591,31 @@ def reads_of(unit) -> dict:
     the unit's cell-panel looks: the valid looks' numbered cells, sentinels
     left out (`hypotheses.evidence.counts` reads them the same way);
     `worst_artifact` is the largest share of one look's cells called
-    `artifact`, over looks of at least `artifact_look_min` cells."""
+    `artifact`, over looks of at least `artifact_look_min` cells. A look read
+    again (hypotheses VERSION 9) counts each reading -- what its readers saw,
+    not the labels they agree on, which are `uncertain` wherever two differ
+    -- so `cells` counts cell readings."""
     out = {"cells": 0, "own": 0, "not_own": 0, "uncertain": 0, "artifact": 0, "looks": 0,
            "worst_artifact": 0.0}
     for obs in (unit.get("hypotheses") or {}).get("observations") or ():
         if not obs.get("valid", True):
             continue
-        labels = [c.get("label") for c in obs.get("cells") or () if not c.get("sentinel")]
-        labels = [x for x in labels if x]
-        if not labels:
+        cells = [c for c in obs.get("cells") or () if not c.get("sentinel")]
+        reads = (obs.get("reading") or {}).get("reads")
+        readings = [[r["labels"].get(c["number"]) for c in cells] for r in reads] if reads \
+            else [[c.get("label") for c in cells]]
+        readings = [[x for x in labels if x] for labels in readings]
+        if not any(readings):
             continue
         out["looks"] += 1
-        out["cells"] += len(labels)
-        for label, key in (("own_stain", "own"), ("not_own_stain", "not_own"),
-                           ("uncertain", "uncertain"), ("artifact", "artifact")):
-            out[key] += labels.count(label)
-        if len(labels) >= PARAMS["artifact_look_min"]:
-            out["worst_artifact"] = max(out["worst_artifact"],
-                                        labels.count("artifact") / len(labels))
+        for labels in readings:
+            out["cells"] += len(labels)
+            for label, key in (("own_stain", "own"), ("not_own_stain", "not_own"),
+                               ("uncertain", "uncertain"), ("artifact", "artifact")):
+                out[key] += labels.count(label)
+            if len(labels) >= PARAMS["artifact_look_min"]:
+                out["worst_artifact"] = max(out["worst_artifact"],
+                                            labels.count("artifact") / len(labels))
     return out
 
 

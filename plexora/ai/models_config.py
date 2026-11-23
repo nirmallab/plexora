@@ -148,24 +148,42 @@ def load() -> dict:
             "efforts": _cache["efforts"], "problems": list(_cache["problems"])}
 
 
+def _reads_for(task_id: str) -> str | None:
+    """The task whose packets `task_id` reads again (`Task.reader_of`), as
+    `module.task`, or None."""
+    from plexora.ai import tasks
+
+    task = tasks.tasks().get(task_id)
+    return f"{task.module}.{task.reader_of}" if task is not None and task.reader_of else None
+
+
 def model_for(task_id: str | None) -> str | None:
     """The model mapped to `task_id` (`module.task`): the task's own line, else
-    its module's `default`, else None -- the agent's choice."""
+    -- for a second reader (`Task.reader_of`) -- the model of the task it
+    reads again, else its module's `default`, else None -- the agent's
+    choice."""
     if not task_id or "." not in task_id:
         return None
     module, name = task_id.split(".", 1)
     entries = load()["mapping"].get(module) or {}
-    return entries.get(name) or entries.get(DEFAULT) or None
+    if entries.get(name):
+        return entries[name]
+    first = _reads_for(task_id)
+    return model_for(first) if first else (entries.get(DEFAULT) or None)
 
 
 def effort_for(task_id: str | None) -> str | None:
-    """The effort mapped to `task_id`: the task's own line, else its module's
-    `default`, else None -- the agent's own setting."""
+    """The effort mapped to `task_id`: the task's own line, else that of the
+    task a second reader reads again, else its module's `default`, else None
+    -- the agent's own setting."""
     if not task_id or "." not in task_id:
         return None
     module, name = task_id.split(".", 1)
     entries = load()["efforts"].get(module) or {}
-    return entries.get(name) or entries.get(DEFAULT) or None
+    if entries.get(name):
+        return entries[name]
+    first = _reads_for(task_id)
+    return effort_for(first) if first else (entries.get(DEFAULT) or None)
 
 
 def mapped(module: str) -> bool:
@@ -181,7 +199,9 @@ def groups(module: str) -> list[dict]:
     leaves to the agent form one group with model None. A task no
     session packet is (`mcp: false`: the note interpreter, which only
     Plexora's harness calls) is in no group: a worker for it would only
-    ask for packets that never come."""
+    ask for packets that never come. A second reader (`Task.reader_of`) is
+    a group of its own whatever its model: a worker that read a picture
+    once would not read it again blind."""
     from plexora.ai import tasks
 
     registry = tasks.tasks()
@@ -192,7 +212,7 @@ def groups(module: str) -> list[dict]:
         if not registry[task_id].mcp:
             continue
         model, effort = model_for(task_id), effort_for(task_id)
-        key = (model, effort)
+        key = (model, effort, task_id if registry[task_id].reader_of else None)
         if key not in by_model:
             by_model[key] = {"model": model, **({"effort": effort} if effort else {}), "tasks": []}
             out.append(by_model[key])

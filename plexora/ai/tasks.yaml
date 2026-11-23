@@ -102,6 +102,30 @@ modules:
         max_tokens: 16000
         effort: high
         kinds: [t4_candidates, cell_panel]
+      panel_reader_2:
+        label: Second panel reader
+        blurb: Reads a cell panel again, blind to the first read, so no single reading sets a gate.
+        # The first read's picture and question, answered in a conversation
+        # of its own (`reader_of`): one reader's leaning on cells it can
+        # barely judge -- own stain in one run, uncertain in the next -- moved
+        # gates by up to 1.4 between runs of lsp35766_p193_2 (2026-11-23).
+        # Its model and effort are threshold_evaluation's unless the models
+        # file names its own (`models_config.model_for`).
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["cell_panel:reader_2"]
+        reader_of: threshold_evaluation
+      panel_reader_3:
+        label: Third panel reader
+        blurb: Reads a cell panel a third time when the first two readings disagree, blind to both.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["cell_panel:reader_3"]
+        reader_of: threshold_evaluation
       classifier_check:
         label: Classifier check
         blurb: Judges whether the cells the Single Cell Classifier calls the other way from a gate carry their own stain, beside cells it agrees on.

@@ -55,6 +55,11 @@ class Task:
     #: Whether an agent driving a session over MCP ever answers it (a packet
     #: of the session); False for a call only Plexora's harness makes.
     mcp: bool = True
+    #: Another task (by name, same module) whose packets this one reads again,
+    #: blind to that reading: always a worker of its own, so no conversation
+    #: answers one picture twice, on that task's model and effort unless the
+    #: models file names its own (`models_config.model_for`).
+    reader_of: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -80,7 +85,8 @@ def tasks() -> dict[str, Task]:
                                 blurb=t.get("blurb", ""), vision=bool(requires.get("vision")),
                                 reasoning=bool(requires.get("reasoning")), capability=t["capability"],
                                 max_tokens=int(t["max_tokens"]), kinds=tuple(str(k) for k in t.get("kinds") or ()),
-                                effort=effort, mcp=bool(t.get("mcp", True)))
+                                effort=effort, mcp=bool(t.get("mcp", True)),
+                                reader_of=t.get("reader_of"))
     return out
 
 

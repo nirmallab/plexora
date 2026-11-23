@@ -303,6 +303,14 @@ class SessionOptions(AgentModel):
                     "v5, off with v1.")
     panel_looks: int = Field(3, ge=1, le=6, description="Engines v3 and v4: the most cell "
                              "panels a marker is shown before review.")
+    #: A second reader, blind to the first, in a worker of its own; a third
+    #: when the two differ by `reread_gap` own-stain calls (`hypotheses`).
+    panel_rereads: Literal[schemas.REREAD_MODES] = Field(
+        schemas.REREAD_DEFAULT, description="Engines v3 to v5: which cell panels a second "
+        "reader reads again, blind to the first (a third reader when the two differ by three "
+        "or more own-stain calls; a cell counts the label the readings agree on). contested: "
+        "a panel whose reading leaves candidate gates farther apart than the tolerance; all: "
+        "every panel; off.")
     #: The pattern, dim cells seen stained, bright cells seen to be debris:
     #: starts the gate no higher than the dim stained cells, keeps the fields
     #: from the debris, caps confidence on a doubt, gives a clean split with a
