@@ -1,0 +1,3 @@
+```json
+{"expectation":"Membranous (cell-border) beta-catenin at adherens junctions of epithelial cells, lining glands and crypts in this gut-like tissue. Most epithelial cells stained, stroma and lumen negative. Some nuclear signal is possible in Wnt-active cells.","observed":"A: the stain follows the epithelium of the folded mucosa, and the stroma and lumen are dark. B, C and D: crisp, honeycomb membrane rings on columnar epithelial cells, with nuclei unstained. E1: membrane rings in epithelial clusters. E2: Ecadherin shows no cellular structure, so E gives no partner comparison.","structure":"yes","verdict":"real","why":"Sharp membranous rings confined to epithelial cells lining glands, with negative stroma and lumen, is the expected beta-catenin pattern."}
+```

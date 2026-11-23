@@ -1,0 +1,9 @@
+```json
+{
+  "expectation": "Cytoplasmic, microtubule-like fibrillar signal in nearly all cells (epithelium, stroma, muscle), brighter in some cells such as neurons, ciliated cells and mitotic cells. It should be cell-resolved with dark nuclei, not clustered into a small subset.",
+  "observed": "A: one tissue strip is uniformly bright yellow with streaky, fibre-like texture, while the other strips are dim grey haze. There is also a large background glow arc and a rectangular yellow patch. B: diffuse banded haze. C: crypt epithelium with only faint haze beside the nuclei. D: smeared bright streaks, with no individual cells resolvable.",
+  "structure": "no",
+  "verdict": "failed",
+  "why": "The signal follows one tissue piece and the background glow rather than a cell population, and no cell-level cytoplasmic staining is visible at B, C or D."
+}
+```

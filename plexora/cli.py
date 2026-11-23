@@ -1907,6 +1907,27 @@ def _build_ai_parser():
                           help="Write <scene>/question.txt and its pictures under DIR.")
     contrast.add_argument("--score", default=None, metavar="DIR",
                           help="Score the <scene>/answer.json files under DIR.")
+    stain = subs.add_parser("stain-bench", help="The stain-check bench on the owner's labelled images, "
+                                                "without the gateway: write each channel's packet and "
+                                                "picture, list the readings still due, score.")
+    stain.add_argument("--write", default=None, metavar="DIR",
+                       help="Write <project>/<channel>/question.txt and picture.webp under DIR (run in a "
+                            "data root that holds the labelled projects).")
+    stain.add_argument("--pending", default=None, metavar="DIR",
+                       help="Print '<question> <answer file>' for each reading still due.")
+    stain.add_argument("--score", default=None, metavar="DIR", help="Score the answers under DIR.")
+    stain.add_argument("--labels", default=None, metavar="FILE",
+                       help="The owner's labels (default docs/internal/bench/stain-1/labels.json).")
+    visual = subs.add_parser("visual-bench", help="The visual-pass bench: synthetic scenes with painted "
+                                                  "artifacts, outlined by a model over Plexora's MCP tools "
+                                                  "or by the truth reader, then scored.")
+    visual.add_argument("--prepare", default=None, metavar="ROOT",
+                        help="Register the scenes in data root ROOT (PLEXORA_DATA_PATH).")
+    visual.add_argument("--truth", default=None, metavar="ROOT", help="Run the truth reader: the ceiling.")
+    visual.add_argument("--start", default=None, nargs=2, metavar=("ROOT", "SCENE"),
+                        help="Start a visual-pass session on SCENE for a model; prints its id.")
+    visual.add_argument("--score", default=None, metavar="ROOT", help="Score the sessions in --sessions.")
+    visual.add_argument("--sessions", default=None, metavar="FILE", help="JSON {scene: session id}.")
     from plexora.vision import cli as segment_cli
 
     segment_cli.add_parser(subs)
@@ -2047,7 +2068,7 @@ def _run_ai(args):
         from plexora.ai.setup import models_command
 
         return models_command(args.action, force=args.force)
-    if command in ("route-bench", "naming-bench", "contrast-bench"):
+    if command in ("route-bench", "naming-bench", "contrast-bench", "stain-bench", "visual-bench"):
         from plexora.ai.harness import cli as harness_cli
 
         return getattr(harness_cli, f"{command.replace('-', '_')}_command")(args)

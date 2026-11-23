@@ -1,0 +1,3 @@
+```json
+{"expectation":"Membrane-ring stain on a subset of lymphocytes (T, B, NK), with CD69 activated cells scattered singly or in small clusters in the lamina propria and lymphoid aggregates. Epithelium and stroma should be largely negative.","observed":"A: faint haze plus slide-wide yellow glow, mostly background. B/C: discrete small ring-shaped bright cells in the lamina propria between nuclear-blue epithelium; the epithelium is dim. D: crisp membrane outlines around cells. E1/E3: many ring cells in clusters. E2: CD19 shows no cellular structure, so E tells nothing.","structure":"yes","verdict":"real","why":"Discrete membrane-ringed cells sit in the lamina propria, as expected for CD69 lymphocytes, with clear contrast against negative epithelium."}
+```

@@ -1,0 +1,24 @@
+The session is decided: all 13 units are done. I stopped there, as instructed, and did not call `qc_session_finish`, which is what the server names as the next step.
+
+**What I found in the visual pass**
+- The tissue has one large artifact, a diagonal tissue fold from grid square C3 to F6. It is bright in both DNA cycles and in all five channels.
+- The detector's own fold region (r1) was already on the session, so the overview showed no solid outline over most of the band. I wrote two fold regions of my own with magic select, v1 (about 4.0% of tissue) and v2 (about 2.1%). They overlap r1 and are partly redundant.
+- The first two previews were wrong. One took in normal tissue around the narrow band, and the other caught only the upper half. Splitting the band into two regions fixed both.
+- I saw no tear, bubble, lifted corner or debris smear elsewhere.
+
+**How the packets were answered**
+- **Channel audit:** all five channels were marked suspicious for the fold (c1), with blur (c2, c4) on the same band.
+- **Confirmation:**
+  - c1 is a tissue fold, moderate, all channels, excluded.
+  - c2 is out of focus, moderate, both cycles, excluded.
+  - c3, the small CD8/CD3/CD20 debris candidate, looked like ordinary cells next to a clean field of the same size. I dismissed it as not an artifact.
+- **Final review:** I called it consistent. The excluded tissue is about 16% of the total.
+
+**For a person to check**
+- The faint upper-left tip of the fold (near C3) may sit slightly outside the traced outline. I listed it under `left` in the visual-scan answer.
+- v1 and v2 are reversible. `undo_operation` on their receipts, `op_20261123T194932_89304eeb` and `op_20261123T194945_3d5a0ae8`, deletes them.
+
+I didn't create any worktrees, so there is nothing to clean up.
+
+--- stderr
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.

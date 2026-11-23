@@ -1,0 +1,15 @@
+The session is decided: all 12 units are done. I haven't closed it. `qc_next` points to `qc_session_finish` with `action: "close"` and then `qc_report`, and your instructions stopped at "decided".
+
+- **Channel audit (pk_0001):** I answered all five channels (DNA_1, CD3, CD8, DNA_2, CD20) as suspicious, with class `tissue_fold`. The diagonal fold shows in every channel.
+- **Visual pass (pk_0002):** I outlined one fold, a long diagonal band from grid square C3 to the lower-right corner at F6.
+  - I drew it in two steps. The first outline took in a large block of normal tissue, so I added exclude points on tissue off the band and an include point on the upper tip.
+  - It was written as `tissue_fold`, severe, confidence sure, action exclude, as region `qcroi_a5c9522673` (receipt `op_20261123T212102_6256beea`, undoable). It covers about 5.2% of the tissue.
+  - I left the small debris-like and out-of-focus detector candidates (c3 and c4, near C3) unoutlined. They are too small for the whole-tissue views.
+- **Final review (pk_0003):** I answered consistent. There is one region, nothing obvious missed, and no normal tissue excluded.
+- **DNA retention:** it is reliable through cycle 2 of 2, with 0% nucleus loss.
+
+**Correction:** the final review's channel summary lists all five channels as clean, even though I marked them suspicious. I didn't look into why. The channels table in `qc_report` will show what was recorded.
+
+The audit verdicts and the region are computed results. That the band is a fold is my reading of the images, and I called it from the doubled, brighter nuclei.
+
+--- stderr

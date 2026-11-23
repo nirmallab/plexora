@@ -1,0 +1,18 @@
+The visual pass of QC session `qs_20261123T212247_cff958` on `visualbench_damage_b` is finished, and the server now reports the session as **decided** (9 of 9 steps done). I answered three packets:
+
+| Packet | Kind | Answer | What it rested on |
+|---|---|---|---|
+| pk_0001 | channel audit | All 5 channels (DNA_1, CD3, CD8, DNA_2, CD20) **suspicious** at candidate c1, as tissue damage or detachment | c1 is a rectangle in the lower left with no nuclei or marker signal in either cycle. Otherwise the stains look normal. The aggregate hints the scan raised on CD3, CD8 and CD20 showed nothing on the tiles. (`art_44a1e5d04f4294fc4a65`) |
+| pk_0002 | visual scan | **done**: one region written, nothing left over | See below. (`art_e8fe0409c4acde436542`, `art_1bff887e30034aa969ae`, `art_d3404d0504ec34b4d4e7`) |
+| pk_0003 | final review | **consistent** | The excluded region sits exactly on the dark patch seen in DNA_1, and the rest of the tissue is uniform. (`art_7a41c4f946b78318562f`) |
+
+**The region I wrote:** `qcroi_6c82124456`, about 20,900 µm², which is 0.79% of the tissue.
+- **Why:** zoomed in, the lower-left patch has faint nuclei in DNA_1 and DNA_2 and dark markers. Its edges are sharp and straight, so it is technical damage, not biology. Tissue detection had only cut out its darkest core, as background, which is not an artifact region.
+- **How:** I outlined it with magic select on the DNA channels; the outline lies entirely on tissue. I marked it damaged or detached tissue, severe, sure, so the cells in it are **excluded**.
+- **Undo:** receipt `op_20261123T212335_f9c36ec6` (child operation `op_20261123T212247_6cff86b1.001`).
+
+Nothing else in the tissue looked abnormal. The blue rim in the "channels dark together" view is just the tissue edge. DNA retention holds through cycle 2 of 2.
+
+As you asked, I stopped at "decided". The session is still open: closing it with `qc_session_finish` (`action: "close"`) makes it the project's active QC, and `qc_report` then writes the report. I created no git worktree, so there is nothing to clean up.
+
+--- stderr

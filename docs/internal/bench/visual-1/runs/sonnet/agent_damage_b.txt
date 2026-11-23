@@ -1,0 +1,11 @@
+The session is decided (9/9 units). I did not close it or write a report, because the task was to stop at "decided".
+
+- **Channel audit (`pk_0001`):** I marked DNA_1 and DNA_2 `suspicious` on candidate c1, with class hint `tissue_damage_or_detachment`. I marked CD3, CD8 and CD20 `clean`. The scan's later summary lists all five channels as clean, so only the region carries the DNA finding.
+- **Visual pass (`pk_0002`):** The whole-tissue views showed one large artifact that no region covered. It is a sharp-edged rectangle at the lower left, about 185 × 120 µm, where the nuclei are dim in both DNA cycles. All three marker channels are dark there too. Folds, tears, debris and bubbles were not seen elsewhere.
+  - I previewed the outline first and it fitted snugly, so I wrote it as region `qcroi_28cb2a47fd` (label v1). It is class `tissue_damage_or_detachment`, confidence sure, severity severe. The session action is `exclude`, and it covers about 0.8% of the tissue.
+  - The receipt is `op_20261123T212215_f933d82f`. `undo_operation` on it reverses the write.
+- **Final review (`pk_0003`):** I answered `consistent`. The region matches the dark patch, and DNA retention is reliable through cycle 2 of 2.
+
+Next step when you want it: `qc_session_finish` with `action: "close"`, then `qc_report`.
+
+--- stderr

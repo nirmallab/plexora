@@ -1,0 +1,5 @@
+I've looked at the picture, including enlarged views of panels A and E. Here is the answer:
+
+```json
+{"kind":"stain_check","expectation":"Membrane/cytoplasmic stain on activated T cells (Tfh, Treg, activated CD4); uncommon, a few % of cells; scattered single cells in stroma and enriched in lymphoid aggregates, always on CD3+ cells, absent from tumour epithelium.","observed":"A: discrete bright small cells scattered in most ROIs, denser in aggregates (several ROIs); 2 ROIs show diffuse tissue-following haze. B/C sparse, few cells. D: one cell with a membrane ring. E: ICOS patches sit within CD3-rich areas, none in CD3-negative zones.","structure":"yes","verdict":"real","why":"A distinct, rare population of cell-sized membrane-stained cells, clustered in lymphoid aggregates and lying on CD3+ cells, is visible across most ROIs.","notes":"ICOS marks discrete cells, enriched in immune aggregates and overlapping CD3 in row E; two ROIs carry diffuse background haze that follows tissue texture, so thresholds there need care."}
+```

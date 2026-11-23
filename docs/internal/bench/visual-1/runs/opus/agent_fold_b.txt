@@ -1,0 +1,16 @@
+The visual pass is done and session `qs_20261123T212100_2a3018` on `visualbench_fold_b` is now **decided** (12 of 12 units). I stopped there, as asked. The session has not been closed: `qc_session_finish` with `close` and then `qc_report` are still to run.
+
+**The one artifact: a tissue fold.** A long diagonal band of doubled tissue runs from grid square C3 to F6. It is bright in both DNA cycles and in all three markers (CD3, CD8, CD20), and shows as a single stripe in the view of where channels are bright together.
+- I outlined it with magic select. The first preview took a square block of normal tissue, so I added exclude points on both sides of the band and include points along its upper end; the third preview fit and I wrote it. It is labelled v1 in the visual pass and r2 on the final review sheet: tissue fold, severe, sure, action exclude, about 9.6% of the tissue. Receipt `op_20261123T212223_baebf812`.
+- My outline stopped just short of the band's top-left tip. The scan had flagged that tip as possible debris (c3). Up close it is the fold's straight edge with doubled cells, continuous with the band, so I confirmed it as part of the fold rather than debris. It was written as r1 (receipt `op_20261123T212100_1c9d30e4.002`).
+- Together the two regions exclude about 10% of the tissue (`excluded_tissue_fraction` 0.0997).
+
+**Other packets:**
+- **Channel audit:** I marked DNA_1 and DNA_2 suspicious for the fold. I marked CD3, CD8 and CD20 uncertain because of small bright spots near the top of the band. The session's own count is 4 channels clean and 1 flagged; it did not say which channel is flagged.
+- **Final review:** I answered "consistent". The two regions follow the fold from tip to end and are not much larger than it.
+- **Nothing left for a person:** no other large artifact showed, and the tissue's corners and edges look intact.
+- **DNA retention:** nuclei hold through cycle 2 of 2, with 0% lost.
+
+I created no worktree, so there was nothing to remove.
+
+--- stderr

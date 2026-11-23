@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 
 def _credits(micro) -> str:
@@ -386,6 +387,76 @@ def contrast_bench_command(args) -> int:
     scored = contrast_bench.score_directory(args.score)
     _print_contrast("Contrast check", scored)
     return 0 if scored["metrics"]["invalid_answer_rate"] == 0 else 1
+
+
+def visual_bench_command(args) -> int:
+    """`plexora ai visual-bench --prepare ROOT | --truth ROOT | --start ROOT SCENE |
+    --score ROOT --sessions FILE`: the visual-pass bench (synthetic scenes in an
+    isolated data root; a model runs the pass over Plexora's MCP tools)."""
+    from plexora.agent import AgentSession, registry
+    from plexora.ai import visual_bench
+
+    registry.discover(["roi", "qc"])
+    if args.prepare:
+        for row in visual_bench.prepare(args.prepare):
+            print(f"{row['scene']}: project {row['project']}, {row['regions']} painted region(s)")
+        return 0
+    if args.truth:
+        scored = visual_bench.run_truth(args.truth)
+    elif args.start:
+        root, scene = args.start
+        session = AgentSession(table_limit=4)
+        try:
+            print(visual_bench.start(session, scene))
+        finally:
+            session.close()
+        return 0
+    elif args.score and args.sessions:
+        scored = visual_bench.score(args.score, json.loads(Path(args.sessions).read_text(encoding="utf-8")))
+    else:
+        print("Give --prepare ROOT, --truth ROOT, --start ROOT SCENE, or --score ROOT --sessions FILE.",
+              file=sys.stderr)
+        return 2
+    m = scored["metrics"]
+    print(f"Visual artifact pass ({visual_bench.VERSION}): recall {m['region_recall']}, precision "
+          f"{m['region_precision']}, IoU {m['region_iou']} ({m['regions']} regions, {m['outlines']} "
+          f"outlines), unfinished {m['failure_rate']:.0%}")
+    for row in scored["rows"]:
+        print(f"  {row['scene']:10} matched {row['matched']}/{row['scored']}, outlines {row['outlines']} "
+              f"({row['on']} on an artifact) {row['classes']}")
+    print(json.dumps(m))
+    return 0 if m["failure_rate"] == 0 else 1
+
+
+def stain_bench_command(args) -> int:
+    """`plexora ai stain-bench --write DIR | --pending DIR | --score DIR`: the
+    stain-check bench on the owner's labelled images, for a model asked
+    outside the gateway (no credits)."""
+    from plexora.ai import stain_bench
+
+    if args.write:
+        items = stain_bench.write(args.write, stain_bench.load_labels(args.labels))
+        print(f"Wrote {len(items)} channels under {args.write}: answer each question.txt (its "
+              "picture beside it) into the file --pending names, until --pending prints nothing.")
+        return 0
+    if args.pending:
+        for question, answer in stain_bench.pending(args.pending):
+            print(f"{question} {answer}")
+        return 0
+    if not args.score:
+        print("Give --write DIR, --pending DIR or --score DIR.", file=sys.stderr)
+        return 2
+    scored = stain_bench.score(args.score, stain_bench.load_labels(args.labels))
+    m = scored["metrics"]
+    print(f"Low quality staining ({stain_bench.VERSION}) on {m['channels']} channels "
+          f"({m['failed']} failed, {m['real']} real, {m['weak']} weak; {m['readings']} readings):")
+    print(f"  failed recall {m['failed_recall']}, real called failed {m['real_failed_rate']}, "
+          f"weak called failed {m['weak_failed_rate']}, invalid answers {m['invalid_answer_rate']:.1%}, "
+          f"unsettled {m['failure_rate']:.1%}")
+    for row in scored["rows"]:
+        print(f"  {row['project']:22} {row['channel']:14} {row['label']:6} -> {row['settled']} "
+              f"({' / '.join(row['readings'])})")
+    return 0 if m["invalid_answer_rate"] == 0 and m["failure_rate"] == 0 else 1
 
 
 def _print_gating(args, scenarios, m) -> None:

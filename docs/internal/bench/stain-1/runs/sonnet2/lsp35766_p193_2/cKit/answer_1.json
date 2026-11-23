@@ -1,0 +1,9 @@
+```json
+{
+  "expectation": "Membrane ring on scattered single round cells (mast cells) in the intestinal lamina propria and submucosa. Rare. Possibly ICC along the muscle layers. Epithelium should stay mostly negative.",
+  "observed": "A: diffuse yellow haze over tissue, bright round blobs outside tissue (debris), and a thin line along the right muscle layer. B and D: a few small round cells with clear membrane rings on a hazy background. C: one bright blob near the crypt epithelium.",
+  "structure": "yes",
+  "verdict": "weak",
+  "why": "Scattered round cells with membrane rings (B, D) fit mast cells, but haze and debris blobs dominate and contrast is low."
+}
+```

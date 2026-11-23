@@ -1,0 +1,9 @@
+```json
+{
+  "expectation": "Cytoplasmic neuron-specific tubulin in gut: nerve fibres and ganglion cells (myenteric and submucosal plexus, thin fibres in the lamina propria), sparse single cells and lines in muscle and submucosa. Epithelium should be mostly negative.",
+  "observed": "A: bright beaded yellow line along the muscle layer of the right-hand section, plus a diffuse yellow glow over the whole epithelium. B/C: epithelium evenly lit, B has bright blobs at the top. D: a few compact bright cells or blobs. E: TUBB3 is hazy over Ecadherin epithelium with no clear subset.",
+  "structure": "unclear",
+  "verdict": "weak",
+  "why": "The thin line along the muscle layer fits a nerve plexus, but it sits on a broad uniform epithelial haze, so contrast is low and the rest is not specific."
+}
+```

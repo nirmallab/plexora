@@ -1,0 +1,457 @@
+[
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA1",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "Ki67",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CDX2",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD31",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "panCK",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA2",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD20",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD3E",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "PDPN",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "HH3",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA3",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD163",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "FOXP3",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "GZMB",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "aSMA",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA4",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "Ecadherin",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD11c",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "PD1",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA5",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD8a",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD34",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD103",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA6",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "TCF1",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD66b",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "bCAT",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA7",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD11b",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "Rb",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "NKG2A",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA8",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD4",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "KLF2",
+  "label": "weak"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD69",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA9",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "cKit",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "IBA1",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD206",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA10",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD19",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "VIM",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "NGFR",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA11",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "HLADRA",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "betaTUBULIN",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "CD21",
+  "label": "failed"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "DNA12",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "NaKATPase",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "TUBB3",
+  "label": "real"
+ },
+ {
+  "image": "lsp35766_p193_2",
+  "channel": "HLAA",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "MPO",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "HistoneH3",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "SMA",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD16",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD38",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "HLADR",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD27",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD15",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD45RA",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD163",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "B2M",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD20",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD68",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "Ido1",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD3",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "LAG3 / LAG33",
+  "label": "failed"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD11c",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "PD1",
+  "label": "weak"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "PDGFRb",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD7",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "GrzB",
+  "label": "weak"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "PDL1",
+  "label": "weak"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "TCF7",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD45RO",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "FOXP3",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "ICOS",
+  "label": "weak"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD8a",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CarbonicAnhydrase",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD33",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "Ki67",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "VISTA",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD40",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD4",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD14",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "Ecad",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD303",
+  "label": "weak"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "CD206",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "cleavedPARP",
+  "label": "unsure"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "DNA1",
+  "label": "real"
+ },
+ {
+  "image": "imc-immucan-example",
+  "channel": "DNA2",
+  "label": "real"
+ }
+]

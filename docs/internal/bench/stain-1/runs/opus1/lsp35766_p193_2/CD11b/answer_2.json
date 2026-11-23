@@ -1,0 +1,5 @@
+Checked the stain-check image at full size and with panel A enlarged. My answer for CD11b is `failed`:
+
+```json
+{"kind":"stain_check","expectation":"Membrane ring on myeloid cells (neutrophils, monocytes, macrophages). Scattered single cells, fairly common in gut lamina propria and submucosa, denser in inflamed foci or near vessels, with CD66b+ neutrophils a subset.","observed":"A: fine yellow speckle on tissue and background alike, out-of-focus blobs and tile squares off tissue, haze following tissue. B/C: diffuse haze, a few solid bright blobs. D: hazy patches, no rings. E: CD66b unstructured; CD11b few blobs.","structure":"no","verdict":"failed","why":"Signal is speckle, blobs and haze that also appear off tissue, with no membrane-ringed myeloid population arranged where expected.","notes":"CD11b shows dots and bright blobs on and off the tissue, plus tiling and haze; no clear membrane-stained myeloid cells. Row E is uninformative because CD66b itself has no cellular structure."}
+```

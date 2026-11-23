@@ -1,0 +1,3 @@
+```json
+{"expectation":"Membrane ring on B cells (incl. early plasmablasts), dim, in gut tissue. They should form dense clusters in lymphoid follicles or aggregates, plus scattered lamina propria cells, all inside HLA-DR-positive territory.","observed":"A: sparse isolated yellow dots across the tissue, some in empty background, with no clustering or follicle pattern. B: nothing. C: three round, saturated blobs of very different sizes, not rings. D: one huge glowing blob with a soft halo. E1: no CD19 in an HLADRA-dense field.","structure":"no","verdict":"failed","why":"Only scattered, round, saturated specks (some off tissue) with no follicle or aggregate pattern, and no signal in an HLA-DR-dense field."}
+```

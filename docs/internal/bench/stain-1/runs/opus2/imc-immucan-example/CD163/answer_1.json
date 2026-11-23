@@ -1,0 +1,3 @@
+```json
+{"kind":"stain_check","expectation":"Membrane/cytoplasmic rings on macrophages, a subset of CD68+ cells. Common in tumour stroma: scattered single cells or loose clusters among tumour nests, sparse inside epithelium. Large round or ovoid cells.","observed":"A: discrete yellow cells scattered across most ROIs; one ROI has dense clusters. B, C: few faint cells, consistent with typical density. D: crisp membrane rings round nuclei. E: CD163 rings outline the CD68+ clusters, with CD68 inside them; the CD68-negative tissue is dark.","structure":"yes","verdict":"real","why":"Sharp membrane rings on a distinct, clustered macrophage population that sits on CD68+ cells, with CD68-negative tissue left dark."}
+```

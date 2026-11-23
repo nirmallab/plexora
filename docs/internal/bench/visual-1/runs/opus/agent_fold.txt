@@ -1,0 +1,20 @@
+Session `qs_20261123T194833_e1c468` on `visualbench_fold` is decided: all 13 units are settled. I stopped there as you asked, so I did not close the session (`qc_session_finish`) or run `qc_report`.
+
+**What I answered**
+- **pk_0001, channel audit:** I marked all 5 channels (DNA_1, CD3, CD8, DNA_2, CD20) suspicious for a tissue fold. A diagonal band of doubled, brighter nuclei crosses every channel. The marker specks elsewhere look like ordinary positive cells, not aggregates. The session nonetheless ended with 1 channel flagged and 4 clean; I didn't check why it scored them that way.
+- **pk_0002, visual pass:** the only large artifact on the tissue is that fold, running from grid square C3 to the bottom-right tip in F6. The outlining tool wouldn't hold the whole band in one outline, and adding to an existing region isn't allowed during a session. So I wrote it as two adjoining regions, both tissue fold, severe, exclude:
+  - v1 (`qcroi_e554bcd1dd`), upper half, receipt `op_20261123T195042_9abbfa00`
+  - v2 (`qcroi_b5606aedda`), lower half, receipt `op_20261123T195120_7e91fe81`
+
+  A re-render showed the fold covered end to end and nothing else large. I left nothing for a person to look at.
+- **pk_0003, the detector's own fold candidate (c1):** confirmed as a fold, severe, affecting all channels, cells excluded. The close crop shows doubled, overlapping nuclei along a straight crease.
+- **pk_0004, final review:** consistent. The three regions all trace the same fold and overlap; nothing else is excluded.
+
+**Where it ended**
+- About 11.75% of the tissue is excluded, all of it the fold.
+- DNA retention: nuclei hold through cycle 2 of 2, and 0% of cells lose their nucleus.
+- The remaining candidates (c2 and c4 flagged as out of focus, c3 as debris) never came back to me as packets; the session settled them itself. 3 of the 6 candidate units ended as "merged", which suggests they were absorbed into the fold regions.
+
+The next step is `qc_session_finish` with `action: "close"`, then `qc_report`. Say if you want me to do that.
+
+--- stderr

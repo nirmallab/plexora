@@ -1,0 +1,9 @@
+```json
+{
+  "expectation": "Nuclear stain in a minority of cells: regulatory T cells (CD3+CD4+), seen as small, discrete, cell-sized nuclear spots scattered among CD4+ cells. They should be rare, sometimes clustered in lymphoid aggregates, and dim in some tumours.",
+  "observed": "A: discrete yellow cell-sized dots in every core, much denser in a few cores/aggregates, with faint yellow haze in a couple of cores. B/C: sparse, compact, isolated bright cells on a dim background. D: a compact nuclear-sized bright cell. E: FOXP3 spots are discrete nuclei sitting within CD4-high tissue, and CD4-negative areas are mostly empty.",
+  "structure": "yes",
+  "verdict": "real",
+  "why": "Rare, discrete, nuclear-sized FOXP3 cells recur across cores, cluster in aggregates and sit inside CD4+ tissue, as Tregs should."
+}
+```

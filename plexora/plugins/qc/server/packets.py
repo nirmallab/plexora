@@ -1172,12 +1172,7 @@ def stain_check(engine, units):
     names = engine.call.session.project(project).image.real_channels
     names = [c.get("fullname") or c.get("name") for c in names]
     marker = unit["channel"]
-    evidence = {"marker": marker, "project": project,
-                "expression": stain.note(names, marker),
-                "partner": manifest.get("partner"),
-                "partner_relation": manifest.get("partner_words"),
-                "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um"),
-                **_reading(engine, ["stain"])}
+    evidence = {**stain.evidence(names, marker, project, manifest), **_reading(engine, ["stain"])}
     packet = {"question": stain.QUESTION.format(marker=marker), "evidence": evidence,
               "allowed": list(stain.VERDICTS), "_image_meta": [],
               "_stain_read": int(unit.get("stain_read") or 1)}

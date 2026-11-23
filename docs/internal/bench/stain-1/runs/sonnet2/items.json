@@ -1,0 +1,380 @@
+{
+ "bench_version": "stain-1",
+ "items": [
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "Ki67",
+   "folder": "lsp35766_p193_2/Ki67"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CDX2",
+   "folder": "lsp35766_p193_2/CDX2"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD31",
+   "folder": "lsp35766_p193_2/CD31"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "panCK",
+   "folder": "lsp35766_p193_2/panCK"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD20",
+   "folder": "lsp35766_p193_2/CD20"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD3E",
+   "folder": "lsp35766_p193_2/CD3E"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "PDPN",
+   "folder": "lsp35766_p193_2/PDPN"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "HH3",
+   "folder": "lsp35766_p193_2/HH3"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD163",
+   "folder": "lsp35766_p193_2/CD163"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "FOXP3",
+   "folder": "lsp35766_p193_2/FOXP3"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "GZMB",
+   "folder": "lsp35766_p193_2/GZMB"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "aSMA",
+   "folder": "lsp35766_p193_2/aSMA"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "Ecadherin",
+   "folder": "lsp35766_p193_2/Ecadherin"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD11c",
+   "folder": "lsp35766_p193_2/CD11c"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "PD1",
+   "folder": "lsp35766_p193_2/PD1"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD8a",
+   "folder": "lsp35766_p193_2/CD8a"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD34",
+   "folder": "lsp35766_p193_2/CD34"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD103",
+   "folder": "lsp35766_p193_2/CD103"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "TCF1",
+   "folder": "lsp35766_p193_2/TCF1"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD66b",
+   "folder": "lsp35766_p193_2/CD66b"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "bCAT",
+   "folder": "lsp35766_p193_2/bCAT"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD11b",
+   "folder": "lsp35766_p193_2/CD11b"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "Rb",
+   "folder": "lsp35766_p193_2/Rb"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "NKG2A",
+   "folder": "lsp35766_p193_2/NKG2A"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD4",
+   "folder": "lsp35766_p193_2/CD4"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "KLF2",
+   "folder": "lsp35766_p193_2/KLF2"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD69",
+   "folder": "lsp35766_p193_2/CD69"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "cKit",
+   "folder": "lsp35766_p193_2/cKit"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "IBA1",
+   "folder": "lsp35766_p193_2/IBA1"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD206",
+   "folder": "lsp35766_p193_2/CD206"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD19",
+   "folder": "lsp35766_p193_2/CD19"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "VIM",
+   "folder": "lsp35766_p193_2/VIM"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "NGFR",
+   "folder": "lsp35766_p193_2/NGFR"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "HLADRA",
+   "folder": "lsp35766_p193_2/HLADRA"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "betaTUBULIN",
+   "folder": "lsp35766_p193_2/betaTUBULIN"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "CD21",
+   "folder": "lsp35766_p193_2/CD21"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "NaKATPase",
+   "folder": "lsp35766_p193_2/NaKATPase"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "TUBB3",
+   "folder": "lsp35766_p193_2/TUBB3"
+  },
+  {
+   "project": "lsp35766_p193_2",
+   "channel": "HLAA",
+   "folder": "lsp35766_p193_2/HLAA"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "MPO",
+   "folder": "imc-immucan-example/MPO"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "SMA",
+   "folder": "imc-immucan-example/SMA"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD16",
+   "folder": "imc-immucan-example/CD16"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD38",
+   "folder": "imc-immucan-example/CD38"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "HLADR",
+   "folder": "imc-immucan-example/HLADR"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD27",
+   "folder": "imc-immucan-example/CD27"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD15",
+   "folder": "imc-immucan-example/CD15"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD45RA",
+   "folder": "imc-immucan-example/CD45RA"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD163",
+   "folder": "imc-immucan-example/CD163"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "B2M",
+   "folder": "imc-immucan-example/B2M"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD20",
+   "folder": "imc-immucan-example/CD20"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD68",
+   "folder": "imc-immucan-example/CD68"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "Ido1",
+   "folder": "imc-immucan-example/Ido1"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD3",
+   "folder": "imc-immucan-example/CD3"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "LAG3 / LAG33",
+   "folder": "imc-immucan-example/LAG3_LAG33"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD11c",
+   "folder": "imc-immucan-example/CD11c"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "PD1",
+   "folder": "imc-immucan-example/PD1"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "PDGFRb",
+   "folder": "imc-immucan-example/PDGFRb"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD7",
+   "folder": "imc-immucan-example/CD7"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "GrzB",
+   "folder": "imc-immucan-example/GrzB"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "PDL1",
+   "folder": "imc-immucan-example/PDL1"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "TCF7",
+   "folder": "imc-immucan-example/TCF7"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD45RO",
+   "folder": "imc-immucan-example/CD45RO"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "FOXP3",
+   "folder": "imc-immucan-example/FOXP3"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "ICOS",
+   "folder": "imc-immucan-example/ICOS"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD8a",
+   "folder": "imc-immucan-example/CD8a"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CarbonicAnhydrase",
+   "folder": "imc-immucan-example/CarbonicAnhydrase"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD33",
+   "folder": "imc-immucan-example/CD33"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "Ki67",
+   "folder": "imc-immucan-example/Ki67"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "VISTA",
+   "folder": "imc-immucan-example/VISTA"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD40",
+   "folder": "imc-immucan-example/CD40"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD4",
+   "folder": "imc-immucan-example/CD4"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD14",
+   "folder": "imc-immucan-example/CD14"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "Ecad",
+   "folder": "imc-immucan-example/Ecad"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD303",
+   "folder": "imc-immucan-example/CD303"
+  },
+  {
+   "project": "imc-immucan-example",
+   "channel": "CD206",
+   "folder": "imc-immucan-example/CD206"
+  }
+ ]
+}

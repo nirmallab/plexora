@@ -1,0 +1,3 @@
+```json
+{"expectation":"CD19 should be a membrane ring on B cells, which are common in lymphoid tissue. They should cluster in follicles or aggregates and be mostly HLA-DR positive. In gut, I'd expect follicles and lamina propria clusters, not isolated singletons.","observed":"A: sparse isolated yellow dots across the tissue and in the empty background. B: only faint diffuse haze. C: three round saturated blobs, with no ring or cluster. D: bright blobs with a glow, not a membrane ring. E1: no CD19 signal in a field dense in HLA-DR cells.","structure":"no","verdict":"failed","why":"The signal is scattered saturated specks, including off-tissue, with no follicle clustering, no membrane pattern and no overlap with HLA-DR cells."}
+```

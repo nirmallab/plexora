@@ -1,0 +1,3 @@
+```json
+{"expectation":"Cytoplasmic/fibrous VIM in mesenchymal cells (fibroblasts, endothelium, smooth muscle) and some immune cells: abundant in stroma, vessel walls and muscle, and absent from epithelium, which would stay nuclear-only.","observed":"A: yellow signal fills the stromal and muscular tissue and the lamina propria cores. The epithelium (blue, villi and crypts) is largely unstained. B, C: sparse single stromal or immune cells with cytoplasmic rings sit in and beside the epithelium. D: bright, cell-shaped cytoplasmic and fibrous profiles.","structure":"yes","verdict":"real","why":"VIM marks stromal and mesenchymal compartments and is excluded from epithelium, with cell-shaped cytoplasmic staining at fine scale, as expected."}
+```

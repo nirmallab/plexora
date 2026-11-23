@@ -264,14 +264,16 @@ modules:
         kinds: [visual_scan]
         # The coordinator's own: it draws with the overview, channel and
         # magic-select tools while the packet is out, which a worker scoped
-        # to packets does not have. No worker group claims it.
+        # to packets does not have. No worker group claims it. Benched by
+        # `plexora ai visual-bench` (visual-1, docs/internal/bench/visual-1).
         mcp: false
       stain_check:
         label: Low quality staining
         blurb: Looks at each marker's stain across scales and with a partner marker, and says whether it worked.
-        # One picture per marker channel (qc/server/stain.py), benched on the
+        # One picture per marker channel (qc/server/stain.py), designed on the
         # owner's labels of 209 channels on seven images (2026-11-23,
-        # docs/internal/bench/runs/2026-11-23-channel-labels).
+        # docs/internal/bench/runs/2026-11-23-channel-labels); benched by
+        # `plexora ai stain-bench` (stain-1, docs/internal/bench/stain-1).
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000

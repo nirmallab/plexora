@@ -1,0 +1,3 @@
+```json
+{"expectation":"PD1 should be a membrane ring on a minority of T cells, mainly CD4 follicular helper cells, clustered in lymphoid follicles or aggregates. A few cells would be dim on B or myeloid cells. Most of the tissue should be negative.","observed":"A: diffuse yellow haze following the tissue outline, edge glow, horizontal bands and scattered blobs. B and C: haze, with a bright rim along a crypt epithelium. D: one blurry blob with no ring. E1/E3: fine membranous speckle, with green concentrated in the CD4-dense aggregate and partly on or beside magenta CD4 cells.","structure":"unclear","verdict":"weak","why":"Whole-tissue and field views are mostly haze and edge artefact, but row E shows low-contrast membranous PD1 clustered in the CD4-rich aggregate."}
+```
