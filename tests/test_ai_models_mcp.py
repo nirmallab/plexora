@@ -369,7 +369,12 @@ def test_qc_workers_scoped_by_task_take_turns_to_the_end(tmp_path, models_file):
     started = qc_start(session)
     sid = started["session_id"]
     workers = started["delegate"]["workers"]
-    assert [w["model"] for w in workers] == ["routine-model", "judge-model"]
+    # The stain check's second and third readers (`reader_of`) are workers of
+    # their own on the model of the task they read again; a worker that read
+    # a picture once would not read it again blind.
+    assert [w["model"] for w in workers] == ["routine-model", "judge-model",
+                                             "routine-model", "routine-model"]
+    assert [w["tasks"] for w in workers[2:]] == [["qc.stain_reader_2"], ["qc.stain_reader_3"]]
     agent = QCOracle(info)
     got = {w["reader"]: [] for w in workers}
     which = {task: w for w in workers for task in w["tasks"]}
@@ -392,7 +397,8 @@ def test_qc_workers_scoped_by_task_take_turns_to_the_end(tmp_path, models_file):
             assert result["needs"]["model"] == worker["model"]
     else:
         raise AssertionError("the QC session did not finish")
-    assert all(got.values()), got
+    # A later reader works only when a stain is read failed first.
+    assert all(got[w["reader"]] for w in workers[:2]), got
     assert "artifact_confirm" in got[workers[1]["reader"]]
     status = ok(invoke(session, "qc_session_status", {"detail": "full", "session_id": sid}))
     assert "delegate" in status

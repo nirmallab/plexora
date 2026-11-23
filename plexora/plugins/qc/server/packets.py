@@ -1147,9 +1147,17 @@ def stain_check(engine, units):
     if unit.get("picture"):
         try:
             png, manifest = artifacts.get(unit["picture"])
+            fmt = _fmt(engine)
             with Image.open(io.BytesIO(png)) as im:
                 size = im.size
-            rendered = {"image": png, "format": "png", "size": size, "manifest": manifest,
+                image = png
+                if fmt == "webp":   # stored lossless; sent in the session's format
+                    buf = io.BytesIO()
+                    im.convert("RGB").save(buf, "WEBP", quality=88)
+                    image = buf.getvalue()
+                else:
+                    fmt = "png"
+            rendered = {"image": image, "format": fmt, "size": size, "manifest": manifest,
                         "artifact": {"id": unit["picture"]}}
         except Exception:  # noqa: BLE001 -- swept or unreadable: draw it again
             rendered = None
