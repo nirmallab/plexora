@@ -322,7 +322,9 @@ def test_an_image_the_app_hands_over_becomes_a_project_over_the_bridge(tmp_path)
 #: `load_tool` sends, less its indentation). Before 2026-11-01:
 #: gating_session_start 18,595 (19,985 with pydantic's titles), render_region
 #: 9,014, qc_session_start 7,086, ai_run_session 2,579; all 48 tools 84,509.
-SCHEMA_CEILINGS = {"gating_session_start": 11_500, "render_region": 8_000,
+#: gating_session_start: 11_700 since `stain_check` (QC's stain check as evidence,
+#: 2026-11-23), the smallest that option can be described in.
+SCHEMA_CEILINGS = {"gating_session_start": 11_700, "render_region": 8_000,
                    "qc_session_start": 6_500, "ai_run_session": 2_100}
 ALL_SCHEMAS_CEILING = 72_000
 

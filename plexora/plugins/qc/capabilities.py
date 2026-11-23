@@ -1508,7 +1508,8 @@ def get_exclusions(call, inp):
 def capabilities():
     from plexora.plugins.qc import (capabilities_checks, capabilities_objects,
                                     capabilities_segment, capabilities_session,
-                                    capabilities_stack, capabilities_visual)
+                                    capabilities_stack, capabilities_stain,
+                                    capabilities_visual)
 
     def free(**kwargs):
         kwargs.setdefault("tags", TAGS)
@@ -1524,6 +1525,7 @@ def capabilities():
         *capabilities_checks.capabilities(free),
         *capabilities_stack.capabilities(free),
         *capabilities_objects.capabilities(free),
+        *capabilities_stain.capabilities(free),
         free(name="qc.get_results", tool_name="get_qc_results",
              purpose="A project's QC: every channel's status, every QC region (category, "
                      "subtype, action, score and threshold with its source, the agent's "

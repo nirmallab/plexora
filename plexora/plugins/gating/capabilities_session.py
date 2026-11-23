@@ -308,6 +308,10 @@ class SessionOptions(AgentModel):
     check_rereads: Literal[schemas.CHECK_REREAD_MODES] = Field(
         schemas.CHECK_REREAD_DEFAULT, description="Whole-image checks answered by a second, "
         "blind reader (a third if they differ): all, off.")
+    #: QC's stain check as evidence, never a rule (`stain_link`).
+    stain_check: Literal[schemas.STAIN_CHECK_MODES] = Field(
+        schemas.STAIN_CHECK_DEFAULT, description="QC's stain check as evidence: auto, reuse "
+        "(stored only), off.")
     #: A second reader, blind to the first, in a worker of its own; a third
     #: when the two differ by `reread_gap` own-stain calls (`hypotheses`).
     panel_rereads: Literal[schemas.REREAD_MODES] = Field(
@@ -2366,6 +2370,15 @@ def _unit_row(unit):
             ("grade", (layer.get("snr") or {}).get("grade"))) if v is not None}
     if unit.get("classifier_check"):
         row["classifier_check"] = unit["classifier_check"]["direction"]
+    stain = unit.get("stain") or {}
+    if stain.get("verdict") is not None:
+        # QC's stain check, as evidence (`stain_link`): what it read, and
+        # whether this session read it or reused a stored verdict.
+        from plexora.plugins.gating.server.autogate import stain_link
+
+        row["stain"] = {"category": stain_link.category(unit), "source": stain.get("source"),
+                        "reused": bool(stain.get("reused")),
+                        "readings": [r.get("verdict") for r in stain.get("readings") or ()]}
     return row
 
 

@@ -66,7 +66,8 @@ TERMINAL = schemas.TERMINAL_STATES
 BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates", "cell_panel")
 
 #: The packet kind each waiting state asks for.
-ASKS = {"qc_confirm": "qc_confirm", "awaiting_absence": "absence_check",
+ASKS = {"awaiting_stain": "stain_check", "qc_confirm": "qc_confirm",
+        "awaiting_absence": "absence_check",
         "awaiting_t2": "t2_confirm", "awaiting_t3": "t3_biological",
         "awaiting_t4": "t4_candidates", "awaiting_panel": "cell_panel",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
@@ -328,6 +329,14 @@ def confidence_for(unit) -> str:
         # A conditional gate ("positive only within CD45+") is written as the
         # plain gate at its threshold: it stands on the partner's gate too.
         cap = "moderate" if cap == "high" else cap
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    stain_cap = stain_link.cap(unit)
+    if stain_cap is not None and order.index(cap) > order.index(stain_cap):
+        # QC's stain check flagged the stain (weak; failed, or called failed
+        # by one reader): the gate stands on gating's own evidence, below the
+        # confidence a stain nobody doubted would get, and is listed.
+        cap = stain_cap
     if order.index(level) > order.index(cap):
         level = cap
     return level
@@ -521,7 +530,10 @@ class Engine(BaseEngine):
 
         return {**option_defaults(), "engine": "v1",
                 "display_check": schemas.DISPLAY_CHECK_DEFAULT["v1"],
-                "basic_qc": schemas.BASIC_QC_DEFAULT["v1"]}
+                "basic_qc": schemas.BASIC_QC_DEFAULT["v1"],
+                # A session stored before QC's stain check was evidence here
+                # (2026-11-23) goes on as it started: no stain reads.
+                "stain_check": "off"}
 
     def unit_key_of(self, ref):
         # A v4 group's look drawn from another image than the deciding unit's
@@ -1208,6 +1220,25 @@ class Engine(BaseEngine):
         A judgement (`JUDGED_STATES`) on a unit no packet has shown is a bug
         in the path that made it, unless `unlooked` says why no look could
         settle it; it is logged (`closed_without_look`) and marked on the unit."""
+        if state == "technically_failed":
+            from plexora.plugins.gating.server.autogate import stain_link
+
+            if stain_link.defer_failure(self, unit, {
+                    "state": state, "reason": reason, "write": write, "confidence": confidence,
+                    "method": method, "tier": tier, "low": low, "proposed": proposed,
+                    "unlooked": unlooked}):
+                return
+            if stain_link.blocks_failure(unit):
+                # Gating's whole-image check alone never fails a stain QC's
+                # stain check read otherwise: on the owner's labels it failed
+                # CD66b, CD11c, KLF2 and Rb, all real. A person decides.
+                unit["stain_disputed"] = True
+                state = "manual_review_recommended"
+                reason = (f"{reason}; but {stain_link.said(unit)}: the two checks disagree, "
+                          "so a person decides")
+                confidence = None
+                if proposed is None:
+                    proposed = unit.get("candidate")
         if state in JUDGED_STATES and not unit.get("packets") and unlooked is None:
             unit["closed_unlooked"] = True
             self.log(event="closed_without_look",
@@ -1715,6 +1746,13 @@ class Engine(BaseEngine):
             return tasks.task_for(self.MODULE, kind, check="classifier")
         if kind == "cell_panel":
             read = max((hypotheses.read_due(u) for u in units or ()), default=1)
+            if read > 1:
+                return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
+        if kind == "stain_check":
+            # A stain picture read again: `gating.stain_reader_<n>`, a worker
+            # that never saw it (`stain_link`).
+            read = max((int((u.get("stain") or {}).get("read") or 1) for u in units or ()),
+                       default=1)
             if read > 1:
                 return tasks.task_for(self.MODULE, kind, check=f"reader_{read}")
         if kind in second_verdict.CHECK_KINDS:

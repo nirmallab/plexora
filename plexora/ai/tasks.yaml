@@ -113,6 +113,34 @@ modules:
         effort: medium
         kinds: ["qc_confirm:reader_3", "t1_strip:reader_3"]
         reader_of: image_inspection
+      stain_reader:
+        label: Stain check
+        blurb: Reads QC's stain picture of a marker for automatic gating when no QC verdict is stored, and says whether the stain worked.
+        # QC's own picture and question (qc/server/stain.py), stored where QC
+        # reuses it (`stain_link`); route it as QC's `stain_check`.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: [stain_check]
+      stain_reader_2:
+        label: Second stain reader (gating)
+        blurb: Reads a stain picture called failed again, blind to the first answer, so no single reading flags a stain.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["stain_check:reader_2"]
+        reader_of: stain_reader
+      stain_reader_3:
+        label: Third stain reader (gating)
+        blurb: Reads a stain picture a third time when the first two readers differ, blind to both; best of three decides.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: ["stain_check:reader_3"]
+        reader_of: stain_reader
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.

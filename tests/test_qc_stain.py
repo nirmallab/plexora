@@ -157,3 +157,50 @@ def test_low_quality_staining_can_be_turned_off(tmp_path):
     session = AgentSession()
     started = start(session, checks={**ONLY_STAIN, "stain": False})
     assert not [c for c in started["checks"] if c.startswith("stain:")]
+
+
+def _put(session, channel, verdicts, attempt="gating:gs_test"):
+    picture = ok(invoke(session, "get_stain_picture", {"project": "qcsynth",
+                                                       "channel": channel}))
+    out = None
+    for read, verdict in enumerate(verdicts, start=1):
+        out = ok(invoke(session, "put_stain_reading", {
+            "project": "qcsynth", "channel": channel, "attempt": attempt, "read": read,
+            "answer": {"verdict": verdict, "structure": "yes", "why": "test"},
+            "picture": picture["picture"], "partner": picture["partner"], "source": "gating"}))
+    return picture, out
+
+
+def test_a_reading_stored_by_gating_settles_like_qcs_own_and_qc_reuses_it(tmp_path):
+    info = make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    picture, out = _put(session, "CD3", ["failed"])
+    # QC's own question and picture; a first failed waits for a second reader.
+    assert picture["question"] == stain.QUESTION.format(marker="CD3")
+    assert out["verdict"] is None and out["next_read"] == 2
+    _, out = _put(session, "CD3", ["failed", "real", "real"], attempt="gating:gs_other")
+    assert out["verdict"] == "real" and out["contested"]
+    _put(session, "CD20", ["weak"])
+    stored = ok(invoke(session, "get_stain_verdicts", {"project": "qcsynth"}))["channels"]
+    assert {m: (s["verdict"], s["contested"]) for m, s in stored.items()} == \
+        {"CD3": ("real", True), "CD20": ("weak", False)}
+    # A QC session reads only what was not stored.
+    sid = start(session, checks=ONLY_STAIN)["session_id"]
+    packets = [p for p in drive(session, sid, QCOracle(info)) if p["kind"] == "stain_check"]
+    assert {p["evidence"]["marker"] for p in packets} == {"CD8"}
+    units = _record(sid)["units"]
+    assert units["qcsynth::check::stain:CD20"]["verdict"] == "weak"
+    assert units["qcsynth::check::stain:CD20"]["reused"]["source"] == "gating"
+    assert units["qcsynth::check::stain:CD3"]["verdict"] == "real"
+
+
+def test_a_reading_twice_or_of_a_channel_not_read_is_refused(tmp_path):
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    _put(session, "CD8", ["real"])
+    again = invoke(session, "put_stain_reading", {
+        "project": "qcsynth", "channel": "CD8", "attempt": "gating:gs_test", "read": 1,
+        "answer": {"verdict": "failed"}, "source": "gating"})
+    assert not again["ok"] and again["error"]["code"] == "conflict"
+    nuclear = invoke(session, "get_stain_picture", {"project": "qcsynth", "channel": "DNA"})
+    assert not nuclear["ok"]

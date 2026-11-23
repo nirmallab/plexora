@@ -982,8 +982,26 @@ bulk pass and kept as an artifact, then one `stain_check` packet:
 **A flag, never a removal.** On the owner's labels of 209 channels on seven images
 (2026-11-23, `docs/internal/bench/runs/2026-11-23-channel-labels`), two blind readers
 with row E caught 7 of 9 failed stains and called 5 real and 5 weak ones failed. So a
-verdict here changes no channel status, no cell call and no gate; how automatic
-gating should use it is not decided.
+verdict here changes no channel status and no cell call.
+
+**Read once, reused by QC and gating.** Every reading, whoever asked for it, is a row
+of the QC store's `stain_reads` table (`server/stain_ledger.py`): a table, not the
+document, so a gating run that reads a stain mid-session leaves the exclusion
+fingerprint -- and gating's caches over it -- alone. A channel's verdict is its latest
+attempt settled by `stain.settle`. A reading is reused under the same hard key
+(renderer, `stain.VERSION`, the image's source and file fingerprint, the channel, the
+nuclear channels); under another soft key (partner, graph version, cell table) only a
+`real` stands. The bulk pass closes a channel with a reusable verdict `decided` with
+`reused` (no picture drawn, no reader asked). `qc.stain_get`, `qc.stain_packet` and
+`qc.stain_put` (`capabilities_stain.py`) give the same verdicts, the same picture and
+question, and the same settling to automatic gating by registry name.
+
+**In automatic gating: evidence, never a rule** (`gating/server/autogate/stain_link.py`;
+benched in `docs/internal/bench/runs/2026-11-23-qc-aware`). Gating's own whole-image
+check errs on other markers than this one, so a stain read `failed` gets gating's check
+(blind to the verdict) and is failed only when both say so; a stain not read `failed`
+is never failed on gating's word (it goes to a person); weak or contested stains are
+gated with a look, capped (moderate, low) and listed in `gating_qc.stain_flags`.
 
 ## 13. Categories, thresholds and provenance
 

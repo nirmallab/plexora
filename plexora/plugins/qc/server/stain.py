@@ -530,6 +530,37 @@ def render(session, project, channel, *, partner_name=None, partner_words=None,
             "manifest": manifest, "artifact": artifact}
 
 
+
+def packet_parts(session, project, channel, *, partner_name=None, partner_words=None,
+                 picture=None) -> dict:
+    """What any reader of `channel`'s stain is shown, whoever asks (QC's
+    session or automatic gating): the question, the evidence, the stored
+    picture (drawn now when `picture` is missing or swept) and its manifest.
+    {question, evidence, allowed, picture, manifest, png}: `png` is the
+    stored lossless picture; the caller sends it in its session's format."""
+    from plexora.agent import artifacts
+
+    png = manifest = None
+    if picture:
+        try:
+            png, manifest = artifacts.get(picture)
+        except Exception:  # noqa: BLE001 -- swept or unreadable: draw it again
+            png = manifest = None
+    if png is None:
+        rendered = render(session, project, channel, partner_name=partner_name,
+                          partner_words=partner_words, store=True)
+        picture = (rendered.get("artifact") or {}).get("id")
+        png, manifest = rendered["image"], rendered["manifest"]
+    names = [c.get("fullname") or c.get("name")
+             for c in session.project(project).image.real_channels]
+    evidence = {"marker": channel, "project": project, "expression": note(names, channel),
+                "partner": manifest.get("partner"),
+                "partner_relation": manifest.get("partner_words"),
+                "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um")}
+    return {"question": QUESTION.format(marker=channel), "evidence": evidence,
+            "allowed": list(VERDICTS), "picture": picture, "manifest": manifest, "png": png}
+
+
 # -- the question --------------------------------------------------------------------------
 
 QUESTION = (

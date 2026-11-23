@@ -78,6 +78,25 @@ class QCAnswer(_Base):
                     "already judged (`as_in`) is answered as it was there.")
 
 
+class StainCheckAnswer(_Base):
+    """QC's stain check, read for automatic gating (`stain_link`): the same
+    picture, question and fields as QC's own (`qc/server/answers.py`), so a
+    reading here is stored where QC reuses it."""
+
+    kind: Literal["stain_check"] = "stain_check"
+    expectation: str = Field(max_length=300, description="Written BEFORE weighing the picture: "
+                             "how a working stain of this marker should look -- compartment, "
+                             "which cells, how common, how they sit in this tissue.")
+    observed: str = Field(max_length=300, description="What A to E show, at each scale.")
+    structure: Literal["yes", "no", "unclear"] = Field(
+        description="Is there clear non-random biological structure: a distinct subset of "
+                    "cells stained where the stain belongs, arranged as expected?")
+    verdict: Literal["real", "weak", "failed", "cannot_tell"] = Field(
+        description="real: a clear specific population; weak: a real one at low contrast; "
+                    "failed: no specific population; cannot_tell.")
+    why: str = Field(max_length=200, description="One sentence.")
+
+
 class AbsenceAnswer(_Base):
     kind: Literal["absence_check"] = "absence_check"
     regions: dict[str, Literal["clear", "few", "none", "cannot_tell"]] = Field(
@@ -321,7 +340,7 @@ class ReplanAnswer(_Base):
                     "reaches every marker there; `not_image_level`.")
 
 
-MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
+MODELS = (T1StripAnswer, QCAnswer, StainCheckAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
           TransferAnswer, MarkerNamingAnswer, PanelContextAnswer, PartnerReviewAnswer,
           ExpressionSetupAnswer, PixelSetupAnswer, ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
 

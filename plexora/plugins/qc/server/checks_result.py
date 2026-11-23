@@ -23,7 +23,7 @@ KEEP = ("check", "channel", "reference", "fingerprint", "auto_threshold", "thres
         "written", "left", "status", "channels_used", "max_regions",
         # Low quality staining: the verdict, every reading, the picture.
         "verdict", "low_quality", "why", "readings", "picture", "partner", "partner_words",
-        "partner_drawn", "field_um", "cells_um")
+        "partner_drawn", "field_um", "cells_um", "reused")
 
 
 def entry_of(unit) -> dict:
