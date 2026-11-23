@@ -167,10 +167,10 @@ def one_peak_expected(unit, hard) -> bool:
     split: Rb, HLA-ABC, PD-L1), its only reason for a technical check is that
     one peak (`unimodal`, no hard flag), and QC did not call the channel
     failed. Such a marker takes the ordinary path, not the stain-failure
-    check: there the GMM's gate falls in the peak's bright tail, and a check
-    judging the cells above it judges that tail (lsp35766_p193_2 Rb: the gate
-    took the top 3.7 %, tissue edges and a glow, and five of six readers
-    called the channel failed). A stain its looks cannot read still gets the
+    check, which read one peak as a failed stain: lsp35766_p193_2 Rb, whose
+    top 3.7 % (three in four Ki-67+, the cycling cells) the owner gates at
+    5.11, was called failed by five of six readers; on the ordinary path all
+    three runs accepted 5.11. A stain its looks cannot read still gets the
     whole-image check (`replan.check_unreadable`)."""
     return ((unit.get("context") or {}).get("binary") is False and not hard
             and unit.get("class") == "unimodal" and unit.get("qc_verdict") != "failed")

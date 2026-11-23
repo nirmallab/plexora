@@ -1348,23 +1348,23 @@ def _pairs(rows):
 
 def _not_binary_said(unit) -> str:
     """What a whole-image check says of a marker the vocabulary calls not
-    binary: its cells need not split, so the cells above the gate (the
-    magenta, the bright tail of one peak) are not what is judged; the stain
-    in its compartment across the cells is. Asked of such a marker "is there
-    real staining in some cells", readers judged the tail -- tissue edges and
-    a glow -- and called a working-looking channel failed (lsp35766_p193_2
-    Rb, five of six)."""
+    binary: its cells need not split into two populations, so one peak is no
+    sign of a failed stain; whether the stain is real in its compartment --
+    in the magenta cells, its brightest, and beyond -- is. Asked "is there
+    real staining in some cells" with no word of that, five of six readers
+    failed lsp35766_p193_2 Rb, whose magenta cells (the top 3.7 %, three in
+    four Ki-67+: the cycling cells) are the owner's own gate, 5.11."""
     ctx = unit.get("context") or {}
     stain = f"{ctx['compartment']} {unit['marker']}" if ctx.get("compartment") \
         else unit["marker"]
     return (f" {unit['marker']} is not a binary marker"
             + (f" (expected in {ctx['lineage']})" if ctx.get("lineage") else "")
-            + ": its cells need not split into positive and negative, and one peak is a "
-            "shape a working stain gives. The magenta cells are only the bright tail of "
-            "that peak, not the population to judge. Judge whether the "
-            f"{stain} stain sits in the cells, cell-shaped and above the tissue's "
-            "background, however weak or even (`real_signal`), or the channel shows only "
-            "noise, glow or artifact (`technical_failure`).")
+            + ": its cells need not split into a positive and a negative population, so "
+            "one peak is a shape a working stain gives, not a sign of failure. Judge whether "
+            f"the {stain} stain is real -- cell-shaped, in its compartment, above the "
+            "tissue's background, in the magenta cells (its brightest) and beyond, however "
+            "weak (`real_signal`) -- or the channel shows only noise, glow or artifact "
+            "(`technical_failure`).")
 
 
 def qc_confirm(engine, units):
