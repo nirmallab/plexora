@@ -114,6 +114,10 @@ class FakeElement {
         return false;
     }
     *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
+    querySelectorAll(selector) {
+        return [...this.walk()].filter((node) => selector.startsWith(".")
+            && node.classList.contains(selector.slice(1)));
+    }
     querySelector(selector) {
         for (const node of this.walk()) {
             if (selector.startsWith(".") && node.classList.contains(selector.slice(1))) return node;
@@ -147,6 +151,9 @@ const sandbox = {
     clearTimeout: (id) => { clock.timers = clock.timers.filter((t) => t.id !== id); },
     localStorage: storage,
     PlexoraAgentBridge: { hasLease: () => leased },
+    // Core's portal for popovers: the picker's list is never on the page here.
+    PopoverPortal: { attach() {}, reseat() {}, detach() {} },
+    requestAnimationFrame: (fn) => sandbox.setTimeout(fn, 16),
     document: {
         activeElement: null,
         getElementById: (id) => elements[id] || null,
@@ -162,6 +169,10 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 createContext(sandbox);
+// Core's channel colour picker, which each evidence chip's square opens.
+runInContext(readFileSync(join(REPO, "plexora", "client", "src", "js", "views",
+                               "colorSwatchPicker.js"), "utf8")
+    + "\nglobalThis.ColorSwatchPicker = ColorSwatchPicker;", sandbox);
 runInContext(readFileSync(join(STATIC, "gatingReviewChannels.js"), "utf8")
     + "\nglobalThis.GateReviewChannels = GateReviewChannels;", sandbox);
 runInContext(readFileSync(join(STATIC, "gatingReviewNotes.js"), "utf8")
@@ -344,7 +355,7 @@ let live = null;
 const docked = [];
 
 /** A panel: the real controller methods over stand-ins for what they draw. */
-function panel({ slots, max, rows, marker = null } = {}) {
+function panel({ slots, max, rows, marker = null, stage = false } = {}) {
     live?.reviewChannels?.dispose();
     live?.reviewNotes?.dispose();
     for (const id of ["gate_provenance", "gate_ai_evidence", "gate_ai_evidence_count",
@@ -367,6 +378,9 @@ function panel({ slots, max, rows, marker = null } = {}) {
         sidebar, dataLayer: DATA, provenance: rows ?? provenance(), gateMarker: marker,
         gatingList: { columns: [...MARKERS], gating_channels: {}, selections: {} },
         _shown: true, _keysArmed: false, _reviewDismissed: new Set(), _provenanceSeq: 0,
+        // The constructor's: chips kept across repaints, and the start's
+        // staging, which a check asks for (stage: true).
+        _evidenceChips: new Map(), _stagePending: Boolean(stage), _stagedMarker: null,
         gateMarkerSelect: null, planes: null, classifier: null, contrast: null,
         paintMarkerSteps() {}, ensureGateSelection() {}, syncGateSlider() {}, syncAutoButton() {},
         drawGateDistribution() {}, paintConsistency() {}, paintQcNote() {}, scheduleSaveGating() {},
@@ -774,7 +788,11 @@ await check("the eye shut releases the channels and keeps the notes; opened, it 
     assert.equal(notesEl(self).hidden, false);
     assert.ok(chip(self, "CD3").classList.contains("is-off"));
     assert.ok(!chip(self, "CD3").textContent.includes("not shown"));
-    assert.ok(evidenceChips().every((c) => c.classList.contains("is-off")));
+    // Every chip the review would have shown is off; DNA is the user's own
+    // slot, still on screen, and its chip says so.
+    const byName = Object.fromEntries(evidenceChips().map((c) => [c.textContent, c]));
+    assert.ok(["CD3", "CD4"].every((n) => byName[n].classList.contains("is-off")));
+    assert.ok(byName.DNA.classList.contains("is-on"));
     const eye = elements.gate_ai_evidence_toggle;
     assert.equal(eye.getAttribute("aria-pressed"), "false");
     assert.match(eye.innerHTML, /fa-eye-slash/);
@@ -802,6 +820,199 @@ await check("the eye is remembered across controllers (localStorage stub)", asyn
     assert.equal(bare.reviewChannelsEnabled(), true);
     bare.setReviewChannelsEnabled(false);
     assert.equal(bare.reviewChannelsEnabled(), false);
+});
+
+// -- a chip at a time ---------------------------------------------------------------------
+
+const evidenceChip = (n) => evidenceChips().find((c) => c.textContent === n);
+const nameOf = (n) => evidenceChip(n).children.find((c) => c.classList.contains("gate-ai-evidence-name"));
+const squareOf = (n) => evidenceChip(n).children
+    .find((c) => c.classList.contains("gate-ai-evidence-swatch")).children[0];
+const pickerOf = (self, n) => [...self._evidenceChips.values()].find((h) => h.entry.marker === n).picker;
+
+await check("a chip's name switches that channel alone off and on", async () => {
+    const { self, sidebar } = panel();
+    self.setGateMarker("CD8");
+    const at = claimOf(self, "CD3").index;
+    nameOf("CD3").fire("click");
+    assert.equal(claimOf(self, "CD3"), undefined, "CD3 put back");
+    assert.equal(sidebar.channelSlots[at].enabled, false);
+    assert.ok(claimOf(self, "CD4"), "CD4 left on");
+    assert.ok(evidenceChip("CD3").classList.contains("is-off"));
+    assert.ok(chip(self, "CD3").classList.contains("is-off"), "the notes say off, not 'not shown'");
+    assert.equal(nameOf("CD3").getAttribute("aria-pressed"), "false");
+    // Another marker reviewed with CD3 brings it on again: the choice is per marker.
+    self.setGateMarker("CD4");
+    assert.ok(claimOf(self, "CD3"));
+    self.setGateMarker("CD8");
+    assert.equal(claimOf(self, "CD3"), undefined, "still off for CD8");
+    nameOf("CD3").fire("click");
+    assert.ok(claimOf(self, "CD3"));
+    assert.ok(evidenceChip("CD3").classList.contains("is-on"));
+    assert.equal(nameOf("CD3").getAttribute("aria-pressed"), "true");
+});
+
+await check("a chip's name works over the eye, and the eye takes every chip back", async () => {
+    const { self } = panel();
+    self.setGateMarker("CD8");
+    self.setReviewChannelsEnabled(false);
+    assert.equal(self.reviewChannels.claims.length, 0);
+    nameOf("CD4").fire("click");
+    assert.deepEqual(plain(self.reviewChannels.claims.map((c) => c.channel)), ["CD4"]);
+    assert.ok(evidenceChip("CD3").classList.contains("is-off"));
+    self.setReviewChannelsEnabled(true);
+    nameOf("CD3").fire("click");
+    self.setReviewChannelsEnabled(false);
+    self.setReviewChannelsEnabled(true);
+    assert.deepEqual(plain(self.reviewChannels.claims.map((c) => c.channel).sort()), ["CD3", "CD4"]);
+});
+
+await check("a chip's name switches the user's own slot off and back on where it is", async () => {
+    const { self, sidebar } = panel();
+    self.setGateMarker("CD8");
+    nameOf("DNA").fire("click");
+    assert.equal(sidebar.channelSlots[0].enabled, false);
+    assert.ok(evidenceChip("DNA").classList.contains("is-off"));
+    nameOf("DNA").fire("click");
+    assert.equal(sidebar.channelSlots[0].enabled, true);
+    assert.equal(claimOf(self, "DNA"), undefined, "on in the user's row, not a new one");
+    assert.equal(sidebar.channelSlots.filter((s) => s.name === "DNA").length, 1);
+});
+
+await check("a channel the image does not have cannot be switched or recoloured", async () => {
+    const { self } = panel();
+    self.setGateMarker("Ki67");
+    assert.equal(nameOf("FOXP3").disabled, true);
+    assert.equal(squareOf("FOXP3").disabled, true);
+    nameOf("FOXP3").fire("click");
+    assert.equal(self.reviewChannels.claims.length, 0);
+});
+
+await check("a chip's square is a colour picker: the review's slot takes the colour and stays "
+            + "the review's", async () => {
+    const { self, sidebar } = panel();
+    self.setGateMarker("CD8");
+    await advance(1000);
+    const at = claimOf(self, "CD3").index;
+    assert.ok(squareOf("CD3").classList.contains("channel-color-swatch"));
+    assert.equal(squareOf("CD3").disabled, false);
+    pickerOf(self, "CD3").selectColor("#2bd46f");
+    assert.equal(sidebar.channelSlots[at].colorHex, "#2bd46f");
+    assert.equal(evidenceChip("CD3").style.getPropertyValue("--chip-color"), "#2bd46f");
+    assert.equal(chip(self, "CD3").style.getPropertyValue("--chip-color"), "#2bd46f");
+    await advance(1000);
+    assert.ok(!sidebar.saved.at(-1).includes("CD3:on"), "still left out of the saved list");
+    // Still the review's: the next marker without CD3 puts the row back.
+    self.setGateMarker("Ki67");
+    assert.equal(sidebar.channelSlots[at].enabled, false);
+    // And the review draws CD3 in that colour from now on.
+    self.setGateMarker("CD8");
+    assert.equal(sidebar.channelSlots[claimOf(self, "CD3").index].colorHex, "#2bd46f");
+});
+
+await check("a chip's square recolours the user's own slot as theirs", async () => {
+    const { self, sidebar } = panel();
+    self.setGateMarker("CD8");
+    pickerOf(self, "DNA").selectColor("#ffffff");
+    assert.equal(sidebar.channelSlots[0].colorHex, "#ffffff");
+    assert.equal(sidebar.channelSlots[0].userColorChanged, true);
+});
+
+await check("the chips are kept across repaints, so an open picker is not torn down", async () => {
+    const { self } = panel();
+    self.setGateMarker("CD8");
+    const before = evidenceChip("CD3");
+    const picker = pickerOf(self, "CD3");
+    self.syncReview();
+    self.setGateMarker("CD4");
+    assert.equal(evidenceChip("CD3"), before);
+    assert.equal(pickerOf(self, "CD3"), picker);
+    assert.ok(picker.popover, "not destroyed");
+    self.setGateMarker("Ki67");
+    assert.equal(picker.popover, null, "a chip that went is destroyed with its picker");
+});
+
+// -- an automatic run's gates, and the panel's start ------------------------------------------
+
+await check("saved gates put on the panel follow the review at once, without a pick or a reopen",
+            async () => {
+    const slots = [slot(0, "DNA", { enabled: true }), slot(1, "CD8", { enabled: true }),
+                   slot(2, "", { visible: false }), slot(3, "", { visible: false })];
+    const { self } = panel({ slots });
+    // What a load, and an agent's gates taken on after its run, both end in.
+    self.applySavedGating([{ channel: "08_CD8", gate_start: 2, gate_end: 9, gate_active: true }]);
+    assert.equal(self.gateMarker, "CD8");
+    assert.deepEqual(plain(self.reviewChannels.claims.map((c) => c.channel).sort()), ["CD3", "CD4"]);
+    assert.equal(notesEl(self).hidden, false);
+    // While the agent holds the view, its gates switch nothing on.
+    const { self: held } = panel({ slots: [slot(0, "DNA", { enabled: true }),
+                                           slot(1, "CD8", { enabled: true })] });
+    leased = true;
+    held.applySavedGating([{ channel: "08_CD8", gate_start: 2, gate_end: 9, gate_active: true }]);
+    assert.equal(held.reviewChannels.claims.length, 0);
+});
+
+await check("the panel's start puts the first channel in slot 1 in blue and the marker in slot 2 "
+            + "in red, over what was there", async () => {
+    const slots = [slot(0, "CD20", { enabled: true, colorHex: "#00ff00", userColorChanged: true }),
+                   slot(1, "Ki67", { enabled: true, colorHex: "#123456", userColorChanged: true }),
+                   slot(2, "DNA", { enabled: false }),
+                   slot(3, "", { visible: false })];
+    const { self, sidebar } = panel({ slots, stage: true });
+    self.setGateMarker("CD8", { syncSlot: false });
+    const [first, second] = sidebar.channelSlots;
+    assert.deepEqual([first.name, first.enabled, first.colorHex, first.userColorChanged],
+                     ["DNA", true, DEFAULTS[0], false]);
+    assert.deepEqual([second.name, second.enabled, second.colorHex, second.userColorChanged],
+                     ["CD8", true, DEFAULTS[1], false]);
+    assert.equal(sidebar.channelSlots[2].enabled, false, "DNA is on in slot 1 alone");
+    // Once: what the user does afterwards is theirs.
+    sidebar.setSlotColor(0, "#ffffff", true);
+    self.setGateMarker("CD4");
+    assert.equal(sidebar.channelSlots[0].colorHex, "#ffffff");
+    assert.equal(sidebar.channelSlots[1].name, "CD4");
+});
+
+await check("the start waits for the panel to be shown and a marker chosen", async () => {
+    const { self, sidebar } = panel({ stage: true });
+    self._shown = false;
+    self.onShow = proto.onShow;
+    Object.assign(self, { armKeys() {}, _viewerCovered: false });
+    self.stageChannels();
+    self.setGateMarker("CD8", { syncSlot: false });
+    assert.equal(sidebar.channelSlots[1].name, "", "not before it is shown");
+    self.onShow();
+    assert.equal(sidebar.channelSlots[1].name, "CD8");
+    assert.equal(sidebar.channelSlots[1].colorHex, DEFAULTS[1]);
+    assert.ok(self.reviewChannels.claims.length > 0, "the review follows on the same show");
+    // The same panel shown again is not staged again.
+    sidebar.setSlotEnabled(0, false);
+    self.onHide = proto.onHide;
+    self.onHide();
+    self.onShow();
+    assert.equal(sidebar.channelSlots[0].enabled, false);
+});
+
+await check("a marker the restore selects after the start takes slot 2; after a pick it does not",
+            async () => {
+    const { self, sidebar } = panel({ stage: true });
+    self.setGateMarker("CD3", { syncSlot: false });
+    assert.equal(sidebar.channelSlots[1].name, "CD3");
+    // A carried marker, selected after the default one.
+    self.setGateMarker("CD4", { force: true, syncSlot: false });
+    assert.deepEqual([sidebar.channelSlots[1].name, sidebar.channelSlots[1].enabled], ["CD4", true]);
+    self.setGateMarker("CD8");
+    self.setGateMarker("Ki67", { syncSlot: false });
+    assert.equal(sidebar.channelSlots[1].name, "CD8", "the user's pick ended the staging");
+});
+
+await check("no start while an agent holds the view", async () => {
+    const { self, sidebar } = panel({ stage: true });
+    leased = true;
+    const before = plain(sidebar.channelSlots);
+    self.setGateMarker("CD8", { syncSlot: false });
+    assert.deepEqual(plain(sidebar.channelSlots), before);
+    assert.equal(self._stagePending, false);
 });
 
 console.log(`${passed.length} checks passed`);

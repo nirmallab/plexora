@@ -135,12 +135,17 @@ class GateReviewNotes {
         const chip = document.createElement("span");
         chip.className = "gate-ai-chip";
         const words = REVIEW_CHIP_WORDS[entry.kind] || "with";
-        const shown = this.controller.reviewChannels?.shownAs?.(entry) || { color: null, why: null };
+        const channels = this.controller.reviewChannels;
+        const shown = channels?.shownAs?.(entry) || { color: null, why: null };
         let label = `${words} ${entry.marker}`;
         const notes = [entry.influence].filter(Boolean);
+        // Off by the eye, or by this channel's own chip in the evidence row.
+        const name = entry.channel ? channels?.slotName?.(entry.channel)?.name : null;
+        const choice = name ? channels?.choiceFor?.(this.controller.gateMarker, name) : undefined;
+        const off = choice === undefined ? channelsOff : !choice;
         if (shown.color) {
             chip.style.setProperty("--chip-color", shown.color);
-        } else if (channelsOff || entry.display === false) {
+        } else if (off || entry.display === false) {
             chip.classList.add("is-off");
         } else {
             chip.classList.add("is-missing");

@@ -205,7 +205,7 @@ function makePage() {
         },
         paintMarkerSteps: noop, syncGateSlider: noop, syncAutoButton: noop,
         drawGateDistribution: noop, paintConsistency: noop, paintProvenance: noop,
-        paintQcNote: noop, paintReviewEvidence: noop, syncReview: noop,
+        paintQcNote: noop, paintReviewEvidence: noop, syncReview: noop, stageChannels: noop,
         scheduleSaveGating() { this.gatingSaves = (this.gatingSaves || 0) + 1; },
     };
     controller.setGateMarker = g.GatingSidebarController.prototype.setGateMarker;

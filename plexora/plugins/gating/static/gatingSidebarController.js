@@ -116,6 +116,18 @@ class GatingSidebarController {
         //: over the viewer (gatingReviewNotes.js). Built at setup().
         this.reviewChannels = null;
         this.reviewNotes = null;
+        //: The AI evidence row's chips, by channel: {chip, picker}, kept
+        //: across repaints so a colour picker open on one is not torn down
+        //: under the user (paintReviewEvidence).
+        this._evidenceChips = new Map();
+        //: The channels the panel opens on are still to be put up
+        //: (stageChannels): once per load of the tool, at its first show with
+        //: a marker chosen.
+        this._stagePending = true;
+        //: The marker stageChannels put in slot 2, until the user picks one:
+        //: a marker the restore selects after it (a carried one) goes there
+        //: too. Null otherwise.
+        this._stagedMarker = null;
         //: Review keys (marker @ session) whose notes the user dismissed, for
         //: the life of the page.
         this._reviewDismissed = new Set();
@@ -151,6 +163,8 @@ class GatingSidebarController {
             this.reviewChannels?.release();
             this.reviewChannels?.dispose();
             this.reviewNotes?.dispose();
+            this._evidenceChips.forEach(({ picker }) => picker?.destroy?.());
+            this._evidenceChips.clear();
         });
     }
 
@@ -283,7 +297,56 @@ class GatingSidebarController {
         // Opening the panel on a z-stack shows the slab around the plane.
         if (!this._viewerCovered) this.planes?.enterSlab();
         this._viewerCovered = false;
+        // The tool's first show: slot 1 the first channel, slot 2 the marker.
+        this.stageChannels();
         this.syncReview();
+    }
+
+    /**
+     * The channels the panel starts on, whatever was on screen before: slot 1
+     * the image's first channel in the palette's first colour (blue), slot 2
+     * the marker being gated in its second (red). Every other slot is left as
+     * it is.
+     *
+     * Once per load of the tool, at its first show with a marker chosen --
+     * which is after the saved channels are on screen (viewerSidebar.init
+     * restores them before any module's gates), so this lands on top of them,
+     * and a reopened panel keeps what the user did since. Not while an agent
+     * holds the view: it set the view up itself, and its lease gives the
+     * user's back.
+     */
+    stageChannels() {
+        if (!this._stagePending || !this._shown || !this.gateMarker) return;
+        const sidebar = this.sidebar;
+        if (!sidebar || !Array.isArray(sidebar.channelSlots) || !sidebar.channelSlots.length) return;
+        this._stagePending = false;
+        if (window.PlexoraAgentBridge?.hasLease?.()) return;
+        const isChannel = (name) => Boolean(name)
+            && Boolean(this.ctx.dataset?.image?.has?.(this.dataLayer.getFullChannelName(name)));
+        while (sidebar.channelSlots.length < 2) {
+            const used = sidebar.channelSlots.filter((slot) => slot.name).map((slot) => slot.name);
+            if (!sidebar.createAdditionalSlot?.(used)) break;
+        }
+        const put = (index, name) => {
+            const slot = sidebar.channelSlots[index];
+            if (!slot) return false;
+            // A review's slot showing it goes back first: the move below would
+            // switch it off, which reads as the user's.
+            this.reviewChannels?.releaseChannel(name);
+            sidebar.setSlotMarker(index, name, { keepColor: true, enable: true, reveal: true });
+            const hex = sidebar.getDefaultColor?.(index)?.hex;
+            if (hex) {
+                // The palette's colour, not one the user chose.
+                slot.userColorChanged = false;
+                sidebar.setSlotColor(index, hex, false);
+            }
+            return true;
+        };
+        const first = (sidebar.columns || [])[0];
+        const marker = this.gateMarker;
+        if (first !== marker && isChannel(first)) put(0, first);
+        if (isChannel(marker) && put(1, marker)) this._stagedMarker = marker;
+        this.contrast?.sync();
     }
 
     // Called by toolLoader.js when the panel is put away, and when a routed
@@ -693,23 +756,39 @@ class GatingSidebarController {
         // vocabulary (imageChannels, keyed by full channel name -> tile
         // index), not the marker vocabulary.
         const hasMatchingImageChannel = this.ctx.dataset.image.has(this.dataLayer.getFullChannelName(name));
-        if (options.syncSlot !== false && hasMatchingImageChannel) {
+        // Slot 2 still showing the marker stageChannels put there, and no
+        // pick of the user's since: a marker the restore selects after it
+        // (a carried one, the saved list's active one) takes its place, as
+        // the panel's start would have put it.
+        const staged = options.syncSlot === false && options.persist !== false
+            && this._stagedMarker !== null && this._stagedMarker === previous
+            && this.sidebar.channelSlots?.[1]?.name === previous;
+        if (options.syncSlot !== false) this._stagedMarker = null;
+        if ((options.syncSlot !== false || staged) && hasMatchingImageChannel) {
             // A slot the last marker's review switched on for this channel is
             // put back first: the mirror switches every other slot showing it
             // off, which would read as the user switching it off.
             this.reviewChannels?.releaseChannel(name);
-            this.sidebar.setSlotMarker(1, name, { keepColor: true, enable: enableSlot, reveal: enableSlot });
+            const enable = staged || enableSlot;
+            this.sidebar.setSlotMarker(1, name, { keepColor: true, enable, reveal: enable });
+            if (staged) this._stagedMarker = name;
         }
+        // The panel's first marker: slot 1 the first channel, slot 2 this one.
+        this.stageChannels();
         // After the mirror above, which may just have put this marker on
         // screen: the viewer's contrast slider is always the gated marker's.
         this.contrast?.sync();
-        // The review follows the marker the user picks. An agent moving the
-        // panel switches nothing on; the last marker's channels go back
-        // unless the agent holds the view (core puts the slots back then).
-        if (options.syncSlot !== false && options.persist !== false) {
+        // The review follows the marker the user picks, and the one saved
+        // gates put on the panel (a load, an agent's gates taken on, a run
+        // handed back) -- a review that only came on at the next pick or
+        // reopen was the evidence row sitting idle after a run. An agent
+        // moving the panel switches nothing on; the last marker's channels go
+        // back unless the agent holds the view (core puts the slots back then).
+        const leased = Boolean(window.PlexoraAgentBridge?.hasLease?.());
+        if (options.persist !== false && (options.syncSlot !== false || !leased)) {
             this.syncReview();
         } else if (previous !== name) {
-            if (!window.PlexoraAgentBridge?.hasLease?.()) this.reviewChannels?.release();
+            if (!leased) this.reviewChannels?.release();
             this.reviewNotes?.hide();
             this.paintReviewEvidence();
         }
@@ -1756,9 +1835,9 @@ class GatingSidebarController {
 
     /**
      * The review in step with the marker on screen: its channels on beside
-     * it (while the eye is open and the marker itself is on screen), and its
-     * notes over the viewer. Nothing while the panel is away, and nothing
-     * switched while an agent holds the view.
+     * it (those the eye and the chips leave on, while the marker itself is
+     * on screen), and its notes over the viewer. Nothing while the panel is
+     * away, and nothing switched while an agent holds the view.
      */
     syncReview() {
         const marker = this.gateMarker;
@@ -1770,7 +1849,7 @@ class GatingSidebarController {
             this.reviewNotes?.hide();
         } else {
             const on = this.reviewChannelsEnabled();
-            if (on && this.sidebar.slotShowing?.(marker)) this.reviewChannels?.follow(marker, review);
+            if (this.sidebar.slotShowing?.(marker)) this.reviewChannels?.follow(marker, review, { all: on });
             else this.reviewChannels?.release();
             this.reviewNotes?.show(marker, review, { channelsOff: !on });
         }
@@ -1790,6 +1869,8 @@ class GatingSidebarController {
 
     setReviewChannelsEnabled(on) {
         this._reviewChannelsOff = !on;
+        // The eye is every channel at once: a chip's own choice gives way.
+        this.reviewChannels?.clearChoices();
         try {
             window.localStorage?.setItem(GATE_REVIEW_CHANNELS_KEY, on ? "on" : "off");
         } catch (error) {
@@ -1862,27 +1943,106 @@ class GatingSidebarController {
         }
         const chips = document.getElementById("gate_ai_evidence_chips");
         if (!chips) return;
-        chips.replaceChildren(...entries.map((entry) => this.reviewEvidenceChip(entry, on)));
+        const kept = new Set();
+        chips.replaceChildren(...entries.map((entry, i) => {
+            const key = entry.channel || `${entry.marker}#${i}`;
+            kept.add(key);
+            return this.reviewEvidenceChip(entry, on, key);
+        }));
+        this._evidenceChips.forEach((held, key) => {
+            if (kept.has(key)) return;
+            held.picker?.destroy?.();
+            this._evidenceChips.delete(key);
+        });
         chips.hidden = folded || !entries.length;
     }
 
-    /** One supporting channel: its name, in the colour of the slot drawing it. */
-    reviewEvidenceChip(entry, on) {
-        const chip = document.createElement("span");
-        chip.className = "gate-ai-evidence-chip";
-        chip.textContent = entry.marker;
+    /**
+     * One supporting channel: a square in the colour of the slot drawing it,
+     * which opens the channel colour picker, and its name, which switches
+     * that channel alone on or off (over the eye, for this marker). Built
+     * once per channel and repainted after, so a picker open on it stays.
+     */
+    reviewEvidenceChip(entry, on, key) {
+        const marker = this.gateMarker;
+        let held = this._evidenceChips.get(key);
+        if (!held) {
+            const chip = document.createElement("span");
+            chip.className = "gate-ai-evidence-chip";
+            const mount = document.createElement("span");
+            mount.className = "gate-ai-evidence-swatch";
+            const name = document.createElement("button");
+            name.type = "button";
+            name.className = "gate-ai-evidence-name";
+            chip.append(mount, name);
+            held = { chip, mount, name, picker: null, entry };
+            name.addEventListener("click", () => this.onEvidenceChipToggle(held.entry));
+            if (typeof ColorSwatchPicker === "function") {
+                held.picker = new ColorSwatchPicker(mount, {
+                    value: "#94a3b8",
+                    title: "Channel colour",
+                    onChange: (hex) => this.onEvidenceChipColor(held.entry, hex),
+                });
+            }
+            this._evidenceChips.set(key, held);
+        }
+        held.entry = entry;
+        const { chip, name, picker } = held;
+        name.textContent = entry.marker;
         const notes = [entry.influence].filter(Boolean);
         const shown = this.reviewChannels?.shownAs(entry) || { color: null, why: null };
-        if (!on) {
+        const channel = entry.channel ? this.reviewChannels?.slotName(entry.channel) : null;
+        const choice = channel?.name ? this.reviewChannels?.choiceFor(marker, channel.name) : undefined;
+        const wanted = choice === undefined ? on : choice;
+        chip.classList.remove("is-off", "is-missing", "is-on");
+        chip.style.setProperty("--chip-color", shown.color || "");
+        if (shown.color) {
+            chip.classList.add("is-on");
+            notes.push("Click the name to switch it off; the square changes its colour");
+        } else if (!wanted) {
             chip.classList.add("is-off");
-        } else if (shown.color) {
-            chip.style.setProperty("--chip-color", shown.color);
+            if (channel?.present) notes.push("Click the name to switch it on");
         } else {
             chip.classList.add("is-missing");
             notes.push(shown.why ? `Not on screen: ${shown.why}` : "Not on screen");
         }
+        const switchable = Boolean(channel?.present);
+        name.disabled = !switchable;
+        name.setAttribute("aria-pressed", String(Boolean(shown.color)));
+        name.setAttribute("aria-label", `${entry.marker}: ${shown.color ? "switch off" : "switch on"}`);
+        // A colour only for a channel on screen: there is a slot to give it to.
+        if (picker) {
+            picker.button.disabled = !shown.color;
+            if (shown.color && (picker.value || "").toLowerCase() !== shown.color.toLowerCase()) {
+                picker.setValue(shown.color);
+            }
+            picker.button.title = shown.color ? `${entry.marker}'s colour` : "Not on screen";
+        }
         chip.title = notes.join("\n");
         return chip;
+    }
+
+    /** A chip's name clicked: that channel alone, on or off, for this marker. */
+    onEvidenceChipToggle(entry) {
+        const channels = this.reviewChannels;
+        if (!channels || !entry?.channel || !this.gateMarker) return;
+        const { name, present } = channels.slotName(entry.channel);
+        if (!present) return;
+        const shown = channels.shownAs(entry);
+        channels.setChoice(this.gateMarker, name, !shown.color);
+        this.syncReview();
+    }
+
+    /** A colour picked on a chip's square: the slot drawing it, and the chip, take it. */
+    onEvidenceChipColor(entry, hex) {
+        const channels = this.reviewChannels;
+        if (!channels || !entry?.channel) return;
+        const { name, present } = channels.slotName(entry.channel);
+        if (!present) return;
+        channels.recolor(name, hex);
+        // The chips are kept across the repaint, so a picker still open (its
+        // custom colour being dragged) stays as it is.
+        this.syncReview();
     }
 
     isReviewDismissed(key) {
