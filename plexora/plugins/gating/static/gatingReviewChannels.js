@@ -30,6 +30,11 @@
  * Switching a channel on fetches that channel's tiles alone, and switching
  * it off keeps them, so following the review never reloads the image: on a
  * remote (`node://`) project the cost is the new channels' tiles.
+ *
+ * The AI evidence row's eye switches every channel on or off; a chip switches
+ * its own channel for the marker under review, over the eye, until the eye
+ * is pressed again (`setChoice`). A colour picked on a chip is the one this
+ * review draws that channel in from then on, for every marker (`recolor`).
  */
 
 // Matching the agent's own evidence pictures: the partner a marker is
@@ -52,6 +57,12 @@ class GateReviewChannels {
         this.declined = new Map();
         //: [{marker, channel, why}]: the last follow's channels it could not show.
         this.skipped = [];
+        //: marker -> Map(channel -> on): a channel switched on or off from its
+        //: chip, over the eye. Cleared when the eye is pressed (clearChoices).
+        this.choices = new Map();
+        //: channel -> hex: a colour picked on a chip, worn whenever this review
+        //: shows the channel again.
+        this.colors = new Map();
         this._onAgentRestore = (event) => this.onAgentRestore(event);
         window.addEventListener("plexora:agent-restore", this._onAgentRestore);
     }
@@ -87,9 +98,10 @@ class GateReviewChannels {
 
     /**
      * The channels `review` asks for, in its order, and those it cannot show:
-     * not the marker's own channel, nor one slots 1 and 2 show.
+     * not the marker's own channel, nor one slots 1 and 2 show. `all`: the
+     * eye -- each channel is wanted as it says unless its chip said otherwise.
      */
-    wantedFor(marker, review) {
+    wantedFor(marker, review, { all = true } = {}) {
         const slots = this.sidebar?.channelSlots || [];
         const reserved = new Set([0, 1].map((i) => slots[i])
             .filter((slot) => slot && slot.enabled && slot.name).map((slot) => slot.name));
@@ -107,6 +119,8 @@ class GateReviewChannels {
             }
             if (name === marker || seen.has(name) || reserved.has(name)) return;
             seen.add(name);
+            const choice = this.choiceFor(marker, name);
+            if (!(choice === undefined ? all : choice)) return;
             wanted.push({ channel: name, marker: entry.marker, kind: entry.kind,
                           relation: entry.relation });
         });
@@ -117,12 +131,12 @@ class GateReviewChannels {
      * Put `review`'s channels on screen for `marker`, putting back whatever
      * an earlier marker took that this one does not need. Synchronous;
      * returns {claims, skipped}. The same marker and channels a second time
-     * changes nothing.
+     * changes nothing. `all`: the eye (wantedFor).
      */
-    follow(marker, review) {
+    follow(marker, review, { all = true } = {}) {
         const sidebar = this.sidebar;
         if (!sidebar || !Array.isArray(sidebar.channelSlots)) return { claims: [], skipped: [] };
-        const { wanted, skipped } = this.wantedFor(marker, review);
+        const { wanted, skipped } = this.wantedFor(marker, review, { all });
         const signature = `${marker}|${wanted.map((w) => w.channel).join(",")}`;
         this.forgetTouched();
         if (signature === this.signature) {
@@ -193,7 +207,7 @@ class GateReviewChannels {
         const prev = { ...slot, range: Array.isArray(slot.range) ? [...slot.range] : slot.range,
                        created };
         sidebar.setSlotMarker(index, want.channel, { keepColor: true, enable: true, reveal: true });
-        const hex = this.colorFor(want.kind, index);
+        const hex = this.colors.get(want.channel) || this.colorFor(want.kind, index);
         if ((slot.colorHex || "").toLowerCase() !== hex.toLowerCase()) {
             sidebar.setSlotColor(index, hex, false);
         }
@@ -216,6 +230,71 @@ class GateReviewChannels {
             : REVIEW_PALETTE.exclusion;
         const pick = [...first, ...second].find((hex) => !worn.has(hex.toLowerCase()));
         return pick || this.sidebar.getDefaultColor?.(index)?.hex || first[0];
+    }
+
+    /** What `channel`'s chip said for `marker`: true, false, or undefined (the eye's). */
+    choiceFor(marker, channel) {
+        return this.choices.get(marker)?.get(channel);
+    }
+
+    /** The eye pressed: every chip follows it again. */
+    clearChoices() {
+        this.choices.clear();
+    }
+
+    /**
+     * One chip's channel on or off for `marker`, over the eye. Off: the slot
+     * this review holds for it is put back, or the user's own slot showing
+     * it switched off. On: the user's own row holding it is switched back on
+     * where it is; otherwise the next follow claims a slot for it. A channel
+     * the user had taken over (declined) is asked for again. The caller
+     * follows the review afterwards.
+     */
+    setChoice(marker, channel, on) {
+        if (!marker || !channel) return;
+        if (!this.choices.has(marker)) this.choices.set(marker, new Map());
+        this.choices.get(marker).set(channel, Boolean(on));
+        this.declined.get(marker)?.delete(channel);
+        this.signature = null;
+        const sidebar = this.sidebar;
+        if (!sidebar || !Array.isArray(sidebar.channelSlots)) return;
+        const claim = this.claims.find((c) => c.channel === channel);
+        if (!on) {
+            if (claim) {
+                this.putBack(claim);
+                this.claims = this.claims.filter((c) => c !== claim);
+                return;
+            }
+            const own = sidebar.slotShowing?.(channel);
+            if (own) sidebar.setSlotEnabled(own.index, false);
+            return;
+        }
+        if (claim || sidebar.slotShowing?.(channel)) return;
+        const taken = new Set(this.claims.map((c) => c.index));
+        const own = sidebar.channelSlots.find((slot) => slot && slot.name === channel
+                                              && slot.visible !== false && !taken.has(slot.index));
+        if (own) sidebar.setSlotEnabled(own.index, true);
+    }
+
+    /**
+     * A colour picked on a chip: the slot drawing the channel takes it --
+     * a slot this review holds stays the review's (put back as before), the
+     * user's own is recoloured as theirs -- and the review wears it for that
+     * channel from now on.
+     */
+    recolor(channel, hex) {
+        if (!channel || !hex) return;
+        this.colors.set(channel, hex);
+        const sidebar = this.sidebar;
+        const claim = this.claims.find((c) => c.channel === channel);
+        const slot = claim ? sidebar?.channelSlots?.[claim.index] : sidebar?.slotShowing?.(channel);
+        if (!slot) return;
+        sidebar.setSlotColor(slot.index, hex, !claim);
+        if (claim) {
+            claim.applied.colorHex = slot.colorHex;
+            // Core's setter cleared it; the row is still the review's.
+            slot.transient = true;
+        }
     }
 
     /** Whether a claimed slot is still as this review left it. */

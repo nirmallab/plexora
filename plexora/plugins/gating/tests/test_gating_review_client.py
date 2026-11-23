@@ -48,6 +48,20 @@ CHECKS = [
     "the evidence row counts the channels and wears each one's colour; folded, the chips go",
     "the eye shut releases the channels and keeps the notes; opened, it brings them back",
     "the eye is remembered across controllers (localStorage stub)",
+    "a chip's name switches that channel alone off and on",
+    "a chip's name works over the eye, and the eye takes every chip back",
+    "a chip's name switches the user's own slot off and back on where it is",
+    "a channel the image does not have cannot be switched or recoloured",
+    "a chip's square is a colour picker: the review's slot takes the colour and stays the "
+    "review's",
+    "a chip's square recolours the user's own slot as theirs",
+    "the chips are kept across repaints, so an open picker is not torn down",
+    "saved gates put on the panel follow the review at once, without a pick or a reopen",
+    "the panel's start puts the first channel in slot 1 in blue and the marker in slot 2 in red, "
+    "over what was there",
+    "the start waits for the panel to be shown and a marker chosen",
+    "a marker the restore selects after the start takes slot 2; after a pick it does not",
+    "no start while an agent holds the view",
 ]
 
 

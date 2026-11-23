@@ -1009,33 +1009,96 @@
     gap: 6px;
 }
 
+/* [▌CD3]: the pill's left end is the channel's colour and opens the channel
+   colour picker (core's ColorSwatchPicker); the name switches that channel
+   alone on or off. The colour is a segment of the pill, edge to edge -- the
+   pill clips it to its own rounded corners. */
 .gate-ai-evidence-chip {
     --chip-color: var(--text-muted);
-    align-items: center;
+    align-items: stretch;
     background: color-mix(in srgb, var(--chip-color) 16%, transparent);
     border: 1px solid color-mix(in srgb, var(--chip-color) 48%, transparent);
     border-radius: var(--radius-sm);
+    box-sizing: border-box;
     color: var(--text-primary);
     display: inline-flex;
     font-size: var(--panel-font-meta);
-    gap: 6px;
-    line-height: 22px;
-    padding: 0 9px 0 8px;
+    gap: 7px;
+    height: 24px;
+    overflow: hidden;
+    padding: 0;
     white-space: nowrap;
 }
 
-.gate-ai-evidence-chip::before {
-    background: var(--chip-color);
-    border-radius: 50%;
-    content: "";
-    flex: 0 0 auto;
-    height: 7px;
-    width: 7px;
+.gate-ai-evidence-chip:hover {
+    background: color-mix(in srgb, var(--chip-color) 26%, transparent);
 }
 
-/* The eye shut: every chip neutral. */
+.gate-ai-evidence-swatch {
+    display: flex;
+    flex: 0 0 auto;
+}
+
+.gate-ai-evidence-chip .channel-color-swatch,
+.gate-ai-evidence-swatch:empty {
+    background: var(--chip-color);
+    border: 0;
+    border-radius: 0;
+    box-sizing: border-box;
+    height: 100%;
+    width: 18px;
+}
+
+/* No grow on hover: the segment would spill past the pill. A lighter fill
+   says it can be clicked instead. */
+.gate-ai-evidence-chip .channel-color-swatch:hover:not(:disabled) {
+    filter: brightness(1.18);
+    transform: none;
+}
+
+.gate-ai-evidence-chip .channel-color-swatch:active {
+    transform: none;
+}
+
+.gate-ai-evidence-chip .channel-color-swatch:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: -2px;
+}
+
+.gate-ai-evidence-chip .channel-color-swatch:disabled {
+    cursor: default;
+}
+
+.gate-ai-evidence-name {
+    background: transparent;
+    border: 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: 22px;
+    padding: 0 9px 0 0;
+}
+
+.gate-ai-evidence-name:disabled {
+    cursor: default;
+}
+
+.gate-ai-evidence-name:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+/* Switched off, by the eye or by its own name: neutral, the end segment a
+   faint grey with a hairline before the name. */
 .gate-ai-evidence-chip.is-off {
     color: var(--text-secondary);
+}
+
+.gate-ai-evidence-chip.is-off .channel-color-swatch,
+.gate-ai-evidence-chip.is-off .gate-ai-evidence-swatch:empty {
+    background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
 }
 
 /* Wanted on screen and not there (no free row, not an image channel). */
@@ -1044,10 +1107,10 @@
     color: var(--text-muted);
 }
 
-.gate-ai-evidence-chip.is-missing::before {
+.gate-ai-evidence-chip.is-missing .channel-color-swatch,
+.gate-ai-evidence-chip.is-missing .gate-ai-evidence-swatch:empty {
     background: transparent;
-    border: 1px dashed currentColor;
-    box-sizing: border-box;
+    border-right: 1px dashed currentColor;
 }
 
 /* ---------------------------------------------------------------------------
