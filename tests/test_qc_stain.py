@@ -44,6 +44,16 @@ def test_a_failed_reading_needs_a_second_and_both_must_agree():
     assert stain.settle(["failed", "real", "cannot_tell"]) == "cannot_tell"
 
 
+def test_a_lineage_marker_pairs_with_its_carrier_never_a_state_child():
+    names = ["DNA1", "CD3E", "CD4", "CD45", "FOXP3", "PD1"]
+    # CD4 lives in CD3 cells: FOXP3 sits inside CD3 too, but is CD4's child,
+    # not a carrier, so it never displaces CD3.
+    assert stain.partner(names, "CD4")[0] == "CD3E"
+    # No carrier on the panel: a state readout child (FOXP3, PD-1) is still no
+    # partner -- a dim one would make the marker look failed.
+    assert stain.partner(["DNA1", "CD4", "FOXP3", "PD1"], "CD4") == (None, None)
+
+
 def test_the_partner_is_the_most_specific_population_the_graph_offers():
     names = ["DNA1", "CD3E", "CD4", "CD8a", "CD45", "TIGIT", "GZMB", "FOXP3", "CD163",
              "CD206"]

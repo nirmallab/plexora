@@ -108,49 +108,68 @@ def _stated(info, by_canonical, name):
     return out
 
 
+#: A child population that is a state readout (FOXP3 or PD-1 within CD4) is no
+#: partner: it says nothing of where the marker's own cells are, and a dim
+#: state readout makes row E read as the marker failing (gating's
+#: `hierarchy.STATE_ROLES`, read from the vocabulary here).
+STATE_ROLES = ("state", "signalling")
+
+
+def _unique(cands):
+    seen, out = set(), []
+    for name, words in cands:
+        if name not in seen:
+            seen.add(name)
+            out.append((name, words))
+    return out
+
+
 def partner(names, marker, exclude=()) -> tuple:
     """(partner, words) for row E, or (None, None). Only the marker graph
-    decides: its forward `subset` / `coexpressed` partners (strongest first),
-    then the entry's `subset_any` carriers in the order it lists them, then a
-    marker stated as a subset of this one. Of those, any candidate another
-    candidate sits inside (a stated `subset` of it) is dropped, so the
-    partner is the most specific population the graph offers: CD4 for
-    TIGIT, never CD45 beside it."""
+    decides. The CARRIERS -- the populations the marker's cells sit in -- come
+    first: its forward `subset` / `coexpressed` partners (strongest first), a
+    marker stating it is co-expressed with this one, then the entry's
+    `subset_any` carriers in the order it lists them. Of the carriers, any one
+    another carrier sits inside (a stated `subset` of it) is dropped, so the
+    partner is the most specific population the marker lives in: CD4 for
+    TIGIT, CD3 for CD4, never CD45 beside them. Only a marker with no carrier
+    on the panel takes a CHILD -- a marker stated as a subset of it -- and
+    never a state readout (`STATE_ROLES`): FOXP3 says nothing of where CD4's
+    cells are."""
     exclude = set(exclude or ()) | {marker}
     info, by_canonical = _panel(names)
     stated = {n: _stated(info, by_canonical, n) for n in info}
     own = [s for s in stated.get(marker, []) if s[0] not in exclude]
-    cands = []
+    carriers = []
     for other, relation, confidence, _lin in sorted(
             (s for s in own if s[1] in ("subset", "coexpressed")),
             key=lambda s: CONFIDENCE_RANK.get(s[2], 1)):
-        cands.append((other, f"{marker} {'within' if relation == 'subset' else 'with'} "
-                             f"{other} (marker graph, {confidence})"))
-    for other, relation, _conf, _lin in own:
-        if relation == "subset_any":
-            cands.append((other, f"{marker} on a subset of {other} cells (marker graph)"))
+        carriers.append((other, f"{marker} {'within' if relation == 'subset' else 'with'} "
+                                f"{other} (marker graph, {confidence})"))
+    children = []
     for other, rows in stated.items():
         if other in exclude:
             continue
         for target, relation, _conf, _lin in rows:
-            if target == marker and relation == "subset":
-                cands.append((other, f"{other} cells are a subset of {marker} (marker graph)"))
-            elif target == marker and relation == "coexpressed":
-                cands.append((other, f"{marker} with {other} (marker graph)"))
-    seen, unique = set(), []
-    for name, words in cands:
-        if name not in seen:
-            seen.add(name)
-            unique.append((name, words))
-    if not unique:
+            if target == marker and relation == "coexpressed":
+                carriers.append((other, f"{marker} with {other} (marker graph)"))
+            elif target == marker and relation == "subset" \
+                    and (info.get(other, (None, {}))[1].get("role") not in STATE_ROLES):
+                children.append((other, f"{other} cells are a subset of {marker} "
+                                        "(marker graph)"))
+    for other, relation, _conf, _lin in own:
+        if relation == "subset_any":
+            carriers.append((other, f"{marker} on a subset of {other} cells (marker graph)"))
+    pool = _unique(carriers) or _unique(children)
+    if not pool:
         return None, None
 
     def inside(q, p):
         return any(t == p and r == "subset" for t, r, _c, _l in stated.get(q, []))
 
-    specific = [c for c in unique if not any(o[0] != c[0] and inside(o[0], c[0])
-                                             for o in unique)]
-    return (specific or unique)[0]
+    specific = [c for c in pool if not any(o[0] != c[0] and inside(o[0], c[0])
+                                           for o in pool)]
+    return (specific or pool)[0]
 
 
 def note(names, marker) -> dict:
