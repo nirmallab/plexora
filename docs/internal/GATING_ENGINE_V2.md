@@ -295,6 +295,27 @@ sent:
     cells between the two gates, judged by the user, not on the distance
     to their gate.
   Both rules were taken out.
+- **VERSION 8 (2026-11-23).** A marker that closes for review is written at
+  the plateau's likeliest member, not the leader nearest the start
+  (lsp35766_p193_2 CD31: reads 5.04 at P 0.82, written 4.85 at 0.15). A
+  marker whose stain is off the compartment the graph names on this image
+  (QC `CELLS_VERSION` 8, `qc/server/cells/compartment.py`; measured by
+  gating itself when the QC result lacks it) has a `compartment_note` in
+  its looks: judge the stain where it sits in the cell. Two live runs per
+  arm against the owner's gates: TCF1 on LSP11385 (flagged; its non-specific
+  binding) 0.91 -> 0.13 from the owner's gate, CDX2 on lsp35766_p193_2
+  (flagged) 0.25 -> 0.17.
+  - **Tried and taken out: density-aware panel sampling** (2026-11-23). The
+    image's densest third of cells (30th-neighbour distance) found from
+    positions before any look, each interval drawing at most a quarter of
+    its cells from it (fibrous stains kept on the spread draw). Four live
+    rounds against the current draw on lsp35766_p193_2, cell-shaped markers
+    (CD3E, CD4, CD69, IBA1, bCAT, Ki67, HLADRA, E-cadherin): mean distance
+    to the owner's gates 0.307 -> 0.311, 3 better, 3 worse, 2 the same. The
+    reads' run-to-run spread (IBA1 6.80 and 7.86 under one setting) was as
+    large as any effect. Reweighting stored reads by density tier (offline
+    replay of three runs) did not help either. Do not re-propose it without
+    a new reason.
 - **Carriers** (2026-11-02, `PARAMS["carriers"]`). A `state` marker's
   carriers are the lineages whose cells carry it: its stated `subset` /
   `subset_any` partners of a lineage role, plus those both draws of the

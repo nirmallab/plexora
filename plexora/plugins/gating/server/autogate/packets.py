@@ -940,6 +940,23 @@ def segmentation_words(engine, project) -> dict:
     return {"segmentation": found["note"]} if found else {}
 
 
+def compartment_words(engine, unit) -> dict:
+    """{"compartment_note": words} for a look of a marker whose stain the
+    image's compartment check finds off its compartment
+    (`Engine.compartment_record`), else {}. Gating VERSION 8: on by default
+    (lsp35766_p193 / LSP11385 2026-11-23, two runs each: TCF1 on LSP11385
+    0.91 -> 0.13 from the owner's gate, CDX2 0.25 -> 0.17)."""
+    finder = getattr(engine, "compartment_record", None)
+    try:
+        record = finder(unit["project"]) if finder is not None else None
+    except Exception:
+        record = None
+    from plexora.plugins.qc.server.cells import compartment
+
+    text = compartment.note(record, unit["marker"])
+    return {"compartment_note": text} if text else {}
+
+
 def partner_words(partners) -> dict:
     """What a look's evidence names its partner tiles (`partner_panels`):
     `expected` and `not_expected`, or `supporting` in place of `expected`

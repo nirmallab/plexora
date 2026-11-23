@@ -441,13 +441,23 @@ the strictness preset. Each cell's strongest status per category is
 "% of cells" reads (a region's "% of tissue area" is `report.affected_area`,
 an area, never a cell count).
 
-`qc_cells` (`CELLS_VERSION` 7) holds per cell: `cell_id`, `row` (its row in
+`qc_cells` (`CELLS_VERSION` 8) holds per cell: `cell_id`, `row` (its row in
 the loaded table: repeated ids and writers rely on it), `pass`, `action`,
 `primary_reason` (`schemas.PRIMARY_ORDER`), `reasons` and `excluded_by`
 (whole-cell), `noted_by`, `background`, `reason_count`, `unreliable_markers`,
 `marker_flags` (`marker|reason|status`, status exclude / warn / note),
 `roi_ids`, `roi_method`, `category_status` -- one row per cell of the table,
 whatever its calls.
+Since `CELLS_VERSION` 8 the `cells` summary also carries `compartment`
+(`cells/compartment.py`): each marker's stain against the compartment the
+marker graph names, from full-resolution pixels around 80 cells bright for
+it -- the nucleus core (from the marker's own-cycle DNA, never the
+segmentation mask) against a ring 0.6-1.6 um outside it -- called relative
+to the image (a nuclear marker is flagged `not_in_expected_compartment`
+only at or below the upper quartile of the non-nuclear markers, with at
+least two nuclear references above every non-nuclear one; images coarser
+than 0.5 um/px are skipped). Each flagged marker's `channel_findings` and
+digest say so; gating's looks of that marker carry a note.
 The result's `cells` summary keeps the counts (`n_fail`, `n_warn`,
 `n_noted`, `n_background`, `n_no_nucleus`, `by_reason`, `warn_by_reason`,
 `note_by_reason`) and what every call rests on: `evidence` (per reason:

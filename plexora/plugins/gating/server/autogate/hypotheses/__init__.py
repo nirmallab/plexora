@@ -49,8 +49,11 @@ from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 #: posterior over candidates decides and stops, looks go where they could
 #: change it, added points lead only once read on both sides, no split at
 #: close, crowded and isolated cells are weighed apart; "7": a plateau
-#: member the reads resolve on leads).
-VERSION = "7"
+#: member the reads resolve on leads; "8": a review close writes the
+#: likeliest candidate, and a marker whose stain is off its compartment on
+#: the image -- a nuclear stain off the nuclei, `qc.cells.compartment` --
+#: has its looks told so).
+VERSION = "8"
 
 #: The VERSION 5 rules, for a bench arm or a replay of stored records
 #: (`tools/bench_gates/ablate.py ABL=v5`, `replay_v6.py`).
@@ -509,6 +512,7 @@ def packet(engine, units):
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
                      **packets.segmentation_words(engine, unit["project"]),
+                     **packets.compartment_words(engine, unit),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,
@@ -620,6 +624,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
         "evidence": {"marker": unit["marker"], "project": ds.name,
                      "cells": len(numbers), **multiview,
                      **packets.segmentation_words(engine, project),
+                     **packets.compartment_words(engine, {**unit, "project": project}),
                      "context": {"compartment": compartment,
                                  **({"lineage": lineage} if lineage else {})},
                      "look": len(state["observations"]) + 1,

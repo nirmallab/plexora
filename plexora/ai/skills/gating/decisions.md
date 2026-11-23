@@ -77,7 +77,11 @@ alone with the cell's outline, the not-expected one the marker and nuclei
 over a wider field. Ownership is read at the outline for every marker. A
 look on an image whose outlines came from another platform, or whose looks
 keep naming `segmentation`, carries a `segmentation` note saying the outlines
-are approximate. A
+are approximate. A marker whose stain QC finds off the compartment the
+graph names on this image -- a nuclear stain that does not fill the nuclei --
+carries a compartment note: the readers judge the cell's stain where it sits
+rather than reject it for missing the nucleus, and the marker stays for
+review, never failed on that alone. A
 marker that closes for review is written at the candidate its reads make
 likeliest, not the one nearest its start.
 A conditional gate (a `within` answer of engine

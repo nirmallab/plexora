@@ -112,7 +112,7 @@ def test_a_cell_with_two_reasons_of_one_category_is_counted_once(tmp_path):
     assert abs(tissue["fraction"] - 20 / summary["n"]) < 1e-9
     assert "row" in frame.columns and "category_status" in frame.columns
     assert frame["row"].to_list() == list(range(frame.height))
-    assert schemas.CELLS_VERSION == "7" and summary["cells_version"] == "7"
+    assert schemas.CELLS_VERSION == "8" and summary["cells_version"] == "8"
     by_id = dict(zip(frame["cell_id"].to_list(), frame["category_status"].to_list()))
     assert by_id[ids[0]] == ["tissue_acquisition|excluded"]
     assert by_id[ids[35]] == ["blur_focus|channel"]

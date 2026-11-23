@@ -1190,6 +1190,38 @@ def reviewed_hints(result, hints):
             if h["class"] in open_hints(entries.get(h["channel"], {"scan_hints": {h["class"]: {}}}))]
 
 
+def _compartment(session, ds, frame, summary):
+    """Each marker's stain against its compartment (`compartment.for_dataset`),
+    on the cells QC keeps, into `summary["compartment"]` and each marker's
+    channel findings. On every QC run since CELLS_VERSION 8 (the gating looks
+    of a flagged marker carry a note; measured 2026-11-23). A failure is
+    recorded as skipped, never a failed QC."""
+    from plexora.plugins.qc.server.cells import compartment
+
+    try:
+        leave = frame.filter(pl.col("action") != "pass")["row"].to_numpy()
+    except Exception:  # noqa: BLE001 -- sampled from every cell then, said so below
+        leave = None
+
+    def values_of(marker):
+        try:
+            return np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+        except Exception:  # noqa: BLE001
+            return None
+
+    try:
+        record = compartment.for_dataset(session, ds, values_of, leave_out=leave)
+    except Exception as exc:  # noqa: BLE001 -- a finding, never a failed QC
+        record = {"version": compartment.VERSION, "status": "skipped", "markers": {},
+                  "why": f"the check failed: {type(exc).__name__}"}
+    record["left_out_qc_cells"] = leave is not None
+    summary["compartment"] = record
+    findings = summary.setdefault("channel_findings", {})
+    for marker, entry in (record.get("markers") or {}).items():
+        findings.setdefault(marker, {})["compartment"] = {
+            k: entry.get(k) for k in ("call", "compartment", "score", "n")}
+
+
 def write_for_active(call, project, *, refresh_regions=True):
     """Derive and store the active result's cells (after the regions are
     propagated again, unless `refresh_regions=False`)."""
@@ -1280,6 +1312,7 @@ def write_for_active(call, project, *, refresh_regions=True):
             {"position": position + 1, "markers": list(cycle.get("markers") or ()),
              "cumulative_retained": cycle.get("cumulative_retained")}
             for position, cycle in enumerate(dna_summary.get("cycles") or ())]
+        _compartment(session, ds, frame, summary)
         results.put_cells(project, frame, pairs)
         result.setdefault("cells", {}).update(summary)
         if per_roi is not None:

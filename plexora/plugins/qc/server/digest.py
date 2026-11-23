@@ -103,6 +103,9 @@ def _fields(result, marker, *, left_out=None, findings=None):
     background = channel_findings.get("background") or {}
     if background.get("flagged"):
         out.append(("background", f"z{_num(background.get('z') or 0)}"))
+    placed = channel_findings.get("compartment") or {}
+    if placed.get("call") == "not_in_expected_compartment":
+        out.append(("compartment", f"off_{placed.get('compartment')}"))
     for cycle in cells.get("dna_cycles") or ():
         if marker in (cycle.get("markers") or ()):
             retained = cycle.get("cumulative_retained")

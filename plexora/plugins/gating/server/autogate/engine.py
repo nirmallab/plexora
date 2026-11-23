@@ -813,6 +813,47 @@ class Engine(BaseEngine):
                     out["gates"][channels[m]] = float(gated[m])
         return out if out["markers"] else {}
 
+    def compartment_record(self, project):
+        """The image's compartment check (`qc.cells.compartment`): QC's, when
+        the active QC result has one of this version, else measured here
+        once -- from full-resolution pixels, on the cells QC leaves in
+        (`cells.values` hides the rest) -- and kept with the session so a
+        replay reads the same."""
+        from plexora.plugins.qc.server.cells import compartment
+
+        held = self.record.setdefault("compartment", {})
+        if project in held:
+            return held[project]
+        found = None
+        try:
+            from plexora.plugins.qc.server import results as qc_results
+
+            active = qc_results.active(qc_results.load(project)) or {}
+            stored = (active.get("cells") or {}).get("compartment")
+            if stored and stored.get("version") == compartment.VERSION \
+                    and stored.get("status") != "skipped":
+                found = {**stored, "source": "qc"}
+        except Exception:  # noqa: BLE001 -- measured here instead
+            found = None
+        if found is None:
+            from plexora.plugins.gating.server.autogate import cells as cellmod
+
+            ds = self.call.session.data(project)
+
+            def values_of(marker):
+                try:
+                    return cellmod.values(ds, marker)
+                except Exception:  # noqa: BLE001
+                    return None
+
+            found = {**compartment.for_dataset(self.call.session, ds, values_of),
+                     "source": "gating"}
+        held[project] = found
+        self.log(event="compartment_check", project=project, status=found.get("status"),
+                 flags=sorted((found.get("flags") or {}).keys()), source=found.get("source"),
+                 why=found.get("why"))
+        return found
+
     def segmentation_note(self, project):
         """{note, signals} when this image's cell outlines are approximate --
         another platform's segmentation carried onto it, or its looks keep

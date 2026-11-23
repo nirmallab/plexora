@@ -13,7 +13,9 @@ import zlib
 
 #: Bumped when what a stored scan / cell measurement / result means changes.
 SCAN_VERSION = "6"
-CELLS_VERSION = "7"
+#: CELLS_VERSION 8: the cells summary carries each marker's compartment
+#: finding (`cells.compartment`).
+CELLS_VERSION = "8"
 RESULT_VERSION = "2"
 
 ARTIFACT_CLASSES = (

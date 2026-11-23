@@ -102,6 +102,13 @@ microns.
    span too few exclusive lineages skips it
    (`cells.multi_channel_bright.why` says how many it covers and needs):
    say the check did not run, not that the cells are clean.
+   The compartment check reads full-resolution pixels around cells bright
+   for each marker -- the nucleus from that cycle's own DNA, never the
+   segmentation mask -- and flags a nuclear marker whose stain sits no more
+   in the nucleus than the image's membrane stains do, only when other
+   nuclear markers on the image clearly fill theirs; otherwise it makes no
+   call, and a coarse image is skipped. A flag is a finding about the stain,
+   not a failed channel: report it, and gating tells its looks.
 6. `refine_qc_roi` retraces a region (a registration region to its mismatch
    map, a segmentation cluster written before to its density grid, a blur
    region to the blur trace;
