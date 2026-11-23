@@ -109,9 +109,17 @@ def _load(version) -> dict:
         if entry["kind"] not in KINDS:
             raise ValueError(f"marker graph context {key!r}: kind is one of {KINDS}")
         for edge in graph.edges:
-            if key not in (edge.get("contexts") or ()) or not vocabulary.counts(edge):
+            # An edge scoped to the context; or one whose tumour qualifiers
+            # (`exclude_contexts`, `weak_contexts`) let it hold here, at its
+            # grade here: p21 exclusive of Ki-67 in a lymph node, not in a
+            # carcinoma, where the vocabulary (no context) leaves it out.
+            qualified = bool(edge.get("exclude_contexts") or edge.get("weak_contexts")) \
+                and not edge.get("contexts") and graph.edge_scope(edge, key) is not None
+            if (key not in (edge.get("contexts") or ()) and not qualified) \
+                    or not vocabulary.counts(edge):
                 continue
-            confidence = vocabulary.GRADE.get(edge.get("confidence"), vocabulary.DEFAULT_CONFIDENCE)
+            confidence = vocabulary.GRADE.get(graph.edge_grade(edge, key),
+                                              vocabulary.DEFAULT_CONFIDENCE)
             group = [b for ref in graphmod.targets(edge) for b in expand(ref)]
             relation = edge["type"]
             if relation == "subset_any" and len(group) < 2:
