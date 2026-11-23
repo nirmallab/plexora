@@ -178,15 +178,22 @@ def _start(session, **options):
 def test_engine_names_and_scope_defaults():
     from plexora.plugins.gating.capabilities_session import SessionOptions
 
-    assert schemas.ENGINES == ("v1", "v3", "v4")
-    assert SessionOptions(scope="project", project="p").engine == "v3"
-    assert SessionOptions(scope="dataset", dataset="d").engine == "v4"
+    assert schemas.ENGINES == ("v1", "v3", "v4", "v5")
+    # v5 (2026-11-23): one engine, the default for one image and for a dataset.
+    assert SessionOptions(scope="project", project="p").engine == "v5"
+    assert SessionOptions(scope="dataset", dataset="d").engine == "v5"
+    assert SessionOptions(scope="dataset", dataset="d", engine="v4").engine == "v4"
+    assert SessionOptions(scope="project", project="p", engine="v3").engine == "v3"
     assert SessionOptions(scope="project", project="p", engine="v2").engine == "v3"
     assert SessionOptions(engine="candidates").engine == "v3"
     assert SessionOptions(scope="dataset", dataset="d", engine="v4").basic_qc is True
     assert SessionOptions(scope="dataset", dataset="d", engine="v4").display_check == "off"
-    assert schemas.panel_engine("v2") and schemas.panel_engine("v4")
+    assert SessionOptions(scope="dataset", dataset="d").basic_qc is True
+    assert SessionOptions(scope="project", project="p").display_check == "off"
+    assert schemas.panel_engine("v2") and schemas.panel_engine("v4") and schemas.panel_engine("v5")
     assert not schemas.panel_engine("v1")
+    assert schemas.group_engine("v4") and schemas.group_engine("v5")
+    assert not schemas.group_engine("v3") and not schemas.group_engine("v1")
 
 
 @pytest.mark.pro
@@ -216,7 +223,7 @@ def test_a_dataset_is_gated_by_groups(tmp_path, _gating):
             assert agents[project].excess(marker, unit["final"]) <= max(
                 3, 0.02 * len(made[project]["cells"])), unit
     summary = status["dataset"]
-    assert summary["engine"] == "v4"
+    assert summary["engine"] == "v5"
     grouped = [m for m, row in summary["markers"].items() if row["groups"]]
     assert grouped, summary
     # A marker gated as a group: a scale image, members carried as
@@ -302,14 +309,15 @@ def test_a_pooled_look_is_drawn_from_another_image_and_read_there(tmp_path, _gat
 
 
 @pytest.mark.pro
-def test_v4_on_one_image_is_v3(tmp_path, _gating):
-    """The guard that v4 cannot regress single-image gating: on one image it
-    is v3, gate for gate and look for look."""
+def test_v5_on_one_image_is_v3(tmp_path, _gating):
+    """The guard that v4 and v5 (one engine for both scopes) cannot regress
+    single-image gating: on one image each is v3, gate for gate and look for
+    look."""
     from tests.autogate_fixtures import answer_review, make_gating_project
     from tests.test_gating_session import HARD, Oracle, drive
 
     runs = {}
-    for engine in ("v3", "v4"):
+    for engine in ("v3", "v4", "v5"):
         name = f"g{engine}"
         info = make_gating_project(tmp_path, name, grid=24, size=1024, markers=HARD)
         session = AgentSession()
@@ -323,8 +331,9 @@ def test_v4_on_one_image_is_v3(tmp_path, _gating):
         runs[engine] = ({u["marker"]: (u["state"], u.get("final")) for u in status["units"]},
                         [(p["kind"], [r["marker"] for r in p.get("units") or ()])
                          for p in packets])
-    assert runs["v4"][0] == runs["v3"][0]
-    assert runs["v4"][1] == runs["v3"][1]
+    for engine in ("v4", "v5"):
+        assert runs[engine][0] == runs["v3"][0], engine
+        assert runs[engine][1] == runs["v3"][1], engine
 
 
 @pytest.mark.pro

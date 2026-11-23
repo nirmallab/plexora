@@ -85,7 +85,7 @@ def active(engine) -> bool:
     """Whether the session gates its images as groups: v4, a dataset, more
     than one image."""
     record = engine.record
-    return record.get("scope") == "dataset" and schemas.is_v4(engine.options["engine"]) \
+    return record.get("scope") == "dataset" and schemas.group_engine(engine.options["engine"]) \
         and len(record.get("images") or ()) > 1
 
 

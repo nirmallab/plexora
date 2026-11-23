@@ -282,22 +282,25 @@ class SessionOptions(AgentModel):
     #: panels, numbered and shuffled with no value or gate shown; looks again
     #: only where the leader has not beaten a rival; closes for review with a
     #: reason when it cannot. v4: v3, with a dataset's aligned images gated as
-    #: groups. v1: then candidates beyond the gate. Named by none, the scope's
-    #: (`schemas.DEFAULT_ENGINE_BY_SCOPE`).
+    #: groups. v5: one engine for both scopes -- v4's groups across a
+    #: dataset, v3 on one image. v1: then candidates beyond the gate. Named by
+    #: none, the scope's (`schemas.DEFAULT_ENGINE_BY_SCOPE`: v5 for both).
     engine: Literal[schemas.ENGINES] = Field(
         schemas.DEFAULT_ENGINE,
-        description="v3: blind panels of single cells labelled one at a time, code picks the "
-                    "candidate gate the labels support; v4: v3, a dataset's aligned images "
-                    "decided together (the default for scope=dataset); v1: rows below, at and "
-                    "above the gate. classic (v1), candidates and v2 (v3) are accepted.")
+        description="v5 (the default, for one image and for a dataset): blind panels of "
+                    "single cells labelled one at a time, code picks the candidate gate the "
+                    "labels support, and a dataset's aligned images are decided together; "
+                    "v3: the same for one image, a dataset gated from its reference image; "
+                    "v4: v5's earlier name for a dataset; v1: rows below, at and above the "
+                    "gate. classic (v1), candidates and v2 (v3) are accepted.")
     #: Folds (also ones that come or go between imaging cycles), tears,
     #: debris, saturation, lost nuclei; no model calls; marked automatic and
     #: unreviewed. Needs the QC plugin.
     basic_qc: bool = Field(
         schemas.BASIC_QC_DEFAULT[schemas.DEFAULT_ENGINE],
         description="On an image with no QC result, run QC's model-free checks first "
-                    "(run_basic_qc) and leave out what they find. Default: on with v3 and v4, "
-                    "off with v1.")
+                    "(run_basic_qc) and leave out what they find. Default: on with v3, v4 and "
+                    "v5, off with v1.")
     panel_looks: int = Field(3, ge=1, le=6, description="Engines v3 and v4: the most cell "
                              "panels a marker is shown before review.")
     #: The pattern, dim cells seen stained, bright cells seen to be debris:

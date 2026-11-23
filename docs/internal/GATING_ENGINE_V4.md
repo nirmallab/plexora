@@ -4,7 +4,14 @@ Handoff, 2026-11-05. For engineers who will work on automatic gating next.
 
 ## Status
 
-- **Branch:** `gating-v4`. Not merged.
+- **v5 (2026-11-23).** The default engine for one image and for a dataset.
+  It is v4's code path under one name. On one image it is v3; across a
+  dataset, aligned images are decided as groups. It carries hypotheses
+  VERSION 8 and QC CELLS_VERSION 8 (the compartment note). v3 and v4 stay
+  selectable and a stored session keeps its engine. `schemas.GROUP_ENGINES`
+  names the engines that group, and `test_v5_on_one_image_is_v3` pins the
+  single-image identity.
+- **Branch:** `gating-v4`. Merged.
 - **Names:** the cell-panel engine of [GATING_ENGINE_V2.md](GATING_ENGINE_V2.md)
   is registered as `v3`; `v2` and `candidates` are its earlier names
   (`schemas.ENGINE_ALIASES`). `v4` is new.

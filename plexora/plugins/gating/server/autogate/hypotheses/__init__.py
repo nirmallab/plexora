@@ -311,7 +311,7 @@ def start(engine, unit) -> dict:
 def _pool(engine, unit) -> dict | None:
     """Engine v4: the images a group's scale image's looks rotate over
     (`groups.pool_for`), frozen into the hypotheses so a replay draws the same."""
-    if not schemas.is_v4(engine.options["engine"]):
+    if not schemas.group_engine(engine.options["engine"]):
         return None
     from plexora.plugins.gating.server.autogate import groups
 

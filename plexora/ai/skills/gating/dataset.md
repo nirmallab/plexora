@@ -2,7 +2,7 @@
 
 A reference of skill gate-image, which holds the session loop a dataset
 follows: read it first. This adds what differs when every image of a dataset
-is gated in one session. With engine `v4` (the default for a dataset) no
+is gated in one session. With engine `v5` (the default; `v4` is the same) no
 single image decides for the rest: once every image is profiled, the images
 of each marker are grouped by how their backgrounds align, each group is
 decided once with looks drawn from several of its images, and the group's

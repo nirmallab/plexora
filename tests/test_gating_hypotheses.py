@@ -288,14 +288,14 @@ def test_v2_is_the_default_engine_and_the_first_names_still_work(tmp_path):
     from plexora.plugins.gating.server.autogate import schemas
     from plexora.plugins.gating.server.autogate.engine import Engine
 
-    assert SessionOptions().engine == "v3" == schemas.DEFAULT_ENGINE
+    assert SessionOptions().engine == "v5" == schemas.DEFAULT_ENGINE
     assert SessionOptions(engine="classic").engine == "v1"
     assert SessionOptions(engine="candidates").engine == "v3"
     assert SessionOptions(engine="v2").engine == "v3"
-    assert SessionOptions(scope="dataset", dataset="d").engine == "v4"
+    assert SessionOptions(scope="dataset", dataset="d").engine == "v5"
     assert SessionOptions(engine="v1").model_dump(mode="json")["engine"] == "v1"
     with pytest.raises(Exception):
-        SessionOptions(engine="v5")
+        SessionOptions(engine="v6")
     st = SessionStore("gating", root=tmp_path)
     for sid, options, expected in (("s_old", {}, "v1"), ("s_classic", {"engine": "classic"}, "v1"),
                                    ("s_cand", {"engine": "candidates"}, "v3"),

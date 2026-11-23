@@ -3065,7 +3065,7 @@
       },
       "basic_qc": {
        "default": true,
-       "description": "On an image with no QC result, run QC's model-free checks first (run_basic_qc) and leave out what they find. Default: on with v3 and v4, off with v1.",
+       "description": "On an image with no QC result, run QC's model-free checks first (run_basic_qc) and leave out what they find. Default: on with v3, v4 and v5, off with v1.",
        "type": "boolean"
       },
       "biology": {
@@ -3122,12 +3122,13 @@
        "type": "string"
       },
       "engine": {
-       "default": "v3",
-       "description": "v3: blind panels of single cells labelled one at a time, code picks the candidate gate the labels support; v4: v3, a dataset's aligned images decided together (the default for scope=dataset); v1: rows below, at and above the gate. classic (v1), candidates and v2 (v3) are accepted.",
+       "default": "v5",
+       "description": "v5 (the default, for one image and for a dataset): blind panels of single cells labelled one at a time, code picks the candidate gate the labels support, and a dataset's aligned images are decided together; v3: the same for one image, a dataset gated from its reference image; v4: v5's earlier name for a dataset; v1: rows below, at and above the gate. classic (v1), candidates and v2 (v3) are accepted.",
        "enum": [
         "v1",
         "v3",
-        "v4"
+        "v4",
+        "v5"
        ],
        "type": "string"
       },

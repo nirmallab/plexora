@@ -393,14 +393,22 @@ CLASSIFIER_MODES = ("off", "layer", "check")
 #: `hypotheses.VERSION`). v4: v3 on one image; across a dataset, images
 #: whose backgrounds align are gated as a group, one pooled decision per
 #: group and marker (`groups`, docs/internal/GATING_ENGINE_V4.md).
-ENGINES = ("v1", "v3", "v4")
+#: v5 (2026-11-23): one engine for one image and for a dataset -- v4's
+#: grouping across a dataset's images, v3 on one image (which v4 already
+#: was), on hypotheses VERSION 8 and QC CELLS_VERSION 8 (the compartment
+#: note). v3 and v4 stay selectable, so a stored session or a caller that
+#: names one keeps it.
+ENGINES = ("v1", "v3", "v4", "v5")
 #: The engines whose looks are cell panels (`panel_engine`).
-PANEL_ENGINES = ("v3", "v4")
-#: The engine of a session that names none: v3 (then called v2) since
-#: 2026-10-22, after it tied v1 on four dev images
-#: (docs/internal/GATING_ENGINE_V2.md); v4 for a dataset.
-DEFAULT_ENGINE = "v3"
-DEFAULT_ENGINE_BY_SCOPE = {"project": "v3", "dataset": "v4"}
+PANEL_ENGINES = ("v3", "v4", "v5")
+#: The engines that gate a dataset's aligned images as groups (`groups`).
+GROUP_ENGINES = ("v4", "v5")
+#: The engine of a session that names none: v5 for one image and for a
+#: dataset since 2026-11-23 (before: v3, then called v2, since 2026-10-22,
+#: after it tied v1 on four dev images, docs/internal/GATING_ENGINE_V2.md;
+#: v4 for a dataset).
+DEFAULT_ENGINE = "v5"
+DEFAULT_ENGINE_BY_SCOPE = {"project": "v5", "dataset": "v5"}
 #: The engines' earlier names, accepted wherever an engine is named, so a
 #: stored session or an older caller keeps the engine it was started with.
 ENGINE_ALIASES = {"classic": "v1", "candidates": "v3", "v2": "v3"}
@@ -412,25 +420,27 @@ def engine_name(value) -> str:
 
 
 def panel_engine(value) -> bool:
-    """Whether engine `value` decides its looks with cell panels (v3, v4)."""
+    """Whether engine `value` decides its looks with cell panels (v3-v5)."""
     return engine_name(value) in PANEL_ENGINES
 
 
-def is_v4(value) -> bool:
-    return engine_name(value) == "v4"
+def group_engine(value) -> bool:
+    """Whether engine `value` gates a dataset's aligned images as groups (v4,
+    v5); on one image either is v3."""
+    return engine_name(value) in GROUP_ENGINES
 
 
 #: The contrast check (`DISPLAY_CHECKS`) of a session that names none, by
 #: engine. v3 was measured without it (the 2026-10-22 dev campaign), and its
 #: blind panels are drawn at the windows the check would choose, which the
 #: reader audit found move its reader more than any wording does; v1 keeps
-#: the check it has always run with; v4 is v3's.
-DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v3": "off", "v4": "off"}
+#: the check it has always run with; v4 and v5 are v3's.
+DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v3": "off", "v4": "off", "v5": "off"}
 #: Whether a session that names no `basic_qc` runs QC's model-free checks on
-#: an image with no QC result before gating it, by engine: v3 and v4 do
+#: an image with no QC result before gating it, by engine: v3, v4 and v5 do
 #: (their windows, fits and panels then leave folds and debris out); v1
 #: keeps what it always did.
-BASIC_QC_DEFAULT = {"v1": False, "v3": True, "v4": True}
+BASIC_QC_DEFAULT = {"v1": False, "v3": True, "v4": True, "v5": True}
 
 #: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
 PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")
