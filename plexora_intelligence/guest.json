@@ -4006,6 +4006,10 @@
          "description": "Segmentation QC, when the project has a mask: where too large, too small and irregular cells cluster.",
          "type": "boolean"
         },
+        "stain": {
+         "description": "Low quality staining: one picture per marker channel, judged real, weak or failed (a first `failed` read again by a second, blind reader, a third when they differ). Flags only.",
+         "type": "boolean"
+        },
         "visual": {
          "description": "After the checks, one look at the whole tissue on which you outline large artifacts the detectors missed (segment_qc_roi).",
          "type": "boolean"

@@ -115,7 +115,8 @@ class QCChecks(AgentModel):
     stain: bool = Field(default_factory=lambda: _check_default("stain"),
                         description="Low quality staining: one picture per marker channel, "
                                     "judged real, weak or failed (a first `failed` read again "
-                                    "by a second, blind reader). Flags only.")
+                                    "by a second, blind reader, a third when they differ). "
+                                    "Flags only.")
     blur_channels: list[str] | None = Field(
         None, description="The channels Blur QC scores (default: the session's nuclear "
                           "channels, else every channel).")
