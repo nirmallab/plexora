@@ -82,6 +82,8 @@ PANEL_CHECKS = [
     "Plexora AI: when a run here costs more than there is, the balance line offers Add credits, "
     "which opens the account's page; once the balance can pay it goes, and a page that is not "
     "https is never offered",
+    "Plexora AI: after a resume the usage line counts the whole session (13 packets, 3.6 credits "
+    "at once; then 15 and 4.1), not the resumed run alone",
     'Plexora AI: ai_usage draws "Plexora AI · 12 packets · 3.4 credits · 87% from cache"; a credit '
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
     "session to resume and the card closes",

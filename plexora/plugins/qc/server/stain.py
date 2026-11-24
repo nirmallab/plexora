@@ -240,8 +240,8 @@ def note(names, marker, overrides=None) -> dict:
     out = {k: entry.get(k) for k in ("compartment", "lineage", "expression", "morphology")
            if entry.get(k)}
     if canonical is None:
-        out["unknown"] = ("the marker graph does not know this name: write the expectation "
-                          "from the name alone, and say so")
+        out["unknown"] = ("the marker graph does not know this name: judge from what the name "
+                          "alone suggests, and say so in `why`")
     elif entry.get("binary") is False:
         out["shape"] = NOT_BINARY
     return out
@@ -633,7 +633,10 @@ def packet_parts(session, project, channel, *, partner_name=None, partner_words=
     png = manifest = None
     if picture:
         try:
-            png, manifest = artifacts.get(picture)
+            # The sidecar holds the picture's manifest; read as the manifest,
+            # a stored picture's partner and scales were lost (2026-11-24).
+            png, sidecar = artifacts.get(picture)
+            manifest = sidecar.get("manifest") or {}
         except Exception:  # noqa: BLE001 -- swept or unreadable: draw it again
             png = manifest = None
     if png is None:
@@ -655,13 +658,13 @@ def packet_parts(session, project, channel, *, partner_name=None, partner_words=
 # -- the question --------------------------------------------------------------------------
 
 QUESTION = (
-    "Is {marker} a real stain? Before you weigh the picture, write how a working stain of "
-    "{marker} should look (`expectation`): its compartment (membrane ring, nuclear, "
+    "Is {marker} a real stain? Before you weigh the picture, settle in your mind how a working "
+    "stain of {marker} should look: its compartment (membrane ring, nuclear, "
     "cytoplasmic, punctate granules, fibres), which cells, how common, and how they would sit "
     "in this tissue (lining vessels, clustered in lymphoid follicles or aggregates, "
     "epithelium, scattered single cells). Then look at every scale. The main question: is "
     "there clear NON-RANDOM BIOLOGICAL STRUCTURE -- a distinct subset of cells stained where "
-    "the stain belongs, arranged as the expectation says (clustering, lining, networks, a "
+    "the stain belongs, arranged as you expect (clustering, lining, networks, a "
     "compartment of the tissue)? It may be rare or dim: a few dozen convincing cells in the "
     "right place is a real stain. Signs of failure: haze that follows the tissue outline or "
     "cell density rather than a cell type; every cell lit about alike; uniform grain; blobs, "
@@ -671,7 +674,8 @@ QUESTION = (
     "partner's cells as the relation says (white or green cells beside magenta ones); a "
     "failed one lights partner-negative tissue as much, or follows texture. If the partner "
     "itself shows no cellular structure, row E tells you nothing. `real`: a clear specific "
-    "population; `weak`: a real one at low contrast; `failed`: none; `cannot_tell`.")
+    "population; `weak`: a real one at low contrast; `failed`: none; `cannot_tell`. Answer "
+    "with `structure`, `verdict` and `why` (one sentence) only; do not describe the panels.")
 
 READING = ("the stain-check picture: A whole tissue (marker yellow, nuclei dim blue; white "
            "boxes B and C, cyan circle D); B and C two tissue-scale fields of typical cell "

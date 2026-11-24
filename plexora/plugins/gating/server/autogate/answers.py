@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Annotated, Literal, Union
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from plexora.agent.evidence import calibration, display_grid
 from plexora.agent.schemas import AgentModel, clipped
@@ -84,10 +85,9 @@ class StainCheckAnswer(_Base):
     reading here is stored where QC reuses it."""
 
     kind: Literal["stain_check"] = "stain_check"
-    expectation: str = Field(max_length=300, description="Written BEFORE weighing the picture: "
-                             "how a working stain of this marker should look -- compartment, "
-                             "which cells, how common, how they sit in this tissue.")
-    observed: str = Field(max_length=300, description="What A to E show, at each scale.")
+    #: Not asked for any more (QC's `StainCheckAnswer` says why); still read.
+    expectation: SkipJsonSchema[Annotated[str, clipped(300)]] = ""
+    observed: SkipJsonSchema[Annotated[str, clipped(300)]] = ""
     structure: Literal["yes", "no", "unclear"] = Field(
         description="Is there clear non-random biological structure: a distinct subset of "
                     "cells stained where the stain belongs, arranged as expected?")

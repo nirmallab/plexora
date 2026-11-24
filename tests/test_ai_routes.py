@@ -210,6 +210,18 @@ def test_a_credit_pause_tells_the_tab_and_resumes_over_http(client, gateway):
     assert second["session_id"] == run["session_id"] and len(gateway.runs) == 1
     assert gateway.runs["run_1"]["status"] == "finished"
 
+    # The card goes on from what the session had spent, not from zero: the
+    # resume says the first run's total at once, and every later count adds
+    # this run's to it (its own `charged_*` stay the run's, for billing).
+    first = run["usage"]
+    events = [e["payload"] for e in _events(client, view)]
+    told = next(e for e in events if e["event"] == "ai_run" and e.get("resumed"))
+    assert told["usage"]["session_charged_micro"] == first["charged_micro"] > 0
+    assert told["usage"]["session_packets"] >= 1 and told["usage"]["packets"] == 0
+    last = [e for e in events if e["event"] == "ai_usage" and e.get("run_id") == resumed["run_id"]][-1]["usage"]
+    assert last["session_charged_micro"] == first["charged_micro"] + last["charged_micro"]
+    assert last["session_packets"] == told["usage"]["session_packets"] + last["packets"]
+
 
 @pytest.mark.pro
 def test_a_session_that_stopped_part_way_is_offered_back_until_it_is_finished(client, gateway):

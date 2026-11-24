@@ -1052,6 +1052,19 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     await tick(5);
     const resumed = ai.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
     const cardAfter = card.hidden;
+    // The resumed run goes on from the session's total, not from zero.
+    ai.send("ai_run", { run_id: "air_2", kind: "qc", resumed: true,
+                        usage: { packets: 0, charged_credits: 0, session_packets: 13,
+                                 session_charged_credits: 3.6 } }, sid);
+    const onResume = byClass(ai.root(), "plx-agent-usage").textContent;
+    ai.send("ai_usage", { run_id: "air_2", usage: { packets: 2, charged_credits: 0.5, session_packets: 15,
+                                                    session_charged_credits: 4.1, cache_read_share: 0.9 } }, sid);
+    const goingOn = byClass(ai.root(), "plx-agent-usage").textContent;
+    check("Plexora AI: after a resume the usage line counts the whole session (13 packets, 3.6 credits "
+        + "at once; then 15 and 4.1), not the resumed run alone",
+        onResume === "Plexora AI · 13 packets · 3.6 credits"
+        && goingOn === "Plexora AI · 15 packets · 4.1 credits · 90% from cache",
+        { onResume, goingOn });
     check("Plexora AI: ai_usage draws \"Plexora AI · 12 packets · 3.4 credits · 87% from cache\"; a credit "
         + "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
         + "session to resume and the card closes",

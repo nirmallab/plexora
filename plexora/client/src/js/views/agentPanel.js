@@ -692,12 +692,15 @@ window.PlexoraAgentPanel = (function () {
     }
 
     /** "Plexora AI · 12 packets · 3.4 credits · 87% from cache", or the
-     *  quote before the first packet; "" when no harness run drives this. */
+     *  quote before the first packet; "" when no harness run drives this.
+     *  Counted over the whole session (`session_*`): a resumed run goes on
+     *  from what the session had spent, not from zero. */
     function usageLine(session) {
         const used = session.aiUsage;
-        if (used && Number(used.packets) > 0) {
-            const parts = ["Plexora AI", plural(Number(used.packets), "packet"),
-                           `${credits(used.charged_credits)} credits`];
+        const packets = Number(used && (used.session_packets ?? used.packets)) || 0;
+        if (used && packets > 0) {
+            const parts = ["Plexora AI", plural(packets, "packet"),
+                           `${credits(used.session_charged_credits ?? used.charged_credits)} credits`];
             const share = Number(used.cache_read_share);
             if (Number.isFinite(share) && share > 0) parts.push(`${Math.round(share * 100)}% from cache`);
             return parts.join(" · ");
@@ -1998,6 +2001,9 @@ window.PlexoraAgentPanel = (function () {
             session.aiRun = { run_id: payload.run_id, quote_credits: payload.quote_credits, kind: payload.kind };
             if (payload.resumed) {
                 session.aiPause = null;
+                // What the session spent before this resume: the line goes on
+                // from its total, not from zero.
+                if (payload.usage && typeof payload.usage === "object") session.aiUsage = payload.usage;
                 showCredit(session);
             }
         },

@@ -1146,7 +1146,12 @@ def stain_check(engine, units):
     rendered = None
     if unit.get("picture"):
         try:
-            png, manifest = artifacts.get(unit["picture"])
+            # `get` answers the sidecar; the picture's manifest (its partner,
+            # field and cell scales) is inside it. Read as the manifest, every
+            # stored picture's packet said "no partner" while its row E showed
+            # one (b015 LSP35766A, 2026-11-24: all 33 stain packets).
+            png, sidecar = artifacts.get(unit["picture"])
+            manifest = sidecar.get("manifest") or {}
             fmt = _fmt(engine)
             with Image.open(io.BytesIO(png)) as im:
                 size = im.size

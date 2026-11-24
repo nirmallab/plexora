@@ -1442,7 +1442,8 @@ def stain_check(engine, units):
     unit = units[0]
     stain = unit["stain"]
     parts = stain["packet"]
-    png, manifest = artifacts.get(stain["picture"])
+    png, sidecar = artifacts.get(stain["picture"])
+    manifest = sidecar.get("manifest") or {}     # the picture's own, inside the sidecar
     fmt = _fmt(engine)
     with Image.open(io.BytesIO(png)) as im:
         size = im.size

@@ -184,8 +184,11 @@ class _Relay:
             self._tell("ai_context", session_id, interpretation=event.get("interpretation"),
                        units=event.get("units"), **run)
         elif name in ("quoted", "resumed"):
+            # A resume carries what the session has spent so far, so the
+            # card shows its total at once rather than counting from zero.
             self._tell("ai_run", session_id, quote_credits=event.get("quote_credits"),
-                       resumed=name == "resumed", **run)
+                       resumed=name == "resumed",
+                       **({"usage": event["usage"]} if event.get("usage") else {}), **run)
         elif name == "answered":
             self.call.progress(usage.get("packets"), None,
                                f"{usage.get('packets')} packets, {usage.get('charged_credits')} credits")
