@@ -54,6 +54,26 @@ def test_its_state_is_kept_in_place(library):
     assert paths.project_state_dir("new_one") == own / "new_one"
 
 
+def test_deleting_a_library_project_removes_its_folder_there(library):
+    """The folder is found while the project is still registered: asked after
+    the registry entry was gone, `project_state_dir` answered the data root,
+    and the library's folder stayed on disk."""
+    import plexora
+
+    own, lib = library
+    folder = lib / "web_project"
+    (folder / "plugins" / "qc").mkdir(parents=True)
+    (folder / "plugins" / "qc" / "scan.npz").write_bytes(b"x")
+
+    response = plexora.app.test_client().post("/project/web_project/delete")
+
+    assert response.status_code == 200
+    assert "left_on_disk" not in response.get_json()
+    assert not folder.exists()
+    assert "web_project" not in json.loads((lib / "config.json").read_text(encoding="utf-8"))
+    assert "web_project" not in Project.load_all()
+
+
 def test_a_save_goes_back_to_the_library(library):
     own, lib = library
     from dataclasses import replace

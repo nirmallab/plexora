@@ -1184,6 +1184,12 @@ def delete_project(name):
                   "deleted from Plexora.",
         ), 403
 
+    # Where its folder is, asked while the project is still registered:
+    # `project_state_dir` finds a project of the library the website shares
+    # (Documents/Plexora/projects) by its entry in that library's registry,
+    # and once `project.delete()` has removed the entry it answers the data
+    # root instead -- leaving the real folder on disk, as it did.
+    directory = paths.project_state_dir(name)
     # First: the server holding it open would keep serving it to a project
     # imported later under the same name, and holds its files open besides.
     data_model.unload(name)
@@ -1204,14 +1210,36 @@ def delete_project(name):
     # than after any project, other projects and data nodes may be serving it,
     # and it sits in a directory Plexora was invited into rather than one it
     # owns. Deleting a project is not permission to delete from there.
-    directory = paths.project_state_dir(name)
-    if directory.is_dir():
-        shutil.rmtree(directory, ignore_errors=True)
+    left = _remove_project_folder(directory)
     # And what was cached of its files at web addresses -- a bucket sample's
     # image and mask tiles -- unless another project reads them too. The
     # files themselves are never touched.
     released = remote_sources.release(project, all_projects())
+    if left:
+        return jsonify(success=True, released=released, left_on_disk=left)
     return jsonify(success=True, released=released)
+
+
+def _remove_project_folder(directory, attempts=10, delay=0.2):
+    """Remove a deleted project's folder; the path when some of it is still
+    there afterwards, else None.
+
+    Retried a few times: on Windows a file another process has open (a
+    scanner, a sync client, a plugin's database closing a moment late)
+    refuses deletion, and `rmtree` would otherwise give up for good with
+    part of the folder left and nothing said."""
+    import time
+
+    directory = Path(directory)
+    for attempt in range(attempts):
+        if not directory.exists():
+            return None
+        shutil.rmtree(directory, ignore_errors=True)
+        if not directory.exists():
+            return None
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return str(directory)
 
 
 # -- a project's files, as this app finds them ------------------------------

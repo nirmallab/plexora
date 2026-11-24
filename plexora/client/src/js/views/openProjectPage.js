@@ -913,11 +913,19 @@
          * and makes a partial failure harder to read.
          */
         async function removeFromDisk(projects) {
+            // A folder Windows would not let go of (a file held open) is
+            // still on disk: said once at the end, not swallowed.
+            const left = [];
             for (const project of projects) {
                 const response = await fetch(
                     plexoraUrl(`project/${encodeURIComponent(project.name)}/delete`),
                     { method: "POST" });
                 if (!response.ok) throw new Error(`Could not delete ${project.name}`);
+                const result = await response.json().catch(() => ({}));
+                if (result.left_on_disk) left.push(result.left_on_disk);
+            }
+            if (left.length) {
+                throw new Error(`Deleted, but files are still on disk: ${left.join(", ")}`);
             }
         }
 
