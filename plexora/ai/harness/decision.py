@@ -111,6 +111,15 @@ SETUP_REMIND_S = 10.0
 PAUSE_CODES = _gateway.PAUSE_CODES
 #: The pauses that money or a raised cap answers ("add credits, then resume").
 CREDIT_CODES = _gateway.CREDIT_CODES
+#: A stream that broke mid-answer (`interrupted`: the connection dropped, or
+#: the gateway went silent) is asked again this many times, each a fresh call
+#: (a new attempt, so a new idempotency key), after these waits, before the
+#: run stops. The shared client never retries it -- the call reached the
+#: provider and may already be settled -- so the broken call can cost once
+#: more; stopping a whole session for a dropped connection costs the user far
+#: more (2026-11-24: "connection to AI gateway dropped, had to resume").
+INTERRUPTED_RETRIES = 2
+INTERRUPTED_WAIT_S = (2.0, 10.0)
 FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
 KEPT_OPEN = ("paused", "waiting_for_user")
@@ -122,26 +131,39 @@ DEFAULT_MAX_TOKENS = 16_000
 #: images in context) then emit nothing else until max_tokens -- minutes and
 #: thousands of tokens. JSON's own indentation never runs this long.
 RUNAWAY_BLANK = 256
+#: Characters of answer text after which a packet's reply is cut off. Every
+#: valid packet answer so far is under ~2,800 tokens (~11,000 characters); a
+#: reply past this is going nowhere -- b015 LSP35766A's stain checks
+#: (2026-11-24) ran to the 16,000-token limit half the time, ~70 credits each,
+#: and were thrown away. Cutting it saves most of that spend.
+REPLY_CHAR_CAP = 20_000
 
 
 class _Runaway(Exception):
-    def __init__(self, text: str):
-        super().__init__("the reply ran on in blank space")
+    def __init__(self, text: str, why: str = "blank"):
+        super().__init__("the reply ran on in blank space" if why == "blank"
+                         else f"the reply ran past {REPLY_CHAR_CAP} characters")
         self.text = text
+        self.why = why
 
 
 def _runaway_guard():
-    """An `on_delta` that stops a reply once it has run RUNAWAY_BLANK blank characters."""
+    """An `on_delta` that stops a reply once it has run RUNAWAY_BLANK blank
+    characters, or REPLY_CHAR_CAP characters in all."""
     seen: list[str] = []
     blank = 0
+    total = 0
 
     def on_delta(piece: str) -> None:
-        nonlocal blank
+        nonlocal blank, total
         seen.append(piece)
+        total += len(piece)
         stripped = piece.rstrip()
         blank = blank + len(piece) if not stripped else len(piece) - len(stripped)
         if blank >= RUNAWAY_BLANK:
             raise _Runaway("".join(seen))
+        if total >= REPLY_CHAR_CAP:
+            raise _Runaway("".join(seen), why="long")
     return on_delta
 
 
@@ -580,6 +602,10 @@ class DecisionRun:
         self.units = 0
         self.peak_outstanding = 0
         self.reissued = 0
+        #: What the session's earlier runs spent and answered, when this one
+        #: resumes it (`_count_prior`): the panel shows the session's total.
+        self.prior_micro = 0
+        self.prior_packets = 0
         # Lanes share the counters above; a refusal in one stops them all.
         self._lock = threading.Lock()
         self._halt: Exception | None = None
@@ -620,11 +646,36 @@ class DecisionRun:
                        "workflow": self.wf.name, "project": self.o.project, **fields})
 
     def usage(self) -> dict:
-        """What the run has spent so far, for a progress line."""
+        """What the run has spent so far, for a progress line; `session_*`
+        adds what the session's earlier runs spent (it was resumed), which is
+        what the panel shows -- a resume must not read as a fresh start."""
         return {"packets": self.packets, "model_calls": self.seq, "charged_micro": self.charged,
                 "charged_credits": round(self.charged / 10_000, 2),
+                "session_packets": self.prior_packets + self.packets,
+                "session_charged_micro": self.prior_micro + self.charged,
+                "session_charged_credits": round((self.prior_micro + self.charged) / 10_000, 2),
                 "cache_read_share": round(self.monitor.read_share(), 4), "workers": self.workers,
                 "invalid_answers": self.invalid}
+
+    def _count_prior(self) -> None:
+        """What the session's earlier runs spent and answered: each run's
+        settled charge where it finished with one, else its calls' (a run cut
+        off by a restart has no summary). Best effort: a count for display."""
+        import json
+
+        micro, packets = 0, 0
+        try:
+            for row in self.trace.runs(limit=1000):
+                if row.get("session_id") != self.session_id or row.get("run_id") == self.run_id:
+                    continue
+                report = self.trace.cache_report(row["run_id"])
+                summary = json.loads(row.get("summary_json") or "null") or {}
+                micro += int(summary.get("charged_micro") or report.get("charged_micro") or 0)
+                packets += int(summary.get("packets") or report.get("packets") or 0)
+        except Exception:                 # noqa: BLE001 -- the trace never breaks a run
+            log.warning("could not total session %s's earlier runs", self.session_id, exc_info=True)
+            return
+        self.prior_micro, self.prior_packets = micro, packets
 
     @property
     def worker(self) -> _Worker:
@@ -763,9 +814,10 @@ class DecisionRun:
             # Resuming is the user's ask to go on: a pause the harness put on
             # the session (for credit) is lifted before the next packet.
             self._invoke(self.wf.STATUS, {"session_id": self.session_id, "pause": False})
+            self._count_prior()
             if self.o.declare_run:
                 self.gateway_run = self._open_gateway_run()
-            self._emit("resumed", run=(self.gateway_run or {}).get("run_id"))
+            self._emit("resumed", run=(self.gateway_run or {}).get("run_id"), usage=self.usage())
             return self._next(self.lanes[0])
         # What is the user's or the values' to say comes first, before any
         # model is called -- the note's interpreter, the matrix reader and the
@@ -1209,14 +1261,16 @@ class DecisionRun:
                        retry_after=exc.retry_after, message=str(exc)[:200])
 
         try:
-            response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
-                                             on_delta=_runaway_guard(), on_retry=on_retry)
+            response = self._send(request, pid, n, on_retry)
         except _Runaway as exc:
             # Cut off: the gateway settles what was streamed (it is on the
             # account, not in this trace), and the answer is graded invalid.
-            log.warning("%s run %s: the answer to %s ran on in blank space; cut off after %d characters",
-                        self.wf.name, self.run_id, pid, len(exc.text))
-            response = ModelResponse(text=exc.text.rstrip(), stop_reason="runaway", usage=Usage())
+            log.warning("%s run %s: the answer to %s %s; cut off after %d characters (it began %r, "
+                        "ended %r)", self.wf.name, self.run_id, pid, exc, len(exc.text),
+                        exc.text[:200], exc.text[-200:])
+            response = ModelResponse(text=exc.text.rstrip(),
+                                     stop_reason="runaway" if exc.why == "blank" else "runaway_long",
+                                     usage=Usage())
         finally:
             if lane.on_first_call is not None:
                 # The prefix is in the provider's cache now (or the call
@@ -1237,15 +1291,51 @@ class DecisionRun:
             seq = self.seq
         return response, verdict, seq
 
+    def _send(self, request, pid: str, n: int, on_retry):
+        """`gateway.messages`, asked again when the stream breaks mid-answer
+        (`INTERRUPTED_RETRIES`), each time as a new attempt of the packet."""
+        for tries in range(INTERRUPTED_RETRIES + 1):
+            try:
+                return self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
+                                             on_delta=_runaway_guard(), on_retry=on_retry)
+            except GatewayError as exc:
+                if exc.code != "interrupted" or tries >= INTERRUPTED_RETRIES:
+                    raise
+                wait = INTERRUPTED_WAIT_S[min(tries, len(INTERRUPTED_WAIT_S) - 1)]
+                log.warning("%s run %s: the answer to %s broke off (%s); asking again in %.0f s",
+                            self.wf.name, self.run_id, pid, exc, wait)
+                self._emit("retry", packet_id=pid, attempt=tries + 1, code=exc.code,
+                           retry_after=wait, message=str(exc)[:200])
+                _work.wait(wait)
+                self.check()
+                with self._lock:
+                    n = self.attempts[pid] = self.attempts.get(pid, 0) + 1
+                request = replace(request, context={**(request.context or {}), "attempt": min(n, 99)})
+        raise AssertionError("unreachable")
+
     def _validate(self, packet: dict, response) -> tuple[dict | None, str | None]:
         from pydantic import TypeAdapter, ValidationError
 
         if response.stop_reason == "runaway":
             return None, ("the reply stalled in blank space and was cut off; write the whole JSON "
                           "object without extra whitespace")
+        if response.stop_reason == "runaway_long":
+            return None, (f"the reply ran past {REPLY_CHAR_CAP} characters and was cut off; answer "
+                          "with only the short JSON object the schema asks for")
         try:
             answer = response.json()
         except ValueError:
+            if response.stop_reason == "max_tokens":
+                # Why it ran out says what to do: no text at all is reasoning
+                # that used the whole budget; text is an answer that ran on.
+                # Both go to the trace and to the repair turn, in words the
+                # model can act on.
+                if not (response.text or "").strip():
+                    return None, ("the reply hit the output limit before any answer was written "
+                                  "(the reasoning used it all); reason briefly, then give the JSON "
+                                  "object")
+                return None, ("the reply hit the output limit before the JSON object was finished; "
+                              "answer with only the short JSON object the schema asks for")
             return None, "the reply was not JSON"
         if not isinstance(answer, dict):
             return None, "the reply was not a JSON object"
@@ -1310,9 +1400,11 @@ class DecisionRun:
                             problem=problem[:300] if problem else None)
             if problem is not None:
                 # The trace keeps only valid=0; this says why, and how the reply began.
-                log.warning("%s run %s: %s answer to %s rejected (%s); the reply began %r",
+                log.warning("%s run %s: %s answer to %s rejected (%s; stop %s, %s output tokens); "
+                            "the reply began %r and ended %r",
                             self.wf.name, self.run_id, packet.get("kind"), packet.get("packet_id"),
-                            problem, (response.text or "")[:300])
+                            problem, response.stop_reason, response.usage.output_tokens,
+                            (response.text or "")[:300], (response.text or "")[-300:])
             else:
                 submitted = self._submit(packet, answer, lane)
                 problem = _refusal(submitted)

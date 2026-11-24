@@ -826,20 +826,25 @@ def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path)
 
 @pytest.mark.pro
 def test_an_answer_cut_off_mid_stream_stops_the_run_resumably(hard, tmp_path, monkeypatch):
-    """The gateway accepts a call and then goes silent: the run stops on
-    `interrupted` with the reason for the viewer, not on a bare TimeoutError,
-    and a resume finishes the session."""
+    """The gateway accepts a call and then goes silent, every time it is asked
+    again (`decision.INTERRUPTED_RETRIES` retries, then one more): the run
+    stops on `interrupted` with the reason for the viewer, not on a bare
+    TimeoutError, and a resume finishes the session. (A single break is
+    asked again and the run goes on: test_a_stream_that_breaks_mid_answer_...)"""
     from spatialagents import gateway as agent_gateway
 
+    from plexora.ai.harness import decision
+
     monkeypatch.setattr(agent_gateway, "CALL_TIMEOUT", 2)
+    monkeypatch.setattr(decision, "INTERRUPTED_WAIT_S", (0.0, 0.0))
     with FakeGateway(oracle_brain(hard)) as gateway:
         trace = TraceStore(tmp_path / "trace.sqlite")
         original = gateway._messages
-        cut = threading.Event()
+        cuts = {"n": 0}
 
         def silent_after_two(handler, body):
-            if len(gateway.calls) >= 2 and not cut.is_set():
-                cut.set()
+            if len(gateway.calls) >= 2 and cuts["n"] <= decision.INTERRUPTED_RETRIES:
+                cuts["n"] += 1
                 handler.send_response(200)
                 handler.send_header("Content-Type", "text/event-stream")
                 handler.end_headers()
@@ -1214,3 +1219,105 @@ def test_a_session_another_run_is_answering_is_not_resumed_twice(tmp_path):
         # Released: the session is free again, and the refused run held nothing.
         assert decision._claim_session("gs_busy", "air_third") is None
         decision._release_session("gs_busy", "air_third")
+
+
+def test_a_stream_that_breaks_mid_answer_is_asked_again_before_the_run_stops(monkeypatch):
+    """A dropped connection (`interrupted`) used to stop the session and wait
+    for the user's Resume. It is asked again -- each try a new attempt, so a
+    new idempotency key -- and only a third break in a row stops the run."""
+    from plexora.ai.harness import decision
+
+    monkeypatch.setattr(decision, "INTERRUPTED_WAIT_S", (0.0, 0.0))
+    monkeypatch.setattr(decision._work, "wait", lambda seconds: None)
+
+    class Flaky:
+        def __init__(self, breaks):
+            self.breaks, self.keys = breaks, []
+
+        def messages(self, request, *, idempotency_key, on_delta=None, on_retry=None):
+            self.keys.append((idempotency_key, request.context.get("attempt")))
+            if len(self.keys) <= self.breaks:
+                raise GatewayError("The connection to the gateway broke mid-answer.", code="interrupted")
+            return "answer"
+
+    def run_with(gateway):
+        run = object.__new__(GatingRun)
+        run.gateway, run.run_id, run.wf = gateway, "air_t", decision.GATING
+        run.attempts, run._lock, run.check = {"pk_1": 1}, threading.Lock(), (lambda: None)
+        run.events = []
+        run._emit = lambda event, **fields: run.events.append((event, fields))
+        return run
+
+    from spatialagents.wire import ModelRequest
+
+    request = ModelRequest(capability="c", system=[], messages=[], max_tokens=10,
+                           context={"attempt": 1})
+    twice = Flaky(2)
+    run = run_with(twice)
+    assert run._send(request, "pk_1", 1, None) == "answer"
+    assert [k for k, _ in twice.keys] == ["air_t.pk_1.1", "air_t.pk_1.2", "air_t.pk_1.3"]
+    assert [a for _, a in twice.keys] == [1, 2, 3]
+    assert [e for e, _ in run.events] == ["retry", "retry"]
+    # A third break in a row, or any other refusal, stops the run as before.
+    with pytest.raises(GatewayError):
+        run_with(Flaky(3))._send(request, "pk_1", 1, None)
+
+    class Broke(Flaky):
+        def messages(self, request, **kwargs):
+            raise GatewayError("no credit", code="insufficient_credits")
+    with pytest.raises(GatewayError) as refused:
+        run_with(Broke(0))._send(request, "pk_1", 1, None)
+    assert refused.value.code == "insufficient_credits"
+
+
+def test_a_stain_reading_is_two_words_and_a_sentence_yet_old_readings_still_read():
+    """b015 LSP35766A (2026-11-24): with `expectation` and `observed` in the
+    answer, half the stain readings ran to the 16,000-token limit. The schema
+    the model is sent asks for structure, verdict and why only; a stored or
+    bench reading that has the other two is still taken (and clipped)."""
+    from plexora.ai.harness.decision import WORKFLOWS
+    from plexora.plugins.gating.server.autogate.answers import StainCheckAnswer as GatingStain
+    from plexora.plugins.qc.server.answers import StainCheckAnswer as QCStain
+    from plexora.plugins.qc.server.stain import QUESTION
+
+    for workflow, task in (("qc", "qc.stain_check"), ("gating", "gating.stain_reader")):
+        sent = WORKFLOWS[workflow].schema_for("stain_check", task, {"kind": "stain_check"})
+        assert "expectation" not in sent["properties"] and "observed" not in sent["properties"]
+        assert set(sent["required"]) == {"structure", "verdict", "why"}
+    for model in (QCStain, GatingStain):
+        old = model.model_validate({"kind": "stain_check", "expectation": "x" * 500, "observed": "seen",
+                                    "structure": "yes", "verdict": "real", "why": "Clear."})
+        assert len(old.expectation) == 300 and old.observed == "seen"
+        new = model.model_validate({"kind": "stain_check", "structure": "no", "verdict": "failed",
+                                    "why": "Haze."})
+        assert new.expectation == "" and new.observed == ""
+    assert "(`expectation`)" not in QUESTION and "`why` (one sentence) only" in QUESTION
+
+
+def test_a_reply_that_runs_on_is_cut_and_one_out_of_budget_says_why():
+    """A reply past REPLY_CHAR_CAP characters is cut off rather than paid to
+    the output limit; one that hit the limit says whether any answer text was
+    written (reasoning that used the budget) -- in the trace and to the model."""
+    from spatialagents.wire import ModelResponse
+
+    from plexora.ai.harness import decision
+
+    guard = decision._runaway_guard()
+    with pytest.raises(decision._Runaway) as cut:
+        for _ in range(decision.REPLY_CHAR_CAP // 100 + 1):
+            guard('{"why": "' + "a" * 91 + '"')
+    assert cut.value.why == "long" and len(cut.value.text) >= decision.REPLY_CHAR_CAP
+    short = decision._runaway_guard()
+    short('{"kind": "stain_check", "verdict": "real"}')      # an answer is never cut
+
+    run = object.__new__(GatingRun)
+    packet = {"kind": "stain_check", "packet_id": "pk_1"}
+    _, long = run._validate(packet, ModelResponse(text="{...", stop_reason="runaway_long", usage=Usage()))
+    assert "ran past" in long
+    _, thought = run._validate(packet, ModelResponse(text="", stop_reason="max_tokens", usage=Usage()))
+    assert "before any answer was written" in thought and "reason briefly" in thought
+    _, ran = run._validate(packet, ModelResponse(text='{"why": "aaaa', stop_reason="max_tokens",
+                                                 usage=Usage()))
+    assert "before the JSON object was finished" in ran
+    _, other = run._validate(packet, ModelResponse(text="no", stop_reason="end_turn", usage=Usage()))
+    assert other == "the reply was not JSON"
