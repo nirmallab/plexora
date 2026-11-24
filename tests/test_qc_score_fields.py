@@ -59,6 +59,45 @@ def test_regions_are_the_flagged_cells_largest_first_with_their_denominator():
     assert score_fields.regions(field, 0.5, min_cells=10)["n_regions"] == 1
 
 
+def test_a_region_of_scattered_fragments_is_an_outline_the_roi_rule_takes():
+    """Registration joins fragments a cell or two apart into one region; 1,225
+    isolated cells used to make a MultiPolygon the ROI rule refused ("more
+    than 1000 polygons"), which stopped a whole QC run. The outline is joined
+    until it fits, and still covers every flagged cell."""
+    from shapely.geometry import Point, shape
+
+    from plexora.plugins.qc.server import score_fields
+    from plexora.plugins.roi.server import geometry as roi_geometry
+
+    values = np.zeros((70, 70))
+    values[::2, ::2] = 0.9
+    field = _field(values, check="registration")
+    found = score_fields.regions(field, 0.5, min_cells=1)
+    assert found["n_regions"] == 1
+    region = found["regions"][0]
+    assert region["cells"] == 35 * 35
+    geometry = region["geometry"]
+    roi_geometry.validate_geometry(geometry)  # raises if refused
+    parts = geometry["coordinates"] if geometry["type"] == "MultiPolygon" \
+        else [geometry["coordinates"]]
+    assert len(parts) <= roi_geometry.MAX_POLYGONS
+    outline = shape(geometry)
+    ys, xs = np.nonzero(found["mask"])
+    assert all(outline.contains(Point((x + 0.5) * 10.0, (y + 0.5) * 10.0))
+               for y, x in zip(ys, xs))
+
+
+def test_an_outline_that_fits_is_not_joined():
+    """Two separate blocks stay two parts: joining is only for an outline the
+    ROI rule would refuse."""
+    from plexora.plugins.qc.server import polygons
+    from shapely.geometry import box
+
+    shape_ = box(0, 0, 100, 100).union(box(300, 0, 400, 100))
+    geometry = polygons.to_geojson(shape_, simplify_px=3.5)
+    assert geometry["type"] == "MultiPolygon" and len(geometry["coordinates"]) == 2
+
+
 def test_strata_sample_across_the_distribution_deterministically_and_spaced():
     from plexora.plugins.qc.server import score_fields
 
