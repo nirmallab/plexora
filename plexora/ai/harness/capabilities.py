@@ -89,8 +89,7 @@ class RunInput(AgentModel):
     kind: Literal["gating", "contrast", "qc", "qc_gating"] = Field(
         description="gating: Auto Gating of the markers; contrast: how bright each marker is "
                     "drawn, no gating; qc: AutoQC of the image; qc_gating: AutoQC, then Auto "
-                    "Gating once QC is done -- gating reuses QC's stain verdicts and leaves out "
-                    "the cells QC flagged.")
+                    "Gating on QC's stain verdicts and the cells QC kept.")
     project: str
     markers: list[str] | None = Field(None, max_length=200, description="gating, contrast: the "
                                       "markers (default: every marker of the table).")

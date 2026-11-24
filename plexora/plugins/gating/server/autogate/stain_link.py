@@ -111,7 +111,7 @@ def prepare(call, project, marker, options, found) -> dict | None:
     packet = _invoke(call, "qc.stain_packet",
                      {"project": project, "channel": marker,
                       **({"sample": options["_stain_sample"]}
-                         if options.get("_stain_sample") else {})},
+                         if options["_stain_sample"] else {})},
                      f"stain.{project}.{marker}")
     if not packet or not packet.get("picture"):
         return None
