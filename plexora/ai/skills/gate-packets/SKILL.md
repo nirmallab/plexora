@@ -23,10 +23,9 @@ A session `gating_session_status` finds.
    brief's number (default {{ENGINE.markers_per_worker}}); a brief with
    `reader` (plus `tasks` or `parallel`): pass them on every call, count
    packets.
-2. `gating_next`; per packet `gating_answer` with `model` (your model). Every
-   row, interval or numbered cell gets a word (`cell_panel`: no gate, value or
-   direction is shown or asked). Each answer field's description is part
-   of the rule.
+2. `gating_next`; per packet `gating_answer` with `model` (yours). Every row,
+   interval or numbered cell gets a word (`cell_panel`: no gate, value or
+   direction is shown or asked). Each answer field's description is a rule.
 3. Stop without answering on `decided`, `waiting_for_user`, `paused`,
    `stopped`, `other_tasks`. `bulk_running`, `busy`: `gating_next` again.
 
@@ -36,15 +35,15 @@ A session `gating_session_status` finds.
 
 ## Evidence
 
-Cite the `artifact_id` a judgment rested on.
+Cite the `artifact_id` a judgment rests on.
 
 ## Uncertainty
 
-`cannot_tell` or `unsure` beats a guess: a wrong word costs more.
+`cannot_tell` or `unsure` beats a guess.
 
 ## Mutation policy
 
-Never start, finish, reset or roll back the session, or ask the user.
+Never start, finish, reset or roll back a session, or ask the user.
 
 ## Provenance
 
@@ -52,10 +51,11 @@ Your lines are the coordinator's record.
 
 ## Done when
 
-Stopped. Reply one line per marker closed meanwhile, from its `outcome`:
-`marker | state | gate | confidence | why (artifact ids)`, then
-`units_done/units_total | session state | requests`; on `other_tasks`, last
-`other_tasks <needs.task>`. Nothing else.
+Stopped. Reply a line per marker closed, from its `outcome`:
+`marker | state | gate | confidence | why (artifact ids)`; per other packet
+answered: `packet_id | kind | marker`; then
+`units_done/units_total | session state | requests` (or `none`); on
+`other_tasks`, last `other_tasks <needs.task>`. Nothing else.
 
 ## Failure modes
 

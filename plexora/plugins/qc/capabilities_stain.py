@@ -30,6 +30,8 @@ class StainPacketInput(ProjectInput):
     channel: str = Field(description="The marker channel whose stain picture is wanted.")
     picture: str | None = Field(None, description="A picture drawn before (its artifact id): "
                                 "reused when still stored.")
+    sample: str | None = Field(None, max_length=600, description="The sample's tissue and "
+                               "disease in the user's words, shown to the reader.")
 
 
 class StainReading(AgentModel):
@@ -61,22 +63,23 @@ def _context(session, project):
     return names, nuclear, checked
 
 
-def _partner(names, channel, nuclear):
+def _partner(names, channel, nuclear, overrides=None):
     from plexora.plugins.qc.server import stain
 
     try:
-        return stain.partner(names, channel, exclude=nuclear)
+        return stain.partner(names, channel, exclude=nuclear, overrides=overrides)
     except Exception:  # noqa: BLE001 -- a partner is a help, never required
         return None, None
 
 
 def stain_get(call, inp):
     """Every stored stain verdict that can be reused now, per channel."""
-    from plexora.plugins.qc.server import stain_ledger
+    from plexora.plugins.qc.server import stain, stain_ledger
 
     names, nuclear, checked = _context(call.session, inp.project)
     wanted = [c for c in (inp.channels or checked) if c in checked]
-    partners = {c: _partner(names, c, nuclear)[0] for c in wanted}
+    overrides = stain.user_overrides(call, inp.project) if wanted else {}
+    partners = {c: _partner(names, c, nuclear, overrides)[0] for c in wanted}
     found = stain_ledger.lookup(call.session, inp.project, wanted, nuclear=nuclear,
                                 partners=partners) if wanted else {}
     return {"project": inp.project, "available": bool(nuclear), "checked": checked,
@@ -95,9 +98,11 @@ def stain_packet(call, inp):
         raise AgentError("invalid_input", f"{inp.channel!r} is not a marker channel the stain "
                          "check reads" + ("" if nuclear else " (no DNA channel is "
                                           "recognisable by name)"))
-    partner, words = _partner(names, inp.channel, nuclear)
+    overrides = stain.user_overrides(call, inp.project)
+    partner, words = _partner(names, inp.channel, nuclear, overrides)
     parts = stain.packet_parts(call.session, inp.project, inp.channel, partner_name=partner,
-                               partner_words=words, picture=inp.picture)
+                               partner_words=words, picture=inp.picture, sample=inp.sample,
+                               overrides=overrides)
     parts.pop("png", None)
     return {**parts, "partner": partner, "partner_words": words, "reading": stain.READING}
 

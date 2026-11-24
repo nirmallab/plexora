@@ -1118,11 +1118,16 @@ class QCEngine(BaseEngine):
             if unit.get("check") == "visual" and unit["state"] == "awaiting_visual_scan":
                 return "visual_scan", [unit]
         # Low quality staining: one picture per marker, in channel order; a
-        # picture read as failed goes out again to a second, blind reader.
+        # picture read as failed goes out again to a second, blind reader --
+        # after every first reading, then every second before a third. Each
+        # reading is a worker of its own: interleaved, a re-read started a
+        # fresh worker for one packet after every failed stain
+        # (lsp35766_p193_2, 2026-11-23: 1-3 packets per worker, quota 8).
         for unit in sorted((u for u in self.units_of("check", project)
                             if u.get("check") == "stain"
                             and u["state"] == "awaiting_stain_check"),
-                           key=lambda u: (order.get(u.get("channel"), 0), u["id"])):
+                           key=lambda u: (int(u.get("stain_read") or 1),
+                                          order.get(u.get("channel"), 0), u["id"])):
             return "stain_check", [unit]
         candidates = sorted(self.units_of("candidate", project),
                             key=lambda u: (order.get(u.get("audit_channel"), 0),

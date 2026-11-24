@@ -79,8 +79,39 @@ def checked_channels(names, nuclear=()) -> list:
     return out
 
 
-def _panel(names):
-    """{panel name: (canonical, vocabulary entry)} and {canonical: [names]}."""
+#: The panel-context fields a user's override of a marker may set (gating's
+#: `set_panel_context`, source `user`).
+OVERRIDE_FIELDS = ("role", "compartment", "lineage", "binary", "partners", "caveats",
+                   "expected_fraction", "morphology", "expression")
+
+
+def user_overrides(call, project) -> dict:
+    """{panel name: entry} the user set in the panel context (gating's
+    `get_panel_context`, entries of source `user`), or {} when gating is not
+    installed or says nothing. The user's word about a marker outranks the
+    vocabulary here as in gating: lsp35766_p193_2's "Rb" reads as phospho-RB,
+    whose partner is Ki-67, though the vocabulary resolves the name to total
+    RB, which has none."""
+    from plexora.agent import registry
+
+    if not any(c.name == "gating.get_panel_context" for c in registry.all_capabilities()):
+        return {}
+    try:
+        out = registry.invoke(call.session, "gating.get_panel_context", {"project": project},
+                              policy=call.policy, audit=call.audit, link=call.link,
+                              operation_id=f"{call.operation_id}.panel_context")
+    except Exception:  # noqa: BLE001 -- the user's entries are a help, never required
+        return {}
+    if not out.get("ok"):
+        return {}
+    entries = (out.get("result") or {}).get("entries") or {}
+    return {m: e for m, e in entries.items() if (e or {}).get("source") == "user"}
+
+
+def _panel(names, overrides=None):
+    """{panel name: (canonical, vocabulary entry)} and {canonical: [names]},
+    the user's `overrides` laid over the vocabulary's entries (their
+    partners, named by panel name, turned into the vocabulary's names)."""
     from plexora.ai import vocabulary
 
     entries = vocabulary.load()["entries"]
@@ -90,6 +121,24 @@ def _panel(names):
         if canonical:
             info[name] = (canonical, entries.get(canonical) or {})
             by_canonical.setdefault(canonical, []).append(name)
+    for name, fields in (overrides or {}).items():
+        if name not in resolved:
+            continue
+        canonical = resolved.get(name) or name
+        entry = dict(info.get(name, (None, {}))[1])
+        for key in OVERRIDE_FIELDS:
+            if fields.get(key) is not None:
+                entry[key] = fields[key]
+        if fields.get("partners") is not None:
+            entry["partners"] = [{**p, "marker": resolved.get(p.get("marker")) or p.get("marker")}
+                                 for p in fields["partners"] if p.get("marker")]
+            for p in fields["partners"]:
+                other = p.get("marker")
+                if other in resolved and not resolved.get(other):
+                    by_canonical.setdefault(other, []).append(other)
+        info[name] = (canonical, entry)
+        if name not in by_canonical.setdefault(canonical, []):
+            by_canonical[canonical].append(name)
     return info, by_canonical
 
 
@@ -124,7 +173,7 @@ def _unique(cands):
     return out
 
 
-def partner(names, marker, exclude=()) -> tuple:
+def partner(names, marker, exclude=(), overrides=None) -> tuple:
     """(partner, words) for row E, or (None, None). Only the marker graph
     decides. The CARRIERS -- the populations the marker's cells sit in -- come
     first: its forward `subset` / `coexpressed` partners (strongest first), a
@@ -137,7 +186,7 @@ def partner(names, marker, exclude=()) -> tuple:
     never a state readout (`STATE_ROLES`): FOXP3 says nothing of where CD4's
     cells are."""
     exclude = set(exclude or ()) | {marker}
-    info, by_canonical = _panel(names)
+    info, by_canonical = _panel(names, overrides)
     stated = {n: _stated(info, by_canonical, n) for n in info}
     own = [s for s in stated.get(marker, []) if s[0] not in exclude]
     carriers = []
@@ -172,21 +221,39 @@ def partner(names, marker, exclude=()) -> tuple:
     return (specific or pool)[0]
 
 
-def note(names, marker) -> dict:
+#: What a reader is told of a marker the vocabulary says is not binary: one
+#: peak is its shape, not a failure (lsp35766_p193_2 Rb, 2026-11-23: two blind
+#: readers called a working stain failed for want of a positive population).
+NOT_BINARY = ("not binary: its level varies continuously between cells, so there may be no "
+              "positive population standing apart and one peak is expected. Judge whether "
+              "the stain sits in its compartment and follows the cells it should (brighter "
+              "in some than others), not whether a bright subset exists")
+
+
+def note(names, marker, overrides=None) -> dict:
     """What the vocabulary says of how the marker is expressed (compartment,
-    lineage, expression, morphology), for the reader's expectation."""
-    info, _ = _panel(names)
-    _canonical, entry = info.get(marker, (None, {}))
-    return {k: entry.get(k) for k in ("compartment", "lineage", "expression", "morphology")
-            if entry.get(k)}
+    lineage, expression, morphology), for the reader's expectation; `shape`
+    when it is not binary (`NOT_BINARY`), `unknown` when the vocabulary does
+    not know the name."""
+    info, _ = _panel(names, overrides)
+    canonical, entry = info.get(marker, (None, {}))
+    out = {k: entry.get(k) for k in ("compartment", "lineage", "expression", "morphology")
+           if entry.get(k)}
+    if canonical is None:
+        out["unknown"] = ("the marker graph does not know this name: write the expectation "
+                          "from the name alone, and say so")
+    elif entry.get("binary") is False:
+        out["shape"] = NOT_BINARY
+    return out
 
 
-def evidence(names, marker, project, manifest) -> dict:
+def evidence(names, marker, project, manifest, *, sample=None, overrides=None) -> dict:
     """A stain packet's evidence beside its picture's `manifest`: the
     packet builder's and the stain bench's (`plexora.ai.stain_bench`), so
     the bench reads what a session sends."""
     return {"marker": marker, "project": project,
-            "expression": note(names, marker),
+            **({"sample": sample} if sample else {}),
+            "expression": note(names, marker, overrides),
             "partner": manifest.get("partner"),
             "partner_relation": manifest.get("partner_words"),
             "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um")}
@@ -555,7 +622,7 @@ def render(session, project, channel, *, partner_name=None, partner_words=None,
 
 
 def packet_parts(session, project, channel, *, partner_name=None, partner_words=None,
-                 picture=None) -> dict:
+                 picture=None, sample=None, overrides=None) -> dict:
     """What any reader of `channel`'s stain is shown, whoever asks (QC's
     session or automatic gating): the question, the evidence, the stored
     picture (drawn now when `picture` is missing or swept) and its manifest.
@@ -576,7 +643,8 @@ def packet_parts(session, project, channel, *, partner_name=None, partner_words=
         png, manifest = rendered["image"], rendered["manifest"]
     names = [c.get("fullname") or c.get("name")
              for c in session.project(project).image.real_channels]
-    evidence = {"marker": channel, "project": project, "expression": note(names, channel),
+    evidence = {"marker": channel, "project": project, **({"sample": sample} if sample else {}),
+                "expression": note(names, channel, overrides),
                 "partner": manifest.get("partner"),
                 "partner_relation": manifest.get("partner_words"),
                 "field_um": manifest.get("field_um"), "cells_um": manifest.get("cells_um")}

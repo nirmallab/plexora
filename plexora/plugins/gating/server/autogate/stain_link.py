@@ -80,6 +80,13 @@ def _invoke(call, name, args, suffix):
     return out.get("result")
 
 
+def sample_words(biology) -> str | None:
+    """The session's biology as the stain reader is shown it ('large
+    intestine; colorectal cancer'), or None."""
+    said = (biology or {}).get("said") or {}
+    return "; ".join(str(said[k]) for k in ("tissue", "disease", "notes") if said.get(k)) or None
+
+
 def fetch(call, project, options) -> dict | None:
     """The image's stored verdicts (`qc.stain_get`): {available, checked,
     channels}, or None when the stain check is off or QC is not installed."""
@@ -101,7 +108,10 @@ def prepare(call, project, marker, options, found) -> dict | None:
                 "fresh": hit.get("fresh"), "picture": hit.get("picture"), "reused": True}
     if options["stain_check"] != "auto" or not options["_stain_reads"]:
         return None
-    packet = _invoke(call, "qc.stain_packet", {"project": project, "channel": marker},
+    packet = _invoke(call, "qc.stain_packet",
+                     {"project": project, "channel": marker,
+                      **({"sample": options["_stain_sample"]}
+                         if options.get("_stain_sample") else {})},
                      f"stain.{project}.{marker}")
     if not packet or not packet.get("picture"):
         return None
@@ -162,8 +172,10 @@ def defer_failure(engine, unit, close) -> bool:
     found = (engine.record.get("stain") or {}).get(unit["project"]) or {}
     if found.get("status") != "available":
         return False
+    sample = sample_words(engine.record.get("biology"))
     packet = _invoke(engine.call, "qc.stain_packet",
-                     {"project": unit["project"], "channel": unit["marker"]},
+                     {"project": unit["project"], "channel": unit["marker"],
+                      **({"sample": sample} if sample else {})},
                      f"stain.{unit['project']}.{unit['marker']}.before_failure")
     if not packet or not packet.get("picture"):
         return False

@@ -28,7 +28,8 @@ A session that exists (`qc_session_status` finds it).
    `model` is the model you run on, as your client names it. Its `next` is
    the next packet.
 3. Stop, without answering the packet in hand, when you answered the number
-   of packets in your brief (default {{QC_ENGINE.packets_per_worker}}), or the
+   of packets in your brief (default {{QC_ENGINE.packets_per_worker}}; count
+   every answer, and stop at the number even mid-batch), or the
    state is `decided`, `waiting_for_user`, `paused`, `stopped` or
    `other_tasks` (what is ready is another worker's -- or the coordinator's
    own visual pass, which no worker takes). `bulk_running` or
@@ -62,9 +63,10 @@ named; your lines are the coordinator's record.
 ## Done when
 
 You stopped (step three). Reply with one line per packet you answered:
-`packet_id | kind | verdict | why (artifact ids)`, then one line:
-`units_done/units_total | session state | requests, if any`. Stopped on
-`other_tasks`: add `other_tasks <needs.task>` as the last line. Nothing else.
+`packet_id | kind | verdict | why (artifact ids)`, then exactly one line:
+`units_done/units_total | session state | requests`, with `none` as the
+requests when nothing waits on the user. Stopped on `other_tasks`: add
+`other_tasks <needs.task>` as the last line. Nothing else: no prose.
 
 ## Failure modes
 
