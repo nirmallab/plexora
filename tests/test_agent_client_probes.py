@@ -71,6 +71,9 @@ PANEL_CHECKS = [
     "Plexora AI: the launcher shows the detected modality's tools only -- a multiplexed image with "
     "transcripts shows Multiplexed imaging (gating, QC) and no section for data with no tool; an "
     "H&E-only project shows no tool, says so, and asks the gateway for no estimate",
+    'Plexora AI: a session that stopped part-way is offered above the tools ("131 of 400 steps '
+    'done", why it stopped); Resume posts its resume_session for the open project, mirrored '
+    "into this tab, and the tools still start afresh",
     "Plexora AI: a run the balance cannot pay for is disabled and says what there is; a tool the "
     'project\'s data cannot run is left out; the balance reads "2,000 credits available"',
     "Plexora AI: coming back to the window asks for the balance again, so credits bought meanwhile "

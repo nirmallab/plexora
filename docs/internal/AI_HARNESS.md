@@ -190,9 +190,9 @@ data root, version, logger and task names (`cache_plan.py`, `trace.py`,
 | Capability | Route | What it does |
 |---|---|---|
 | `ai.run_session` (`execution="job"`) | `POST /ai/v1/runs` | Starts a gating or QC run of the project on a job, or resumes one with `resume_session`. Args: `kind`, `project`, `markers`/`channels`, `mode`, `resume_session`, `dev`, `model` (dev only), `units_per_worker`, `start_options`. Answers `{job_id, run_id}`. The run id is the job id's (`air_<hex>` for `job_<hex>`). |
-| `ai.run_status` | `GET /ai/v1/runs`, `GET /ai/v1/runs/<id>` | One run, by run id or job id: status, session, packets, credits charged, cache-read share, verdicts and the job's state. Without an id, the recent runs. |
+| `ai.run_status` | `GET /ai/v1/runs`, `GET /ai/v1/runs/<id>`, `GET /ai/v1/resumable?project=` | One run, by run id or job id: status, session, packets, credits charged, cache-read share, verdicts and the job's state. Without an id, the recent runs. With `project` and `resumable`, the project's sessions that stopped part-way (paused, failed, or cut off when Plexora closed) and are not finished: the newest session of each kind, with its progress, why it stopped and the `resume` arguments. A session a live job still drives is not listed. |
 | `ai.run_control` | `POST /ai/v1/runs/<id>/control` | `pause`, `resume` or `stop` the run's session through `sessions/control.py`, the viewer's own mechanism. |
-| `ai.balance` | `GET /ai/v1/balance` | The balance and price list from the gateway. With `project` (and optionally `kind`, `markers`/`channels`), the estimate a run would be quoted: units × the feature's credits per unit, and whether it is affordable. |
+| `ai.balance` | `GET /ai/v1/balance` | The balance and price list from the gateway. With `project` (and optionally `kind`, `markers`/`channels`), the estimate a run would be quoted: units × the feature's credits per unit, and whether it is affordable. The gateway's balance and prices are fetched side by side while the units are counted, and one estimate reads the project's table once. |
 
 - **Access.** All four capabilities need the `ai` entitlement.
   - The blueprint is guarded by `guards.guard_blueprint(ai_bp, "ai")`. Without a server token it answers loopback only, because a run spends the account's credit.
@@ -209,6 +209,7 @@ data root, version, logger and task names (`cache_plan.py`, `trace.py`,
   - The session card shows a usage line ("Plexora AI · 12 packets · 3.4 credits · 87% from cache").
   - A credit pause or a gateway error shows a card with two buttons, the limit card's pattern. Resume sends `POST /ai/v1/runs` with the event's `resume`. The other button is Add credits when the gateway gave a top-up page, and Not now otherwise.
   - The launcher has "Gate with Plexora AI" and "QC with Plexora AI". Each shows its estimate from `/ai/v1/balance` ("About 125 credits · 5 markers").
+  - Above the tools, "Continue where it stopped" lists what `/ai/v1/resumable` returns ("131 of 400 steps done · stopped 12 min ago", and why). Resume sends `POST /ai/v1/runs` with the entry's `resume`. Any tool below starts a new session instead.
   - A launcher button is disabled, with the reason shown, when the licence lacks AI, the project cannot run that kind, or the balance cannot pay.
   - A "Plexora AI" chip in the viewer corner opens the launcher. It appears only when the page's licence hint includes `ai`, so Free users see no chip. `PlexoraAgentPanel.openLauncher()` opens the launcher either way.
 

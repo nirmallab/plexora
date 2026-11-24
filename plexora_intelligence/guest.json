@@ -2764,6 +2764,15 @@
        "minimum": 1,
        "type": "integer"
       },
+      "project": {
+       "description": "With resumable: the project whose sessions to list.",
+       "type": "string"
+      },
+      "resumable": {
+       "default": false,
+       "description": "List the project's sessions that stopped part-way (paused, failed, or cut off by a restart) and can be picked up with ai_run_session(resume_session=...): the newest session of each kind, when it is not finished.",
+       "type": "boolean"
+      },
       "run_id": {
        "description": "A run id (air_...) or the job id that runs it (job_...). Omit to list the recent runs.",
        "type": "string"
@@ -2771,7 +2780,9 @@
      },
      "type": "object"
     },
-    "needs": [],
+    "needs": [
+     "image"
+    ],
     "permission": "read",
     "produces": [],
     "provider": "plexora",

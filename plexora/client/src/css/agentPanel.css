@@ -690,7 +690,8 @@
     margin: calc(-1 * var(--space-2)) 0 0;
 }
 
-.plx-ai-modality {
+.plx-ai-modality,
+.plx-ai-resume {
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
@@ -699,6 +700,7 @@
 }
 
 .plx-ai-modality[hidden],
+.plx-ai-resume[hidden],
 .plx-ai-tool[hidden],
 .plx-ai-none[hidden],
 .plx-ai-balance[hidden],

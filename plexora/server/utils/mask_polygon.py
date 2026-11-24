@@ -37,13 +37,11 @@ def polygonal(shape):
 
 
 def vertex_count(shape) -> int:
-    from shapely.geometry import MultiPolygon
+    """Positions across every ring of a (Multi)Polygon, closing ones
+    included -- what the ROI rule counts."""
+    import shapely
 
-    polygons = shape.geoms if isinstance(shape, MultiPolygon) else [shape]
-    total = 0
-    for polygon in polygons:
-        total += len(polygon.exterior.coords) + sum(len(r.coords) for r in polygon.interiors)
-    return total
+    return int(shapely.get_num_coordinates(shape))
 
 
 def _lists(value):

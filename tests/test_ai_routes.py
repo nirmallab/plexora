@@ -76,7 +76,8 @@ def _start(client, **body):
 
 def test_every_route_needs_the_ai_entitlement(client):
     for method, path in (("post", "/ai/v1/runs"), ("get", "/ai/v1/runs"), ("get", "/ai/v1/runs/air_x"),
-                         ("post", "/ai/v1/runs/air_x/control"), ("get", "/ai/v1/balance")):
+                         ("post", "/ai/v1/runs/air_x/control"), ("get", "/ai/v1/balance"),
+                         ("get", "/ai/v1/resumable?project=x")):
         answer = getattr(client, method)(path, json={} if method == "post" else None)
         assert answer.status_code == 403, (path, answer.status_code)
         body = answer.get_json()
@@ -208,6 +209,84 @@ def test_a_credit_pause_tells_the_tab_and_resumes_over_http(client, gateway):
     assert second["status"] == "done", second
     assert second["session_id"] == run["session_id"] and len(gateway.runs) == 1
     assert gateway.runs["run_1"]["status"] == "finished"
+
+
+@pytest.mark.pro
+def test_a_session_that_stopped_part_way_is_offered_back_until_it_is_finished(client, gateway):
+    """The launcher's "Continue where it stopped": a run that ended before its
+    session did (here a credit pause; equally Plexora closing mid-run) is
+    listed with what resumes it, and once resumed to the end, nothing is."""
+    assert client.get("/ai/v1/resumable?project=qcsynth").get_json()["resumable"] == []
+    original = gateway._messages
+
+    def broke_after_one(handler, body):
+        if len(gateway.calls) >= 1 and not getattr(gateway, "topped_up", False):
+            return handler._json(402, {"error": {"code": "insufficient_credits", "message": "top up"}})
+        return original(handler, body)
+    gateway._messages = broke_after_one
+    started = _start(client)
+    jobs.drain(240)
+    run = client.get(f"/ai/v1/runs/{started['run_id']}").get_json()
+    assert run["status"] == "paused", run
+
+    offered = client.get("/ai/v1/resumable?project=qcsynth").get_json()
+    assert offered["success"] and len(offered["resumable"]) == 1
+    entry = offered["resumable"][0]
+    assert entry["kind"] == "qc" and entry["session_id"] == run["session_id"]
+    assert entry["status"] == "paused" and entry["reason"] == "insufficient_credits"
+    assert entry["progress"]["units_total"] > 0
+    assert entry["resume"] == {"kind": "qc", "project": "qcsynth", "resume_session": run["session_id"]}
+    # A project that is not one, or none, is a refusal.
+    assert client.get("/ai/v1/resumable?project=elsewhere").status_code == 404
+    assert client.get("/ai/v1/resumable").status_code == 400
+
+    gateway.topped_up = True
+    resumed = _start(client, **entry["resume"])
+    jobs.drain(240)
+    assert client.get(f"/ai/v1/runs/{resumed['run_id']}").get_json()["status"] == "done"
+    assert client.get("/ai/v1/resumable?project=qcsynth").get_json()["resumable"] == []
+
+
+@pytest.mark.pro
+def test_a_run_cut_off_by_a_restart_is_offered_and_a_live_one_is_not(monkeypatch):
+    """A row left `running` is Plexora closing mid-run when its job is no
+    longer alive (offered, `interrupted`), and the agent panel's to show while
+    it is (not offered)."""
+    from plexora.ai.harness import capabilities as caps
+
+    rows = [{"run_id": "air_aaa", "kind": "gating", "project": "p", "session_id": "gs_1",
+             "status": "running", "started_at": 2.0, "finished_at": None, "summary_json": None}]
+
+    class Trace:
+        def runs(self, limit=20):
+            return rows
+
+    class Store:
+        def exists(self, session_id):
+            return True
+
+        def load(self, session_id):
+            return {"state": "deciding", "units": {"m1": {"state": "accepted"}, "m2": {"state": "pending"}}}
+
+        def control(self, session_id):
+            return {}
+
+    from plexora.plugins.gating.server.autogate import engine
+
+    monkeypatch.setattr(engine, "store", lambda: Store())
+    states = {"job_aaa": {"status": "interrupted",
+                          "error": {"message": "the process running this job stopped"}}}
+    monkeypatch.setattr(jobs, "store", lambda: type("J", (), {"get": lambda s, j: states.get(j)})())
+    offered = caps.resumable_sessions("p", trace=Trace())
+    assert [o["status"] for o in offered] == ["interrupted"]
+    assert offered[0]["progress"]["units_done"] == 1 and offered[0]["progress"]["units_total"] == 2
+    assert "stopped" in offered[0]["reason"]
+    states["job_aaa"] = {"status": "running"}
+    assert caps.resumable_sessions("p", trace=Trace()) == []
+    # A finished session is never offered, whatever its last run said.
+    states["job_aaa"] = {"status": "interrupted"}
+    monkeypatch.setattr(Store, "load", lambda self, s: {"state": "done", "units": {}})
+    assert caps.resumable_sessions("p", trace=Trace()) == []
 
 
 @pytest.mark.pro

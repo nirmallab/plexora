@@ -50,18 +50,133 @@ def shapely_of(mask, grid):
     return shapely.union_all(boxes)
 
 
+#: How many times the reach that joins fragments doubles before the largest
+#: parts are kept instead (`_joined`): from a pixel, 2**16 px spans any slide.
+JOIN_ROUNDS = 16
+
+
 def to_geojson(shape, *, simplify_px, max_vertices=MAX_VERTICES, min_area_px=0.0):
     """GeoJSON of a shapely (Multi)Polygon, simplified to `max_vertices` and
     validated by the ROI plugin's rule (the shared core helper does not
-    validate; QC does it here, at its boundary)."""
+    validate; QC does it here, at its boundary).
+
+    Simplifying cannot shrink a fragment below its four corners, so an
+    outline of many scattered pieces -- a registration region whose
+    fragments a cell or two apart are one place, a background of glass
+    specks -- can break the ROI rule's part, ring or vertex cap however hard
+    it is simplified. Such an outline has its gaps closed (`_joined`) until
+    it fits; one that fits is returned exactly as before."""
     from plexora.plugins.roi.server import geometry as roi_geometry
     from plexora.server.utils import mask_polygon
 
-    geojson = mask_polygon.to_geojson(shape, simplify_px=simplify_px,
-                                      max_vertices=max_vertices, min_area_px=min_area_px)
+    limit = max_vertices * 2
+    if _too_many_parts(shape, min_area_px, limit):
+        geojson = None  # no simplifying makes it fit: straight to joining
+    else:
+        geojson = mask_polygon.to_geojson(shape, simplify_px=simplify_px,
+                                          max_vertices=max_vertices, min_area_px=min_area_px)
+        if geojson is None:
+            return None
+    if geojson is None or not _fits(geojson, limit):
+        geojson = _joined(shape, simplify_px=simplify_px, max_vertices=max_vertices,
+                          min_area_px=min_area_px, limit=limit)
+        if geojson is None:
+            return None
+    return roi_geometry.validate_geometry(geojson, max_vertices=limit)
+
+
+def _fits(geojson, limit) -> bool:
+    """Whether the ROI plugin's rule takes `geojson` as it stands: parts,
+    rings per part, and positions across every ring (`validate_geometry`)."""
+    from plexora.plugins.roi.server import geometry as roi_geometry
+
+    polygons_ = geojson["coordinates"] if geojson["type"] == "MultiPolygon" \
+        else [geojson["coordinates"]]
+    if len(polygons_) > roi_geometry.MAX_POLYGONS:
+        return False
+    if any(len(rings) > roi_geometry.MAX_RINGS for rings in polygons_):
+        return False
+    return sum(len(ring) for rings in polygons_ for ring in rings) <= limit
+
+
+def _too_many_parts(shape, min_area_px, limit) -> bool:
+    """Whether `shape` keeps more parts than the ROI rule allows, or more
+    than its positions allow at four corners each -- simplifying cannot
+    help either."""
+    import shapely
+
+    from plexora.plugins.roi.server import geometry as roi_geometry
+
+    if shape is None or shape.is_empty:
+        return False
+    parts = shapely.get_parts(shape)
+    kept = int((shapely.area(parts) > float(min_area_px)).sum())
+    return kept > roi_geometry.MAX_POLYGONS or kept * 4 > limit
+
+
+def _closed(shape, reach):
+    """`shape` closed by `reach` px: grown then shrunk back, so fragments
+    and holes less than twice `reach` apart become one piece. Mitred, so a
+    grid's squares stay square."""
+    import shapely
+
+    from plexora.server.utils import mask_polygon
+
+    return mask_polygon.geos_again(
+        lambda: shape.buffer(reach, join_style="mitre").buffer(-reach, join_style="mitre"),
+        lambda: shapely.set_precision(shape, mask_polygon.GEOS_RETRY_GRID).buffer(
+            reach, join_style="mitre").buffer(-reach, join_style="mitre"))
+
+
+def _joined(shape, *, simplify_px, max_vertices, min_area_px, limit):
+    """GeoJSON of `shape` with its gaps closed by a reach that doubles until
+    the outline fits the ROI rule; past `JOIN_ROUNDS`, its largest parts
+    that fit. The outline then also covers the gaps between the fragments it
+    joined."""
+    from plexora.server.utils import mask_polygon
+
+    reach = max(float(simplify_px or 0.0), 1.0)
+    geojson = None
+    closed = shape
+    for _ in range(JOIN_ROUNDS):
+        reach *= 2.0
+        # Each round closes the last one's outline: the same place, far
+        # fewer pieces to grow than the scattered original.
+        closed = _closed(closed, reach)
+        if _too_many_parts(closed, min_area_px, limit):
+            continue
+        geojson = mask_polygon.to_geojson(closed, simplify_px=simplify_px,
+                                          max_vertices=max_vertices, min_area_px=min_area_px)
+        if geojson is None or _fits(geojson, limit):
+            return geojson
     if geojson is None:
+        geojson = mask_polygon.to_geojson(closed, simplify_px=simplify_px,
+                                          max_vertices=max_vertices, min_area_px=min_area_px)
+    return _largest(geojson, limit) if geojson is not None else None
+
+
+def _largest(geojson, limit):
+    """The largest parts of `geojson` (each with its largest holes) that fit
+    the ROI rule -- the last resort of `_joined`."""
+    from shapely.geometry import MultiPolygon, Polygon, mapping, shape as to_shape
+
+    from plexora.plugins.roi.server import geometry as roi_geometry
+
+    found = to_shape(geojson)
+    parts = sorted(getattr(found, "geoms", [found]), key=lambda p: -p.area)
+    kept, used = [], 0
+    for part in parts[:roi_geometry.MAX_POLYGONS]:
+        holes = sorted(part.interiors, key=lambda r: -Polygon(r).area)
+        part = Polygon(part.exterior, holes[:roi_geometry.MAX_RINGS - 1])
+        count = len(part.exterior.coords) + sum(len(r.coords) for r in part.interiors)
+        if used + count > limit:
+            continue
+        kept.append(part)
+        used += count
+    if not kept:
         return None
-    return roi_geometry.validate_geometry(geojson, max_vertices=max_vertices * 2)
+    out = mapping(MultiPolygon(kept) if len(kept) > 1 else kept[0])
+    return {"type": out["type"], "coordinates": out["coordinates"]}
 
 
 def _vertices(shape):
