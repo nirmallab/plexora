@@ -965,9 +965,13 @@ bulk pass and kept as an artifact, then one `stain_check` packet:
   marker stated as a subset of this one; a candidate another candidate sits inside is
   dropped (CD4 for TIGIT, never CD45). QC reads the vocabulary itself: it never
   imports gating.
-- The question asks for the expectation first (compartment, cells, how common, how
-  they sit in the tissue), then whether there is clear non-random biological
-  structure; `real`, `weak`, `failed`, `cannot_tell`.
+- The question has the reader settle the expectation first (compartment, cells, how
+  common, how they sit in the tissue), then judge whether there is clear non-random
+  biological structure; `real`, `weak`, `failed`, `cannot_tell`. The answer is
+  `structure`, `verdict` and a one-sentence `why` only. `expectation` and `observed`
+  are no longer asked for (absent from the schema sent; still read from stored
+  readings): with them in the answer, half of b015 LSP35766A's readings
+  (2026-11-24) ran to the 16,000-token limit and were thrown away.
 - A first `failed` is read again by `qc.stain_reader_2` (`reader_of: stain_check`), a
   worker that never saw the first answer: the packet is identical, `stain_read` is in
   the memo key only. Two `failed` stand; when the second differs, `qc.stain_reader_3`,

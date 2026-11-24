@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Annotated, ClassVar, Literal, Union, get_args
 
 from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from plexora.agent.schemas import AgentModel, clipped
 from plexora.plugins.qc.server import schemas
@@ -240,16 +241,18 @@ class VisualScanAnswer(_Base):
 
 
 class StainCheckAnswer(_Base):
-    """Is the marker's stain real? Expectation first, then what the picture
-    shows, then the verdict (`stain.py`)."""
+    """Is the marker's stain real? Two words and a sentence: structure,
+    verdict, why (`stain.py`). The reader still thinks of how a working stain
+    should look before it weighs the picture (the question says so), but no
+    longer writes it out: with `expectation` and `observed` in the answer, half
+    the readings of b015 LSP35766A (2026-11-24) ran to the 16,000-token
+    limit and were thrown away, ~70 credits each. Both stay readable --
+    stored readings and the bench's carry them -- but are not asked for
+    (`SkipJsonSchema`: absent from the schema the model is sent)."""
 
     kind: Literal["stain_check"] = "stain_check"
-    expectation: Annotated[str, clipped(300)] = Field(
-        max_length=300, description="Written BEFORE weighing the picture: how a working "
-        "stain of this marker should look -- compartment, which cells, how common, how they "
-        "sit in this tissue.")
-    observed: Annotated[str, clipped(300)] = Field(
-        max_length=300, description="What A to E show, at each scale.")
+    expectation: SkipJsonSchema[Annotated[str, clipped(300)]] = ""
+    observed: SkipJsonSchema[Annotated[str, clipped(300)]] = ""
     structure: Literal["yes", "no", "unclear"] = Field(
         description="Is there clear non-random biological structure: a distinct subset of "
                     "cells stained where the stain belongs, arranged as expected?")

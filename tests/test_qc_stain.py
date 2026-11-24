@@ -248,3 +248,20 @@ def test_the_users_panel_entry_outranks_the_vocabulary_in_the_stain_check():
     told = stain.note(names, "Rb", overrides=said)
     assert "shape" not in told                # binary now, by the user's word
     assert stain.partner(names, "CD3", overrides=said) == stain.partner(names, "CD3")
+
+
+def test_a_stored_picture_keeps_its_partner_and_scales_in_the_packet(tmp_path):
+    """`artifacts.get` answers the sidecar, the picture's manifest inside it.
+    Read as the manifest, every packet built from a stored picture -- each
+    re-read, and every first read once the bulk pass had drawn it -- said "no
+    partner" and no scales while row E showed one (b015 LSP35766A,
+    2026-11-24: all 33 stain packets)."""
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    partner, words = stain.partner(["DNA_1", "CD3", "CD8", "CD20"], "CD8")
+    assert partner == "CD3"
+    fresh = stain.packet_parts(session, "qcsynth", "CD8", partner_name=partner, partner_words=words)
+    assert fresh["evidence"]["partner"] == "CD3" and fresh["picture"]
+    stored = stain.packet_parts(session, "qcsynth", "CD8", picture=fresh["picture"])
+    for key in ("partner", "partner_relation", "field_um", "cells_um"):
+        assert stored["evidence"][key] == fresh["evidence"][key] is not None, key
