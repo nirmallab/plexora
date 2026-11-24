@@ -344,6 +344,35 @@ def test_an_answer_that_names_no_scope_is_followed_in_its_packets_scope(
 
 
 @pytest.mark.pro
+def test_a_packet_the_coordinator_took_and_left_goes_to_the_worker_whose_task_it_is(
+        tmp_path, scene, models_file):  # noqa: F811
+    # lsp35766_p193_2, 2026-11-23: QC's visual-pass coordinator called next
+    # without a reader, was handed a stain check, and stopped; every stain
+    # worker heard "busy" and the session stood still. The worker whose task
+    # the packet is takes it over, unchanged, and the session runs on.
+    registry.discover(["gating"])
+    models_file("gating:\n  default: looks-model\n  threshold_evaluation: judge-model\n"
+                "  final_validation: judge-model\n")
+    info = scene(tmp_path, "ghandover")
+    session = AgentSession()
+    sid = start(session, "ghandover", engine="v2")
+    taken = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))
+    assert taken["state"] == "decision"
+    left = taken["packet"]
+    task = left.get("task")
+    owner = next(name for name, tasks in (("looks", LOOKS), ("judges", JUDGES))
+                 if task in tasks)
+    scope = {"reader": owner, "tasks": LOOKS if owner == "looks" else JUDGES}
+    again = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20, **scope}))
+    assert again["state"] == "decision"
+    assert again["packet"]["packet_id"] == left["packet_id"]
+    record = engines.store().load(sid)
+    assert record["outstanding"][left["packet_id"]]["reader"] == owner
+    got = drive_scoped(sid, Oracle(info))
+    assert got[owner]
+
+
+@pytest.mark.pro
 def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
         tmp_path, scene, monkeypatch):  # noqa: F811
     registry.discover(["gating"])
@@ -425,3 +454,28 @@ def test_qc_has_no_delegate_without_a_mapped_qc_task(models_file):
     models_file("qc:\n  blur: model-c\n")
     block = TOOLS.delegate_block({"state": "running"}, "qs_x")["delegate"]
     assert block["skill"] == "qc-packets" and block["workers"]
+
+
+@pytest.mark.pro
+def test_a_qc_packet_the_coordinator_left_goes_to_its_worker(tmp_path, models_file):
+    # lsp35766_p193_2, 2026-11-23: the visual-pass coordinator, calling qc_next
+    # without a reader, was handed a stain check and stopped; the stain worker
+    # heard "busy" for good. It now takes the packet over.
+    from tests.qc_fixtures import make_qc_project
+    from tests.test_qc_session import start as qc_start
+
+    registry.discover(["qc", "roi"])
+    models_file("qc:\n  default: routine-model\n  artifact_inspection: judge-model\n"
+                "  final_review: judge-model\n")
+    make_qc_project(tmp_path, artifacts=("saturation", "fold"))
+    session = AgentSession()
+    started = qc_start(session)
+    sid = started["session_id"]
+    taken = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))
+    assert taken["state"] == "decision"
+    left = taken["packet"]
+    worker = next(w for w in started["delegate"]["workers"] if left["task"] in w["tasks"])
+    again = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20,
+                                           "reader": worker["reader"], "tasks": worker["tasks"]}))
+    assert again["state"] == "decision"
+    assert again["packet"]["packet_id"] == left["packet_id"]

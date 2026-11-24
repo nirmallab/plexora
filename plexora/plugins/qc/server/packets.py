@@ -1172,7 +1172,12 @@ def stain_check(engine, units):
     names = engine.call.session.project(project).image.real_channels
     names = [c.get("fullname") or c.get("name") for c in names]
     marker = unit["channel"]
-    evidence = {**stain.evidence(names, marker, project, manifest), **_reading(engine, ["stain"])}
+    biology = (engine.record.get("options") or {}).get("biology") or {}
+    sample = "; ".join(str(biology[k]) for k in ("tissue", "disease", "notes")
+                       if biology.get(k)) or None
+    evidence = {**stain.evidence(names, marker, project, manifest, sample=sample,
+                                 overrides=stain.user_overrides(engine.call, project)),
+                **_reading(engine, ["stain"])}
     packet = {"question": stain.QUESTION.format(marker=marker), "evidence": evidence,
               "allowed": list(stain.VERDICTS), "_image_meta": [],
               "_stain_read": int(unit.get("stain_read") or 1)}

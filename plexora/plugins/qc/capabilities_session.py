@@ -125,6 +125,15 @@ class QCChecks(AgentModel):
                                         "full-resolution pixels than this.")
 
 
+class QCBiology(AgentModel):
+    """The sample's tissue and disease in the user's words: shown to every
+    stain reading, which judges a marker against where it should be. Gating
+    takes the same words (`gating_session_start`'s `biology`)."""
+    tissue: str | None = Field(None, max_length=120, description="'colon', 'lymph node'.")
+    disease: str | None = Field(None, max_length=120, description="'colorectal cancer'.")
+    notes: str | None = Field(None, max_length=400)
+
+
 class QCSessionOptions(AgentModel):
     scope: Literal["project"] = Field("project", description="One image (a dataset scope "
                                       "comes later).")
@@ -186,6 +195,8 @@ class QCSessionOptions(AgentModel):
         True, description="Write the glass outside the feathered tissue as one \"QC: "
                           "Background\" ROI (apply mode). Its cells are noted `background`, "
                           "never excluded unless the user renames or approves it so.")
+    biology: QCBiology | None = Field(None, description="The tissue and disease the user "
+                                      "named, shown to the stain check: a prior, never a rule.")
     seed: int = 0
 
 
@@ -280,7 +291,8 @@ def start(call, inp):
             planning_notes.append({"check": "table_alignment", "status": "misaligned",
                                    "reason": placed["message"]})
     for unit in plan_checks(call.session, record_, project, names, inp.checks,
-                            notes=planning_notes):
+                            notes=planning_notes,
+                            overrides=_stain_overrides(call, project, inp.checks)):
         units[engines.unit_key(project, "check", unit["id"])] = unit
     result_id = results.new_result_id()
     options = inp.model_dump(mode="json")
@@ -364,7 +376,16 @@ def registration_reference(project, record, names, nuclear):
     return state.get("reference") if state.get("reference") in names else nuclear[0]
 
 
-def plan_checks(session, record, project, names, checks, *, notes=None) -> list:
+def _stain_overrides(call, project, checks) -> dict:
+    """The user's panel-context entries the stain check reads (`stain.user_overrides`)."""
+    if not getattr(checks, "stain", False):
+        return {}
+    from plexora.plugins.qc.server import stain
+
+    return stain.user_overrides(call, project)
+
+
+def plan_checks(session, record, project, names, checks, *, notes=None, overrides=None) -> list:
     """The check units a session runs, read from the channel names alone (no
     pixel is read): Blur QC per nuclear channel (every channel when none is
     recognisable), the Registration Check of every nuclear channel against
@@ -439,7 +460,8 @@ def plan_checks(session, record, project, names, checks, *, notes=None) -> list:
         else:
             for name in stain.checked_channels(names, nuclear):
                 try:
-                    partner, words = stain.partner(names, name, exclude=nuclear)
+                    partner, words = stain.partner(names, name, exclude=nuclear,
+                                                   overrides=overrides)
                 except Exception:  # noqa: BLE001 -- a partner is a help, never required
                     partner, words = None, None
                 units.append(unit("stain", name, channel=name, channels=[name],

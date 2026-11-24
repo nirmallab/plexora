@@ -446,6 +446,10 @@ def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None
         return {"ok": True, "result": result, "operation_id": op_id}
     except Exception as exc:
         error = as_agent_error(exc)
+        if error.code == "internal_error":
+            # A bug, not an answer to give back: the traceback goes to the
+            # server log, where the error the agent sees cannot take it.
+            _log.error("%s failed (%s)", name, op_id, exc_info=exc)
         if capability is not None and capability.permission != "read" and not (
                 call is not None and call.receipted):
             status = {"permission_required": "refused",

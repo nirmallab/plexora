@@ -204,3 +204,47 @@ def test_a_reading_twice_or_of_a_channel_not_read_is_refused(tmp_path):
     assert not again["ok"] and again["error"]["code"] == "conflict"
     nuclear = invoke(session, "get_stain_picture", {"project": "qcsynth", "channel": "DNA"})
     assert not nuclear["ok"]
+
+
+def test_a_reader_is_told_the_sample_a_not_binary_shape_and_an_unknown_name():
+    """lsp35766_p193_2 (2026-11-23): the stain check read Rb (not binary, one
+    peak) as failed twice, read HH3 with no expectation at all, and never
+    heard the sample was colorectal cancer."""
+    from plexora.plugins.qc.server import stain
+
+    names = ["DNA1", "Rb", "Ki67", "CD3", "XYZ123"]
+    rb = stain.note(names, "Rb")
+    assert rb.get("shape") == stain.NOT_BINARY
+    assert "shape" not in stain.note(names, "CD3")
+    assert "unknown" in stain.note(names, "XYZ123")
+    manifest = {"partner": None}
+    told = stain.evidence(names, "Rb", "p", manifest, sample="large intestine; colorectal cancer")
+    assert told["sample"] == "large intestine; colorectal cancer"
+    assert "sample" not in stain.evidence(names, "Rb", "p", manifest)
+
+
+def test_the_stain_reader_is_shown_the_sessions_biology():
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    said = {"said": {"tissue": "large intestine", "disease": "colorectal cancer"}}
+    assert stain_link.sample_words(said) == "large intestine; colorectal cancer"
+    assert stain_link.sample_words(None) is None
+
+
+def test_the_users_panel_entry_outranks_the_vocabulary_in_the_stain_check():
+    """lsp35766_p193_2 (owner, 2026-11-23): this panel's "Rb" is phospho-RB,
+    a subset of the Ki-67 cells. The vocabulary's total RB has no partner and
+    is not binary; the user's entry gives the stain picture its Ki-67 row."""
+    from plexora.plugins.qc.server import stain
+
+    names = ["DNA1", "Rb", "Ki67", "CD3"]
+    assert stain.partner(names, "Rb")[0] is None
+    said = {"Rb": {"source": "user", "binary": True, "role": "state",
+                   "partners": [{"marker": "Ki67", "relation": "subset",
+                                 "confidence": "moderate"}],
+                   "caveats": ["this panel's Rb reads as phospho-RB (S807/811)"]}}
+    partner, words = stain.partner(names, "Rb", overrides=said)
+    assert partner == "Ki67" and "within Ki67" in words
+    told = stain.note(names, "Rb", overrides=said)
+    assert "shape" not in told                # binary now, by the user's word
+    assert stain.partner(names, "CD3", overrides=said) == stain.partner(names, "CD3")

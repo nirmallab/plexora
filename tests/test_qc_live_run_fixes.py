@@ -383,3 +383,21 @@ def test_the_mirror_turns_hd_on_once_and_scales_the_tab_to_the_audit():
     again = mirror_script.script_for(packet, None, record, current_project="p",
                                      viewer_state={"project": "p", "hd_mode": True})
     assert "set_hd_mode" not in [c["type"] for c in again]
+
+
+def test_an_index_out_of_range_in_plexora_is_an_internal_error():
+    """lsp35766_p193_2 (2026-11-23): an empty column indexed at -1 reached the
+    agent as `invalid_input`, so the workers retried their answer; it is
+    Plexora's bug, said as such, with the line it was raised at."""
+    import numpy as np
+
+    from plexora.agent.errors import as_agent_error
+
+    try:
+        np.array([], dtype=np.float32)[-1]
+    except IndexError as exc:
+        error = as_agent_error(exc)
+    assert error.code == "internal_error"
+    assert error.message.startswith("IndexError")
+    assert error.detail is None             # raised in a test, outside Plexora's code
+    assert as_agent_error(KeyError("CD3")).code == "invalid_input"

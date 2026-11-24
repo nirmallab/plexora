@@ -1878,7 +1878,8 @@ def next_packet(call, inp):
             if record["state"] in schemas.FINISHED_STATES:
                 return {"state": record["state"], "progress": engine.progress()}
             reader = inp.reader or DEFAULT_READER
-            held = engine.outstanding(reader)
+            held = engine.outstanding(reader) or \
+                [p for p in [engine.handover(reader, inp.tasks)] if p]
             outstanding = held[0] if held else None
             mirror = dict(record.get("mirror") or {})
             # "Continue in background": the session goes on, the tab is left be.

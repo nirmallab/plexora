@@ -485,6 +485,30 @@ class BaseEngine:
         return [pid for pid, entry in sorted(held.items(), key=lambda kv: kv[1].get("seq", 0))
                 if reader is None or (entry.get("reader") or DEFAULT_READER) == reader]
 
+    def handover(self, reader, tasks) -> str | None:
+        """A packet the default reader holds whose task is in `tasks`, given
+        to `reader` instead: its id, or None. A coordinator that called next
+        without a reader name (QC's visual pass, its own task) was handed the
+        next packet -- a stain check -- and stopped without answering it;
+        every worker scoped to stain checks then heard "busy" and the session
+        stood still (lsp35766_p193_2, 2026-11-23). The worker whose task it
+        is takes it over; the packet is unchanged, so no answer is lost."""
+        if not tasks or (reader or DEFAULT_READER) == DEFAULT_READER:
+            return None
+        units = self.record["units"]
+        stamped = self.record.get("models") or {}
+        for packet_id in self.outstanding(DEFAULT_READER):
+            entry = self.record["outstanding"][packet_id]
+            task = (stamped.get(packet_id) or {}).get("task")
+            if task is None:
+                held = [units[k] for k in entry.get("units") or () if k in units]
+                task = self.task_of(entry.get("kind"), held)
+            if task in set(tasks):
+                entry["reader"] = reader
+                self._sync_outstanding()
+                return packet_id
+        return None
+
     def _hold(self, packet_id, *, kind, units, memo_key, reader, fingerprint, strict=False):
         self.record["outstanding"][packet_id] = {
             "kind": kind, "memo_key": memo_key, "units": units, "reader": reader,
@@ -632,6 +656,13 @@ class BaseEngine:
                 unit.setdefault("packets", []).append(packet_id)
             self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
                                               cost)
+            if kind in self.BUDGETED_KINDS and units \
+                    and (self.options.get("on_limit") or "ask") != "extend" \
+                    and all(self.over_budget(u) for u in units):
+                # Its units can have no look after this one without the user
+                # granting more: the harness's worker for them retires after
+                # it, so the turn is sent uncached (`decision._last_in_worker`).
+                packet["last_for_units"] = True
             self._hold(packet_id, kind=kind, units=[self.key_of(u) for u in units],
                        memo_key=memo_key, reader=reader, fingerprint=fingerprint,
                        strict=strict)

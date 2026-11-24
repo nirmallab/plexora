@@ -420,7 +420,8 @@ class SessionTools:
                 if record["state"] in self.FINISHED_STATES:
                     return {"state": record["state"], "progress": engine.progress()}
                 reader = getattr(inp, "reader", None) or DEFAULT_READER
-                held = engine.outstanding(reader)
+                held = engine.outstanding(reader) or \
+                    [p for p in [engine.handover(reader, getattr(inp, "tasks", None))] if p]
                 outstanding = held[0] if held else None
                 mirror = dict(record.get("mirror") or {})
                 # "Continue in background": the session goes on, the tab is left be.

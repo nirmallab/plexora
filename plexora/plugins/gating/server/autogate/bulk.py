@@ -515,9 +515,12 @@ def _image_pass(call, session_id, project, options, sample_biology, order, calib
     call.check_cancelled()
     with engine_for(call, session_id) as engine:
         engine.record.setdefault("bulk_images", {})[project] = "profiling"
+    from plexora.plugins.gating.server.autogate import stain_link
+
     if options["basic_qc"]:
         _basic_qc(call, session_id, project)
-    options = {**options, "_stain_found": _stain_found(call, session_id, project, options)}
+    options = {**options, "_stain_found": _stain_found(call, session_id, project, options),
+               "_stain_sample": stain_link.sample_words(sample_biology)}
     if project not in calibrations:
         started = time.perf_counter()
         calibrations[project] = calibrate_image(

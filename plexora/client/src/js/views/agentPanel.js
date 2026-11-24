@@ -854,6 +854,16 @@ window.PlexoraAgentPanel = (function () {
               + "with their structure, nothing clipped. Gating then skips this step." },
         { kind: "qc", name: "AI Quality Control", label: "QC with Plexora AI", noun: "channel",
           about: "Detect focus, registration, segmentation and other image-quality issues." },
+        // Both in one run (ai.run_session kind qc_gating): QC first, then
+        // gating, which reuses QC's stain verdicts and leaves out the cells QC
+        // flagged. The note, as for gating, goes to the gating step.
+        { kind: "qc_gating", name: "AI QC + Gating", label: "QC, then gate with Plexora AI",
+          noun: "marker",
+          about: "Check image quality first, then gate every marker using what QC found. "
+              + "The estimate covers both.",
+          context: { start: "Start QC and gating",
+                     help: "QC checks every channel; then every marker is gated unless you ask "
+                         + "for fewer, e.g. \u201conly gate CD3 and CD8\u201d." } },
     ];
 
     function launchHost() {
@@ -1165,7 +1175,7 @@ window.PlexoraAgentPanel = (function () {
     //: run is shown. A new tool is a KINDS entry plus its id here.
     const MODALITIES = [
         { id: "multiplex", label: "Multiplexed imaging", image: ["multiplex"], layers: [],
-          kinds: ["gating", "contrast", "qc"] },
+          kinds: ["gating", "contrast", "qc", "qc_gating"] },
         { id: "xenium", label: "Spatial transcriptomics", image: ["xenium_morphology"],
           layers: ["transcripts"], kinds: [] },
         { id: "visium", label: "Visium HD", image: [], layers: ["visium_bins", "visium_spots"], kinds: [] },
@@ -1259,7 +1269,8 @@ window.PlexoraAgentPanel = (function () {
         balance.hidden = true;
         const chat = button("plx-button plx-agent-button", "Chat with Plexora AI");
         chat.dataset.action = "ai-chat";
-        chat.hidden = !window.PlexoraChatPanel || !document.getElementById("openseadragon_wrapper");
+        // Hidden while chat is (chatPanel.js `ENABLED`, owner 2026-11-23).
+        chat.hidden = !window.PlexoraChatPanel?.enabled || !document.getElementById("openseadragon_wrapper");
         chat.addEventListener("click", () => {
             closeLauncher();
             window.PlexoraChatPanel?.open?.();

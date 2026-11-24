@@ -43,6 +43,11 @@
  * ever parsed as markup. Classic script, `window.PlexoraChatPanel`.
  */
 window.PlexoraChatPanel = (function () {
+    /** Chat is hidden until further notice (owner, 2026-11-23): the launcher
+     * offers no "Chat with Plexora AI", open() does nothing and a conversation
+     * left open is not reopened on load. `window.PLEXORA_CHAT = true` (set
+     * before this script) brings it back -- the probes run it that way. */
+    const ENABLED = window.PLEXORA_CHAT === true;
     "use strict";
 
     const POLL_WAIT_S = 20;
@@ -593,7 +598,7 @@ window.PlexoraChatPanel = (function () {
     }
 
     function boot() {
-        if (!document.getElementById("openseadragon_wrapper")) return;
+        if (!ENABLED || !document.getElementById("openseadragon_wrapper")) return;
         mount();
         const saved = recall();
         if (saved.conversation && saved.open) {
@@ -607,6 +612,7 @@ window.PlexoraChatPanel = (function () {
         boot();
     }
 
-    return { open: () => toggle(true), close: () => toggle(false), minimize: () => minimize(true),
-             restore: () => minimize(false), handle, mount, _state: state };
+    return { enabled: ENABLED,
+             open: () => (ENABLED ? toggle(true) : Promise.resolve(false)), close: () => toggle(false),
+             minimize: () => minimize(true), restore: () => minimize(false), handle, mount, _state: state };
 })();

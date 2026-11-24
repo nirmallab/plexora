@@ -491,8 +491,8 @@
         "/client/src/js/views/sectionCells.js?v=20261114_audit_leads2",
         "/client/src/js/views/planeMotion.js?v=20261115_timeline",
         "/client/src/js/views/timeline.js?v=20261115_timeline",
-        "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
-        "/client/src/js/views/chatPanel.js?v=20261114_audit_leads2",
+        "/client/src/js/views/agentPanel.js?v=20261123_chat_hidden",
+        "/client/src/js/views/chatPanel.js?v=20261123_chat_hidden",
         "/client/src/js/services/agentBridge.js?v=20261114_audit_leads2",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261115_timeline"
@@ -793,8 +793,8 @@
         "/client/src/js/views/sectionCells.js?v=20261114_audit_leads2",
         "/client/src/js/views/planeMotion.js?v=20261115_timeline",
         "/client/src/js/views/timeline.js?v=20261115_timeline",
-        "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
-        "/client/src/js/views/chatPanel.js?v=20261114_audit_leads2",
+        "/client/src/js/views/agentPanel.js?v=20261123_chat_hidden",
+        "/client/src/js/views/chatPanel.js?v=20261123_chat_hidden",
         "/client/src/js/services/agentBridge.js?v=20261114_audit_leads2",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261115_timeline"

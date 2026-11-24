@@ -1894,7 +1894,13 @@ class Engine(BaseEngine):
         from plexora.agent import gate_rule
         from plexora.plugins.gating.server.autogate import cells as cellmod
 
-        high = float(profmod.column(ds, marker).sorted32[-1])
+        column = profmod.column(ds, marker).sorted32
+        if len(column) == 0:
+            # QC leaves every cell of this marker out (a failed channel): a
+            # gate on it holds no cells. Callers skip such a marker
+            # (`_drawn_grade`); this keeps a stray call from indexing nothing.
+            return {"marker": marker, "low": float(low), "high": float(low), "n": 0}
+        high = float(column[-1])
         v = cellmod.values(ds, marker)
         n = int((gate_rule.passes(v, float(low), high) & np.isfinite(v)).sum())
         return {"marker": marker, "low": float(low), "high": high, "n": n}
@@ -1912,6 +1918,16 @@ class Engine(BaseEngine):
                 or entry.get("state") in ("technically_failed", "no_positive_population"):
             return None
         return "review" if grade == "failed" else grade
+
+    def _drawn_grade(self, ds, marker, entry) -> str | None:
+        """`_carrier_grade`, and None when QC leaves the marker no cell to
+        draw on: lsp35766_p193_2's CD21, a channel QC failed outright, closed
+        for review at its start and was then read as a carrier and an
+        exclusive lineage -- an empty column, and every later look failed."""
+        grade = self._carrier_grade(entry)
+        if grade is None or len(profmod.column(ds, marker).sorted32) == 0:
+            return None
+        return grade
 
     def carrier_populations(self, unit, ds, rule) -> dict | None:
         """A state marker's carriers (`context.carriers_for`) and, of those
@@ -1940,10 +1956,12 @@ class Engine(BaseEngine):
 
         def test(carrier):
             entry = book.get(carrier["marker"]) or {}
-            grade = self._carrier_grade(entry)
+            grade = self._drawn_grade(ds, carrier["marker"], entry)
             if grade is None:
                 skipped.append({"marker": carrier["marker"], "why": (
-                    f"no gate to draw on ({entry['state']})" if entry.get("state")
+                    "QC leaves it no cell to draw on"
+                    if self._carrier_grade(entry) is not None
+                    else f"no gate to draw on ({entry['state']})" if entry.get("state")
                     else "not gated in this run")})
                 return
             row = {**carrier, **self._gated(ds, carrier["marker"], entry["gate"]), "grade": grade}
@@ -1989,7 +2007,7 @@ class Engine(BaseEngine):
             entry = book.get(rel["marker"]) or {}
             if rel["relation"] != "exclusive" or rel["marker"] in out \
                     or context.CONFIDENCE_RANK.get(rel["confidence"], 0) < 1 \
-                    or self._carrier_grade(entry) is None:
+                    or self._drawn_grade(ds, rel["marker"], entry) is None:
                 continue
             out[rel["marker"]] = self._gated(ds, rel["marker"], entry["gate"])
         return list(out.values())
@@ -2029,7 +2047,7 @@ class Engine(BaseEngine):
         for other in panel.get("markers") or ():
             entry = book.get(other) or {}
             if other not in common or other in carriers or other in own \
-                    or self._carrier_grade(entry) is None:
+                    or self._drawn_grade(ds, other, entry) is None:
                 continue
             gate = self._gated(ds, other, entry["gate"])
             if low is not None:

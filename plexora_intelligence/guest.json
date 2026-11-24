@@ -2665,11 +2665,12 @@
        "type": "boolean"
       },
       "kind": {
-       "description": "gating: Auto Gating of the markers; contrast: how bright each marker is drawn, no gating; qc: AutoQC of the image.",
+       "description": "gating: Auto Gating of the markers; contrast: how bright each marker is drawn, no gating; qc: AutoQC of the image; qc_gating: AutoQC, then Auto Gating on QC's stain verdicts and the cells QC kept.",
        "enum": [
         "gating",
         "contrast",
-        "qc"
+        "qc",
+        "qc_gating"
        ],
        "type": "string"
       },
@@ -2866,6 +2867,7 @@
         "gating",
         "contrast",
         "qc",
+        "qc_gating",
         "both"
        ],
        "type": "string"
@@ -3924,6 +3926,27 @@
     "id": "plexora:qc.session_start",
     "input_schema": {
      "$defs": {
+      "QCBiology": {
+       "additionalProperties": false,
+       "description": "The sample's tissue and disease in the user's words: shown to every\nstain reading, which judges a marker against where it should be. Gating\ntakes the same words (`gating_session_start`'s `biology`).",
+       "properties": {
+        "disease": {
+         "description": "'colorectal cancer'.",
+         "maxLength": 120,
+         "type": "string"
+        },
+        "notes": {
+         "maxLength": 400,
+         "type": "string"
+        },
+        "tissue": {
+         "description": "'colon', 'lymph node'.",
+         "maxLength": 120,
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
       "QCBudget": {
        "additionalProperties": false,
        "properties": {
@@ -4040,6 +4063,10 @@
        "default": true,
        "description": "Write the glass outside the feathered tissue as one \"QC: Background\" ROI (apply mode). Its cells are noted `background`, never excluded unless the user renames or approves it so.",
        "type": "boolean"
+      },
+      "biology": {
+       "$ref": "#/$defs/QCBiology",
+       "description": "The tissue and disease the user named, shown to the stain check: a prior, never a rule."
       },
       "budget": {
        "$ref": "#/$defs/QCBudget",

@@ -265,6 +265,7 @@ ignore:
   PLEXORA_MODEL_: The prefix of PLEXORA_MODEL_<TIER> in plexora/ai/delegation.py.
   PLEXORA_AUTH_COOKIE_MAX_AGE: Flask config key.
   PLEXORA_CAN_RESTART: Flask config key.
+  PLEXORA_CHAT: The browser flag window.PLEXORA_CHAT that shows the chat panel (client views/chatPanel.js), not an environment variable.
   PLEXORA_CELL_COLUMNS_ATTR: The HDF5 attribute name constant marking Plexora's own obs columns (server/models/adapters/anndata_adapter.py).
   PLEXORA_DESKTOP__: A Rust format-string fragment, not a name.
   PLEXORA_ROOM__: The website's start-script placeholder __PLEXORA_ROOM__ (server/models/web_remote.py), not a name.

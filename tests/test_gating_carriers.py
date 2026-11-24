@@ -175,6 +175,11 @@ class _Populations:
 
         return Engine._carrier_grade(entry)
 
+    def _drawn_grade(self, ds, marker, entry):
+        from plexora.plugins.gating.server.autogate.engine import Engine
+
+        return Engine._drawn_grade(self, ds, marker, entry)
+
     def _excluded_lineages(self, ds, project, marker, book):
         return []
 
@@ -239,6 +244,9 @@ class _Controls:
         from plexora.plugins.gating.server.autogate.engine import Engine
 
         return Engine._carrier_grade(entry)
+
+    def _drawn_grade(self, ds, marker, entry):
+        return self._carrier_grade(entry)
 
     def _gated(self, ds, marker, low):
         return {"marker": marker, "low": low, "high": 9.0, "n": 10}
@@ -542,3 +550,35 @@ def test_an_exception_narrows_or_weakens_the_exclusion_it_crosses():
     # is only a supporting marker of NK cells since graph 2026-11-21.4).
     assert relation("CD11c", "CD56") == ("exclusive", "low")
     assert relation("CD11c", "CD16") is None
+
+
+def test_a_marker_qc_leaves_no_cell_is_never_a_carrier_or_an_exclusion(monkeypatch):
+    """lsp35766_p193_2, 2026-11-23: QC failed CD21 outright, so its QC-kept
+    column was empty; gating closed it for review at its start, read it as a
+    carrier and an exclusive lineage, and `_gated` indexed an empty column --
+    every later look failed with "index -1 is out of bounds"."""
+    from plexora.plugins.gating.server.autogate import profile as profmod
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    ds = _lineages()
+    real = profmod.column
+
+    class _Empty:
+        sorted32 = np.array([], dtype=np.float32)
+        n_finite = 0
+
+    monkeypatch.setattr(profmod, "column",
+                        lambda d, m: _Empty() if m == "CD20" else real(d, m))
+    named = [{"marker": m, "source": "vocabulary"} for m in ("CD3", "CD20")]
+    monkeypatch.setattr(context, "carriers_for", lambda panel, marker: named)
+    stub = _Populations({"CD3": _gate(ds, "CD3", 5.5)["low"], "CD20": 5.5})
+    review = dict(stub.ledger("p")["CD20"], grade="failed", state="manual_review_recommended")
+    assert Engine._carrier_grade(review) == "review"            # a review close still serves ...
+    assert Engine._drawn_grade(stub, ds, "CD20", review) is None   # ... unless it holds no cell
+    found = Engine.carrier_populations(stub, {"project": "p", "marker": "PD1",
+                                              "gmm": float(np.expm1(5.0))}, ds,
+                                       {"top": 2, "min_enrichment": 1.0})
+    assert [c["marker"] for c in found["chosen"]] == ["CD3"]
+    assert {"marker": "CD20", "why": "QC leaves it no cell to draw on"} in found["skipped"]
+    assert Engine._gated(stub, ds, "CD20", 5.5) == {"marker": "CD20", "low": 5.5, "high": 5.5,
+                                                   "n": 0}
