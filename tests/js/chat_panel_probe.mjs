@@ -78,7 +78,7 @@ function all(root, predicate, out = []) {
 }
 const byClass = (root, name) => all(root, (n) => n.classList.contains(name));
 
-function makeWorld({ license = false, saved = null, gone = false, offline = false } = {}) {
+function makeWorld({ license = false, saved = null, gone = false, offline = false, chat = true } = {}) {
     const { document, wrapper } = makeDom();
     const posts = [];
     const explained = [];
@@ -113,7 +113,7 @@ function makeWorld({ license = false, saved = null, gone = false, offline = fals
         removeItem: (k) => store.delete(k),
     };
     const context = {
-        window: { flaskVariables: { datasource: "demo" }, sessionStorage,
+        window: { ...(chat ? { PLEXORA_CHAT: true } : {}), flaskVariables: { datasource: "demo" }, sessionStorage,
                   PlexoraPro: { explain: (detail) => { explained.push(detail); return Promise.resolve(null); } } },
         document, fetch, console, setTimeout, clearTimeout, JSON, Promise, Array, String, Number, Boolean,
         plexoraUrl: (path) => "/" + path,
@@ -135,6 +135,18 @@ function makeWorld({ license = false, saved = null, gone = false, offline = fals
 const source = readFileSync(PANEL, "utf8");
 
 // -- checks ------------------------------------------------------------------------
+
+{
+    // Chat is hidden until further notice (owner, 2026-11-23): off unless the
+    // page sets PLEXORA_CHAT -- nothing mounts, open() starts nothing, and a
+    // conversation left open is not reopened.
+    const off = makeWorld({ chat: false, saved: { conversation: "cv_9", open: true, minimized: false } });
+    await tick(5);
+    const opened = await off.panel.open();
+    check("with chat hidden, nothing mounts, open() starts nothing and a saved conversation is not reopened",
+        off.panel.enabled === false && opened === false && off.posts.length === 0
+        && off.wrapper.children.length === 0, { posts: off.posts.length, children: off.wrapper.children.length });
+}
 
 {
     const w = makeWorld();

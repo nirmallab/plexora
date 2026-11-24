@@ -211,7 +211,7 @@ function makePage({ wrapper = true, dock = true, reduced = false, requirements =
                        explain: (args) => { explained.push(args); return Promise.resolve(null); },
                        goToLicense: () => { licensed.push(true); } },
         PlexoraConfirm: { choose: (args) => { choices.push(args); return Promise.resolve(page.confirmAnswer); } },
-        PlexoraChatPanel: { open: () => { chats.push(true); } },
+        PlexoraChatPanel: { enabled: true, open: () => { chats.push(true); } },
         open: (target) => { opened.push(target); },
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init && init.detail; }

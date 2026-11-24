@@ -61,7 +61,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from spatialagents import gateway as _gateway
 from spatialagents.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
@@ -82,6 +82,21 @@ log = logging.getLogger("plexora.ai.harness")
 HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
 #: Seconds between two looks at a session the user paused (`DecisionRun._park`).
 PARK_POLL_S = 1.0
+#: Keeping the provider's five-minute prompt cache alive while a run waits
+#: (the bulk pass, another lane, the user's pause): after this long since the
+#: lane's last call BEGAN -- the cache's lifetime runs from a request's start --
+#: its last request is sent again with `max_tokens` 1, a read that restarts
+#: the five minutes for a tenth of a write (spatialagents' chat keep-warm,
+#: 54ffae2, for these runs). Below the TTL by more than one `wait_s` poll, so
+#: a check that lands late still pings in time.
+KEEP_WARM_AFTER_S = 240.0
+#: Past this the entry has expired: a ping would only write it again.
+CACHE_TTL_S = 300.0
+#: The smallest last request worth keeping warm (a miss on less costs little).
+KEEP_WARM_MIN_TOKENS = 4_000
+#: A ping that read less than this share of its input from cache found the
+#: cache gone (or never written): the run stops pinging that lane.
+KEEP_WARM_HIT_SHARE = 0.9
 #: Seconds between two looks at a session waiting on the user's set-up form
 #: (`DecisionRun._await_setup`): a form takes a person tens of seconds.
 SETUP_POLL_S = 2.0
@@ -387,6 +402,10 @@ class DecisionOptions:
     declare_run: bool = True
     max_packets: int = 2000
     wait_s: float = 20.0
+    #: Keep-alive pings per lane per idle stretch (`KEEP_WARM_AFTER_S`); 0: off.
+    #: Three cover a quarter of an hour of waiting; a longer pause lets the
+    #: cache lapse rather than pay to hold it.
+    keep_warm: int = 3
     start_options: dict = field(default_factory=dict)
     resume_session: str | None = None
     #: The user's free-text note about the sample (`plexora.ai.context`):
@@ -426,6 +445,8 @@ class _Worker:
         self.calls = 0
         self.chars = 0
         self.images = 0
+        #: The packet in hand is its units' last (`last_for_units`).
+        self.last_hint = False
 
     def tokens(self) -> int:
         return int(self.chars / cache_plan.CHARS_PER_TOKEN) + self.images * TOKENS_PER_IMAGE
@@ -445,6 +466,13 @@ class _Lane:
         #: provider's cache of it) intact.
         self.parked: dict = {}
         self.on_first_call = None
+        #: The last request this lane sent, when it began, and the keep-alive
+        #: pings since (`DecisionRun._keep_warm`).
+        self.last_request: ModelRequest | None = None
+        self.last_call_at = 0.0
+        self.last_input_tokens = 0
+        self.pings = 0
+        self.warm_off = False
 
 
 #: The engine's strikes before it releases a packet to manual review
@@ -623,9 +651,62 @@ class DecisionRun:
             if self._halt is not None:
                 raise self._halt
             _work.wait(PARK_POLL_S)
+            self._keep_warm(lane)
             result = self._next(lane, wait_s=0)
             if result.get("state") != "paused" or result.get("by") == "agent":
                 return result
+
+    def _keep_warm(self, lane: _Lane) -> bool:
+        """While the run waits, keep the lane's cached prompt alive: once
+        `KEEP_WARM_AFTER_S` have passed since its last call began (and the
+        entry has not yet expired), its last request goes out again with
+        `max_tokens` 1 -- the same bytes, so the provider reads it from cache
+        and restarts the entry's five minutes. The gateway refuses
+        `max_tokens` 0, and so does a structured-output request, so one token
+        is the smallest ping. At most `keep_warm` pings per idle stretch; a
+        refusal, or a ping that had to write, ends pinging for the lane.
+        Returns whether a ping went out."""
+        request = lane.last_request
+        if request is None or lane.warm_off or self.o.keep_warm <= 0 \
+                or lane.pings >= self.o.keep_warm or lane.last_input_tokens < KEEP_WARM_MIN_TOKENS:
+            return False
+        idle = time.monotonic() - lane.last_call_at
+        if idle < KEEP_WARM_AFTER_S or idle >= CACHE_TTL_S:
+            return False
+        lane.pings += 1
+        lane.last_call_at = time.monotonic()
+        ping = replace(request, max_tokens=1,
+                       context={**(request.context or {}), "workflow": "keep_warm"})
+        with self._lock:
+            n = self.keep_warm_pings = getattr(self, "keep_warm_pings", 0) + 1
+        try:
+            response = self.gateway.messages(ping, idempotency_key=f"{self.run_id}.keep_warm.{n}")
+        except GatewayError as exc:
+            lane.warm_off = True
+            log.info("%s run %s: keep-warm ping refused (%s); no more pings on this lane",
+                     self.wf.name, self.run_id, exc)
+            return False
+        usage = response.usage
+        total = (usage.input_uncached or 0) + (usage.cache_read or 0) + (usage.cache_write or 0)
+        if not total or (usage.cache_read or 0) < KEEP_WARM_HIT_SHARE * total:
+            lane.warm_off = True
+        with self._lock:
+            self.charged += response.charged_micro
+            self.seq += 1
+            seq = self.seq
+        self.trace.call(self.run_id, worker=lane.worker.index, seq=seq, packet_id=None,
+                        kind="keep_warm", capability=self.o.capability, prefix_fp=self.prefix_fp,
+                        task=request.task, model=response.model, provider=response.provider,
+                        verdict="keep_warm", input_uncached=usage.input_uncached,
+                        cache_read=usage.cache_read, cache_write=usage.cache_write,
+                        output_tokens=usage.output_tokens, price_micro=response.price_micro,
+                        charged_micro=response.charged_micro, cost_micro=response.cost_micro,
+                        gateway_request_id=response.gateway_request_id,
+                        latency_ms=response.latency_ms, valid=True, attempts=response.attempts,
+                        problem=None)
+        self._emit("keep_warm", lane=lane.index, idle_s=round(idle), cache_read=usage.cache_read,
+                   cache_write=usage.cache_write)
+        return True
 
     # -- the loop ----------------------------------------------------------------
 
@@ -955,10 +1036,12 @@ class DecisionRun:
                 continue
             if state == "bulk_running":
                 self._emit("bulk_running", progress=result.get("progress"))
+                self._keep_warm(lane)
                 result = self._next(lane)
                 continue
             if state == "busy":
                 # What is left waits on another lane's answer.
+                self._keep_warm(lane)
                 result = self._next(lane)
                 continue
             if state == "decided":
@@ -1099,7 +1182,8 @@ class DecisionRun:
         (full by packets or context): its newest turn is then never read
         again, so it is not written to the cache. A rotation by unit or task
         cannot be known before the next packet arrives."""
-        return w.packets + 1 >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker
+        return w.packets + 1 >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker \
+            or (w.last_hint and self.o.units_per_worker <= 1)
 
     def _call(self, packet: dict, messages: list, lane: _Lane):
         self.check()
@@ -1117,6 +1201,8 @@ class DecisionRun:
                                max_tokens=self._max_tokens(packet),
                                output_schema=self.wf.schema_for(kind, task, packet),
                                context=context, model=self.o.model, task=task)
+
+        lane.last_request, lane.last_call_at, lane.pings = request, time.monotonic(), 0
 
         def on_retry(attempt, exc):
             self._emit("retry", packet_id=pid, attempt=attempt, code=exc.code,
@@ -1139,6 +1225,9 @@ class DecisionRun:
                 lane.on_first_call = None
         warm = lane.worker.calls > 0
         lane.worker.calls += 1
+        usage = response.usage
+        lane.last_input_tokens = int((usage.input_uncached or 0) + (usage.cache_read or 0)
+                                     + (usage.cache_write or 0))
         with self._lock:
             verdict = self.monitor.observe(self.prefix_fp, self.prefix_tokens, response.usage, warm=warm)
             self.charged += response.charged_micro
@@ -1190,6 +1279,10 @@ class DecisionRun:
         self._rotate_if_due(packet, lane)
         w = lane.worker
         w.task = self.task_of(packet)
+        # The engine's word that this look is its units' last (their budget is
+        # spent and only the user could grant more): with a worker per unit,
+        # nothing reads this turn again, so it is not written to the cache.
+        w.last_hint = bool(packet.pop("last_for_units", False))
         content = self._content(packet, images)
         w.messages.append({"role": "user", "content": content})
         w.chars += sum(len(b.get("text", "")) for b in content if b["type"] == "text")

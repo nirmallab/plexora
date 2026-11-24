@@ -17,6 +17,7 @@ import pytest
 
 import plexora
 from plexora.agent import AgentSession, invoke, jobs, registry
+from plexora.agent.errors import AgentError
 from plexora.server.models import viewer_sessions as vs
 from tests.ai_harness_fixtures import FakeGateway
 from tests.qc_fixtures import make_qc_project
@@ -123,7 +124,14 @@ def test_the_balance_carries_an_estimate_for_the_open_project(client, gateway, s
     assert "up to that many credits" in body["charging"]
     assert "never more than the quote" in body["charging"]
     both = client.get("/ai/v1/balance?project=qcsynth").get_json()["estimates"]
-    assert set(both) == {"gating", "contrast", "qc"} and both["gating"]["unit"] == "marker"
+    assert set(both) == {"gating", "contrast", "qc", "qc_gating"} and both["gating"]["unit"] == "marker"
+    # QC then gating in one run: both quotes together, counted in markers.
+    together = both["qc_gating"]
+    assert together["credits"] == both["qc"]["credits"] + both["gating"]["credits"]
+    assert together["units"] == both["gating"]["units"] and together["unit"] == "marker"
+    assert together["channels_checked"] == both["qc"]["units"]
+    alone = client.get("/ai/v1/balance?project=qcsynth&kind=qc_gating").get_json()["estimates"]
+    assert set(alone) == {"qc_gating"} and alone["qc_gating"]["credits"] == together["credits"]
     picked = client.get("/ai/v1/balance?project=qcsynth&kind=qc&channels=DAPI,CD3").get_json()
     assert picked["estimates"]["qc"]["units"] == 2
 
@@ -332,3 +340,39 @@ def test_stopping_a_run_with_no_session_says_so_when_the_cancel_reached_nothing(
     monkeypatch.setattr(jobs, "store", lambda: type("J", (), {"cancel": lambda s, j: reached})())
     answer = invoke(AgentSession(), "ai_run_control", {"run_id": "air_aaaaaaaaaaaa", "action": "stop"})
     assert answer["ok"] and answer["result"]["control"]["stopped"] is True, answer
+
+
+def test_a_qc_gating_run_qcs_first_and_gates_only_once_qc_is_done(monkeypatch):
+    from types import SimpleNamespace
+
+    from plexora.ai.harness import capabilities as caps
+
+    ran = []
+
+    def one(call, inp, gateway, run_id):
+        ran.append((inp.kind, run_id, inp.context, dict(inp.start_options or {})))
+        status = outcome.get(inp.kind, "done")
+        return {"status": status, "charged_credits": 10.0 if inp.kind == "qc" else 25.5}, \
+            SimpleNamespace(job_id="job_x")
+
+    monkeypatch.setattr(caps, "_run_one", one)
+    monkeypatch.setattr(caps, "_gateway", lambda dev: object())
+    call = SimpleNamespace(job={"job_id": "job_x"})
+    inp = caps.RunInput(kind="qc_gating", project="p", context="colorectal cancer",
+                        start_options={"mirror": True, "view_id": "v1", "markers_without_channel": "skip"})
+    outcome = {}
+    out = caps.run_session(call, inp)
+    assert [r[0] for r in ran] == ["qc", "gating"]
+    assert ran[0][1] == "air_x" and ran[1][1] == "air_x_gating"
+    # The note is gating's; QC takes only the launcher's shared options.
+    assert ran[0][2] is None and ran[1][2] == "colorectal cancer"
+    assert ran[0][3] == {"mirror": True, "view_id": "v1"} and "markers_without_channel" in ran[1][3]
+    assert out["qc"]["status"] == "done" and out["gating"]["status"] == "done"
+    assert out["charged_credits"] == 35.5
+    # QC that did not finish: gating never starts.
+    ran.clear()
+    outcome = {"qc": "paused"}
+    out = caps.run_session(call, inp)
+    assert [r[0] for r in ran] == ["qc"] and out["gating"] is None and "gating did not start" in out["reason"]
+    with pytest.raises(AgentError):
+        caps.run_session(call, inp.model_copy(update={"resume_session": "qs_1"}))

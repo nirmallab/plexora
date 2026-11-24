@@ -656,6 +656,13 @@ class BaseEngine:
                 unit.setdefault("packets", []).append(packet_id)
             self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
                                               cost)
+            if kind in self.BUDGETED_KINDS and units \
+                    and (self.options.get("on_limit") or "ask") != "extend" \
+                    and all(self.over_budget(u) for u in units):
+                # Its units can have no look after this one without the user
+                # granting more: the harness's worker for them retires after
+                # it, so the turn is sent uncached (`decision._last_in_worker`).
+                packet["last_for_units"] = True
             self._hold(packet_id, kind=kind, units=[self.key_of(u) for u in units],
                        memo_key=memo_key, reader=reader, fingerprint=fingerprint,
                        strict=strict)

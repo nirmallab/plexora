@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = Path(plexora.__file__).parent / "client" / "templates"
 
 CHECKS = [
+    "with chat hidden, nothing mounts, open() starts nothing and a saved conversation is not reopened",
     "boot mounts the panel, hidden, under the viewer wrapper, and no corner chip (the sidebar AI button opens it)",
     "opening starts a conversation with the viewer tools, and the server's disclosure event draws no line",
     "Minimize folds the chat into a Restore / Close pill and Restore brings back the draft; Send is glass until there is one",

@@ -394,6 +394,70 @@ def test_a_workers_last_call_is_known_only_when_it_fills(tmp_path):
     assert run._last_in_worker(w)
 
 
+def test_a_units_last_look_is_its_workers_last_call(tmp_path):
+    # The engine marks a look that spends its units' budget (`last_for_units`):
+    # with a worker per unit, nothing reads that turn again, so it is not cached.
+    run = _run(tmp_path)
+    w = run.lanes[0].worker
+    assert not run._last_in_worker(w)
+    w.last_hint = True
+    assert run._last_in_worker(w)
+    assert not _run(tmp_path, units_per_worker=2)._last_in_worker(
+        type(w)(0)) and run._last_in_worker(w)
+
+
+class _PingGateway:
+    """What `_keep_warm` sends, answered with the usage a test sets."""
+
+    def __init__(self, usage):
+        self.usage, self.sent = usage, []
+
+    def messages(self, request, *, idempotency_key, **_):
+        from spatialagents.wire import ModelResponse
+
+        self.sent.append((request, idempotency_key))
+        return ModelResponse(text="", stop_reason="max_tokens", usage=self.usage, charged_micro=40)
+
+
+def test_a_waiting_run_keeps_its_prompt_cache_warm_and_stops_when_it_would_not_pay(tmp_path):
+    import time as _time
+
+    from spatialagents.wire import ModelRequest, Usage
+
+    run = _run(tmp_path)
+    lane = run.lanes[0]
+    hit = Usage(input_uncached=10, cache_read=12_000, output_tokens=1)
+    run.gateway = _PingGateway(hit)
+    assert not run._keep_warm(lane)                        # nothing sent yet: nothing to keep
+    lane.last_request = ModelRequest(capability="vision_judgement", system=[], messages=[],
+                                     max_tokens=4096, output_schema={"type": "object"},
+                                     context={"feature": "gating"}, task="gating.threshold_evaluation")
+    lane.last_input_tokens = 12_010
+    lane.last_call_at = _time.monotonic() - 100
+    assert not run._keep_warm(lane)                        # well inside the five minutes
+    lane.last_call_at = _time.monotonic() - 250
+    assert run._keep_warm(lane)
+    request, key = run.gateway.sent[-1]
+    assert request.max_tokens == 1 and request.context["workflow"] == "keep_warm"
+    assert request.output_schema == {"type": "object"} and request.task == lane.last_request.task
+    assert key.endswith(".keep_warm.1") and run.charged == 40
+    assert not run._keep_warm(lane)                        # the ping restarted the five minutes
+    for _ in range(5):
+        lane.last_call_at = _time.monotonic() - 250
+        run._keep_warm(lane)
+    assert lane.pings == run.o.keep_warm == 3              # a long pause lets it lapse
+    lane.pings, lane.last_call_at = 0, _time.monotonic() - 320
+    assert not run._keep_warm(lane)                        # already expired: a ping would write
+    # A ping that had to write found the cache gone: no more pings on the lane.
+    run.gateway = _PingGateway(Usage(input_uncached=10, cache_write_5m=12_000))
+    lane.last_call_at = _time.monotonic() - 250
+    assert run._keep_warm(lane) and lane.warm_off
+    lane.last_call_at = _time.monotonic() - 250
+    assert not run._keep_warm(lane)
+    calls = run.trace.calls(run.run_id) if hasattr(run.trace, "calls") else None
+    assert calls is None or all(c["kind"] == "keep_warm" for c in calls)
+
+
 def test_an_open_circuit_is_waited_out_once_then_the_run_pauses():
     from plexora.ai.harness.decision import PAUSE_CODES
     from spatialagents.wire import ModelRequest

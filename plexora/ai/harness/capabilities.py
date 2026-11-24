@@ -86,9 +86,11 @@ def _workflow(kind):
 
 
 class RunInput(AgentModel):
-    kind: Literal["gating", "contrast", "qc"] = Field(
+    kind: Literal["gating", "contrast", "qc", "qc_gating"] = Field(
         description="gating: Auto Gating of the markers; contrast: how bright each marker is "
-                    "drawn, no gating; qc: AutoQC of the image.")
+                    "drawn, no gating; qc: AutoQC of the image; qc_gating: AutoQC, then Auto "
+                    "Gating once QC is done -- gating reuses QC's stain verdicts and leaves out "
+                    "the cells QC flagged.")
     project: str
     markers: list[str] | None = Field(None, max_length=200, description="gating, contrast: the "
                                       "markers (default: every marker of the table).")
@@ -215,14 +217,52 @@ class _Relay:
                                             "resume_session": session_id}, **run)
 
 
-def run_session(call, inp):
-    from dataclasses import replace
+#: The start options QC's half of a `qc_gating` run takes from the launcher's
+#: (the rest -- a gating confirm's yes -- are gating's).
+SHARED_START = ("mirror", "view_id")
 
-    from plexora.ai.harness.decision import RUNS, GatingOptions, QCOptions
+
+def run_session(call, inp):
     from plexora.ai.harness.gateway import GatewayError
 
     if inp.model and not inp.dev:
         raise AgentError("invalid_input", "a model may be named only with dev=true")
+    try:
+        gateway = _gateway(inp.dev)
+    except GatewayError as exc:
+        raise AgentError("license_required" if exc.code == "no_license" else "resource_unavailable",
+                         str(exc)) from None
+    run_id = run_id_for(call.job["job_id"]) if call.job else None
+    if inp.kind != "qc_gating":
+        summary, relay = _run_one(call, inp, gateway, run_id)
+        return {**summary, "job_id": relay.job_id}
+    # QC, then gating, on one job: gating starts only once QC is done, so it
+    # reuses QC's stain verdicts (`stain_check: reuse`) and leaves out the cells
+    # QC flagged. A QC that paused, failed or was stopped ends the run there;
+    # the paused part is resumed by its own kind (`resume_session`).
+    if inp.resume_session:
+        raise AgentError("invalid_input", "a qc_gating run is not resumed as one: resume the paused "
+                         "session with kind qc or gating")
+    start = dict(inp.start_options or {})
+    qc_inp = inp.model_copy(update={"kind": "qc", "context": None, "markers": None,
+                                    "start_options": {k: v for k, v in start.items()
+                                                      if k in SHARED_START}})
+    qc, relay = _run_one(call, qc_inp, gateway, run_id)
+    out = {"qc": qc, "job_id": relay.job_id}
+    if qc.get("status") != "done":
+        return {**qc, **out, "gating": None,
+                "reason": f"QC ended {qc.get('status')}: gating did not start"}
+    gating_inp = inp.model_copy(update={"kind": "gating", "channels": None})
+    gating, _relay = _run_one(call, gating_inp, gateway, f"{run_id}_gating" if run_id else None)
+    charged = round(float(qc.get("charged_credits") or 0) + float(gating.get("charged_credits") or 0), 2)
+    return {**gating, **out, "gating": gating, "charged_credits": charged}
+
+
+def _run_one(call, inp, gateway, run_id):
+    """One session of `inp.kind` (gating, contrast or qc) on the job: (summary, relay)."""
+    from dataclasses import replace
+
+    from plexora.ai.harness.decision import RUNS, GatingOptions, QCOptions
     common = {"project": inp.project, "mode": inp.mode, "model": inp.model,
               "resume_session": inp.resume_session, "start_options": dict(inp.start_options or {}),
               "context": inp.context if inp.kind == "gating" else None}
@@ -234,17 +274,11 @@ def run_session(call, inp):
         options = QCOptions(channels=inp.channels, **common)
     if inp.units_per_worker:
         options = replace(options, units_per_worker=inp.units_per_worker)
-    run_id = run_id_for(call.job["job_id"]) if call.job else None
     relay = _Relay(call, inp)
-    try:
-        gateway = _gateway(inp.dev)
-    except GatewayError as exc:
-        raise AgentError("license_required" if exc.code == "no_license" else "resource_unavailable",
-                         str(exc)) from None
     summary = RUNS[inp.kind](options, gateway=gateway, session=call.session, on_event=relay, run_id=run_id,
                              policy=call.policy, audit=call.audit, link=call.link, notify=call.notify,
                              check=call.check_cancelled).run()
-    return {**summary, "job_id": relay.job_id}
+    return summary, relay
 
 
 # -- ai.run_status --------------------------------------------------------------------------
@@ -448,7 +482,7 @@ def run_control(call, inp):
 
 class BalanceInput(AgentModel):
     project: str | None = Field(None, description="Estimate a run of this project too.")
-    kind: Literal["gating", "contrast", "qc", "both"] = Field(
+    kind: Literal["gating", "contrast", "qc", "qc_gating", "both"] = Field(
         "both", description="The run to estimate; both: every kind.")
     markers: list[str] | None = Field(None, max_length=200)
     channels: list[str] | None = Field(None, max_length=200)
@@ -565,7 +599,9 @@ def balance(call, inp):
                         for name, f in (prices.get("features") or {}).items() if name in ("gating", "qc")}}
     if inp.project:
         estimates = {}
-        for kind in (RUN_KINDS if inp.kind == "both" else (inp.kind,)):
+        wanted = RUN_KINDS if inp.kind == "both" else ("qc", "gating") if inp.kind == "qc_gating" \
+            else (inp.kind,)
+        for kind in wanted:
             # A contrast grid is priced as one gating unit (ContrastWorkflow).
             price = (prices.get("features") or {}).get(
                 "gating" if kind == "contrast" else kind) or {}
@@ -576,9 +612,33 @@ def balance(call, inp):
             estimates[kind] = {"units": units, "unit": unit, "credits": credits,
                                "affordable": credits * credit <= out["available_micro"],
                                **({"unavailable": why} if why else {}), **words}
+        if inp.kind in ("both", "qc_gating"):
+            estimates["qc_gating"] = _both_estimate(estimates.get("qc") or {},
+                                                    estimates.get("gating") or {},
+                                                    out["available_micro"], credit)
+            if inp.kind == "qc_gating":
+                estimates = {"qc_gating": estimates["qc_gating"]}
         out["estimates"] = estimates
         out["charging"] = CHARGING
         out["project"] = inp.project
+    return out
+
+
+def _both_estimate(qc: dict, gating: dict, available_micro: int, credit: int) -> dict:
+    """A `qc_gating` run's quote: QC's credits and gating's together, counted
+    in markers (the launcher's line), with gating's `blocked` or `confirm`
+    (the markers without an image channel are gating's question). Either half
+    unavailable: the run is too."""
+    credits = int(qc.get("credits") or 0) + int(gating.get("credits") or 0)
+    out = {"units": int(gating.get("units") or 0), "unit": gating.get("unit") or "marker",
+           "credits": credits, "affordable": credits * credit <= available_micro,
+           "channels_checked": int(qc.get("units") or 0)}
+    why = qc.get("unavailable") or gating.get("unavailable")
+    if why or not qc.get("units"):
+        out["unavailable"] = why or "QC has no channel to check here"
+    for key in ("blocked", "confirm", "channels"):
+        if gating.get(key) is not None:
+            out[key] = gating[key]
     return out
 
 
