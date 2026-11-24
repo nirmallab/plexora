@@ -958,6 +958,11 @@ window.PlexoraAgentPanel = (function () {
             row.detail.textContent = state.credits ? state.detail : (state.detail || "");
             row.button.title = row.note.textContent;
         });
+        const busy = Boolean(current && !current.done);
+        (launcher.resumeRows || []).forEach((row) => {
+            row.button.disabled = Boolean(launcher.starting) || busy || !aiAllowed();
+            row.button.title = busy ? "An agent session is already running here." : "";
+        });
         launcher.sections.forEach(({ section, kinds }) => {
             section.hidden = !kinds.some((k) => !launcher.rows[k].card.hidden);
         });
@@ -1221,7 +1226,13 @@ window.PlexoraAgentPanel = (function () {
         const intro = el("p", "plx-ai-intro",
             "AI-powered analysis tailored to your current data. "
             + "Review the estimated credit usage before starting any run.");
-        root.append(head, intro);
+        // The sessions that stopped part-way (Plexora closed, a pause, a
+        // failure): each offered back above the tools, which start afresh.
+        // Filled once `ai/v1/resumable` answers; hidden while there is none.
+        const resume = el("section", "plx-ai-resume");
+        resume.appendChild(el("h3", "plx-ai-modality-name", "Continue where it stopped"));
+        resume.hidden = true;
+        root.append(head, intro, resume);
         const rows = {};
         const sections = [];
         const groups = modalitiesHere();
@@ -1277,7 +1288,7 @@ window.PlexoraAgentPanel = (function () {
         });
         root.append(none, balance, chat);
         // What the context step hides while it is up (and puts back).
-        const toolsView = [intro, ...sections.map(({ section }) => section), none, balance, chat];
+        const toolsView = [intro, resume, ...sections.map(({ section }) => section), none, balance, chat];
         hide.addEventListener("click", () => closeLauncher());
         backdrop.addEventListener("click", () => closeLauncher());
         const onKey = (event) => {
@@ -1295,12 +1306,15 @@ window.PlexoraAgentPanel = (function () {
         if (typeof window.addEventListener === "function") window.addEventListener("focus", onReturn);
         document.body.append(backdrop, root);
         launcher = { root, backdrop, onKey, onReturn, rows, sections, groups, none, balance, balanceText, topUp,
-                     title, toolsView, step: null, answer: null, asking: null, starting: false };
+                     title, toolsView, resume, resumeRows: [], resumable: null,
+                     step: null, answer: null, asking: null, starting: false };
         syncLaunchChip();
         paintLauncher();
         const first = Object.values(rows).map((row) => row.button).find((b) => !b.disabled) || hide;
         first.focus?.();
         const mine = launcher;
+        // Beside the estimate, not after it: neither waits for the other.
+        askResumable(mine);
         return askBalance(mine).then(() => {
             if (mine === launcher) {
                 // A tool that can start; else, when none can pay, Add credits.
@@ -1329,6 +1343,103 @@ window.PlexoraAgentPanel = (function () {
                 return mine;
             });
         return mine.asking;
+    }
+
+    /** GET /ai/v1/resumable for the open project: the sessions that stopped
+     *  part-way, painted as the launcher's "Continue where it stopped". A
+     *  failed ask offers nothing to resume and changes nothing else. */
+    function askResumable(mine) {
+        // A project no tool can run on (H&E only, say) has nothing to resume.
+        if (!mine || !aiAllowed() || !datasource() || !Object.keys(mine.rows).length) {
+            return Promise.resolve(mine);
+        }
+        return aiFetch(`ai/v1/resumable?project=${encodeURIComponent(datasource())}`)
+            .then((answer) => { mine.resumable = Array.isArray(answer.resumable) ? answer.resumable : []; })
+            .catch(() => { mine.resumable = []; })
+            .then(() => {
+                if (mine === launcher) paintResumable(mine);
+                return mine;
+            });
+    }
+
+    /** "12 min ago" from epoch seconds. */
+    function ago(seconds) {
+        const passed = Math.max(0, Date.now() / 1000 - Number(seconds || 0));
+        if (!seconds || passed < 60) return "just now";
+        if (passed < 3600) return `${Math.round(passed / 60)} min ago`;
+        if (passed < 86400) return `${Math.round(passed / 3600)} h ago`;
+        const days = Math.round(passed / 86400);
+        return `${days} ${days === 1 ? "day" : "days"} ago`;
+    }
+
+    /** Why a session stopped, in a line: Plexora closing, a known code, or
+     *  the reason itself (shortened; the full text is the card's title). */
+    function stoppedBecause(entry) {
+        const reason = String(entry.reason || "");
+        if (entry.status === "interrupted") return "Plexora closed before it finished";
+        if (AI_REASONS[reason]) return AI_REASONS[reason];
+        if (!reason) return "It stopped before it finished";
+        return reason.length > 90 ? `${reason.slice(0, 89)}…` : reason;
+    }
+
+    function paintResumable(mine) {
+        const list = mine.resumable || [];
+        mine.resumeRows.forEach((row) => row.card.remove());
+        mine.resumeRows = list.map((entry) => {
+            const kind = KINDS.find((k) => k.kind === entry.kind) || { name: entry.kind };
+            const card = el("div", "plx-ai-tool plx-ai-resume-tool");
+            card.dataset.kind = entry.kind;
+            card.dataset.session = String(entry.session_id || "");
+            const icon = el("span", "plx-ai-tool-icon");
+            icon.dataset.icon = entry.kind;
+            icon.setAttribute("aria-hidden", "true");
+            const progress = entry.progress || {};
+            const done = Number(progress.units_done) || 0;
+            const total = Number(progress.units_total) || 0;
+            const about = [total ? `${done} of ${total} steps done` : "", `stopped ${ago(entry.stopped_at)}`]
+                .filter(Boolean).join(" · ");
+            const go = button("plx-button plx-agent-button plx-ai-go", "Resume");
+            go.dataset.action = "ai-resume-session";
+            const note = el("p", "plx-ai-note");
+            const detail = el("span", "plx-ai-detail", stoppedBecause(entry));
+            note.appendChild(detail);
+            note.title = String(entry.reason || "");
+            const row = el("div", "plx-ai-row");
+            row.append(go, note);
+            const body = el("div", "plx-ai-tool-body");
+            body.append(el("h4", "plx-ai-tool-name", kind.name), el("p", "plx-ai-tool-about", about), row);
+            card.append(icon, body);
+            mine.resume.appendChild(card);
+            go.addEventListener("click", () => resumeSession(entry));
+            return { card, button: go, entry };
+        });
+        // The context step hides the tools and puts back what was shown: an
+        // answer arriving while it is up is put back with them.
+        if (mine.step) mine.resume.dataset.wasHidden = list.length ? "" : "1";
+        else mine.resume.hidden = !list.length;
+        paintLauncher();
+    }
+
+    /** Resume a stopped session from the launcher: the same start as a
+     *  paused card's Resume (`ai.run_session` with `resume_session`), shown
+     *  in this tab like a new run. */
+    async function resumeSession(entry) {
+        if (!launcher || launcher.starting || !entry || !entry.resume) return;
+        launcher.starting = true;
+        paintLauncher();
+        try {
+            const live = bridge();
+            const viewId = live && typeof live.sessionId === "function" ? live.sessionId() : null;
+            const run = await startRun({ ...entry.resume,
+                                         start_options: viewId ? { mirror: true, view_id: viewId } : { mirror: true } });
+            closeLauncher();
+            showPending(run.run_id, "");
+            watchStart(run.run_id);
+        } catch (error) {
+            if (launcher) launcher.starting = false;
+            paintLauncher();
+            toast("Plexora AI did not resume", error);
+        }
     }
 
     /** Minimize to the bar. Only the card's size: the agent and the

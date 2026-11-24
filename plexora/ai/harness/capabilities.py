@@ -287,6 +287,12 @@ class StatusInput(AgentModel):
     run_id: str | None = Field(None, description="A run id (air_...) or the job id that runs it "
                                "(job_...). Omit to list the recent runs.")
     limit: int = Field(20, ge=1, le=100)
+    project: str | None = Field(None, description="With resumable: the project whose sessions "
+                                "to list.")
+    resumable: bool = Field(False, description="List the project's sessions that stopped part-way "
+                            "(paused, failed, or cut off by a restart) and can be picked up with "
+                            "ai_run_session(resume_session=...): the newest session of each kind, "
+                            "when it is not finished.")
 
 
 def _row(row) -> dict:
@@ -319,6 +325,10 @@ def run_status(call, inp):
     from plexora.ai.harness.trace import TraceStore
 
     trace = TraceStore()
+    if inp.resumable:
+        if not inp.project:
+            raise AgentError("invalid_input", "resumable needs a project")
+        return {"project": inp.project, "resumable": resumable_sessions(inp.project, trace=trace)}
     if not inp.run_id:
         runs = [_row(r) for r in trace.runs(limit=inp.limit) if r["kind"] in RUN_KINDS]
         return {"runs": runs}
@@ -353,16 +363,80 @@ def run_status(call, inp):
     return out
 
 
-def _session_snapshot(kind, session_id) -> dict | None:
+#: How many of the newest runs the launcher's resume offer looks through.
+RESUMABLE_SCAN = 200
+#: A run's job in these states is still driving its session: nothing to offer.
+_LIVE_JOB = ("queued", "running")
+
+
+def resumable_sessions(project, *, trace=None, scan=RESUMABLE_SCAN) -> list:
+    """The sessions of `project` the launcher offers to resume, newest first:
+    for each kind, its newest session, when the run that last drove it ended
+    before the session did (paused, failed, stopped, or cut off when Plexora
+    closed) and the session itself is not finished. A session a live job is
+    still answering is the agent panel's to show, not this list's; a kind
+    whose newest session finished has nothing to resume -- starting afresh
+    supersedes an older one.
+
+    [{kind, project, session_id, run_id, status, reason, stopped_at,
+      charged_credits, phase, progress, resume}] -- `resume` is the
+    `ai.run_session` arguments that pick it up."""
+    import json
+
+    from plexora.agent import jobs
+    from plexora.ai.harness.trace import TraceStore
+
+    trace = trace or TraceStore()
+    decided, seen, out = set(), set(), []
+    for row in trace.runs(limit=scan):
+        kind, session_id = row.get("kind"), row.get("session_id")
+        if kind not in RUN_KINDS or row.get("project") != project or not session_id \
+                or session_id in seen or kind in decided:
+            continue
+        seen.add(session_id)
+        decided.add(kind)
+        job = jobs.store().get(job_id_for(row["run_id"]))
+        status = row.get("status")
+        if status == "running":
+            if job is None or job.get("status") in _LIVE_JOB:
+                continue          # live -- or run elsewhere, where it may still be
+            status = "failed" if job.get("status") == "failed" else "interrupted"
+        if status == "done":
+            continue
+        try:
+            engine, _events, schemas, _ = _session_parts(kind)
+            store = engine.store()
+            if not store.exists(session_id):
+                continue
+            record = store.load(session_id)
+        except Exception:         # a session that cannot be read cannot be resumed
+            continue
+        if record.get("state") in schemas.FINISHED_STATES:
+            continue
+        summary = json.loads(row.get("summary_json") or "null") or {}
+        snapshot = _session_snapshot(kind, session_id, record=record) or {}
+        out.append({"kind": kind, "project": project, "session_id": session_id,
+                    "run_id": row["run_id"], "status": status,
+                    "reason": summary.get("reason") or ((job or {}).get("error") or {}).get("message"),
+                    "stopped_at": row.get("finished_at") or row.get("started_at"),
+                    "charged_credits": summary.get("charged_credits"),
+                    "phase": snapshot.get("phase"), "progress": snapshot.get("progress"),
+                    "resume": {"kind": kind, "project": project, "resume_session": session_id}})
+    return out
+
+
+def _session_snapshot(kind, session_id, record=None) -> dict | None:
     """What a reloaded tab needs to put a running session's card back
     before its next event: the control route, the phase, the counts and
-    whether it is paused. None once the session is gone."""
+    whether it is paused. None once the session is gone. `record`: the
+    session's, when the caller has read it already."""
     try:
         engine, events, schemas, _ = _session_parts(kind)
         store = engine.store()
-        if not store.exists(session_id):
-            return None
-        record = store.load(session_id)
+        if record is None:
+            if not store.exists(session_id):
+                return None
+            record = store.load(session_id)
         control = store.control(session_id)
     except Exception:
         return None
@@ -488,6 +562,48 @@ class BalanceInput(AgentModel):
     dev: bool = False
 
 
+class _EstimateSession:
+    """`call.session` for one estimate: each project's handles are asked for
+    once. `AgentSession.data` checks a held table is still current by walking
+    its zarr store's metadata (`_zarr_fingerprint`) -- most of a second on a
+    big store -- and the markers, the channel match and each kind asked for
+    them again, six walks per launcher open."""
+
+    def __init__(self, session):
+        self._session = session
+        self._data = {}
+
+    def data(self, name):
+        if name not in self._data:
+            self._data[name] = self._session.data(name)
+        return self._data[name]
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
+class _EstimateCall:
+    """The capability call with `_EstimateSession` as its session, and the
+    marker / channel match gating and contrast share, worked out once."""
+
+    def __init__(self, call):
+        self._call = call
+        self.session = _EstimateSession(call.session)
+        self._matches = {}
+
+    def __getattr__(self, name):
+        return getattr(self._call, name)
+
+    def match(self, project):
+        """(markers a session would gate, `channel_match` of them)."""
+        if project not in self._matches:
+            from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
+
+            order, _skipped, _panel = _markers_for(self, [project], None)
+            self._matches[project] = (order, channel_match(self, [project], order))
+        return self._matches[project]
+
+
 def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
     """How many units a run of `kind` on `project` would declare, or (0, why
     not), and what the launcher must say before it starts one: `blocked` (it
@@ -495,6 +611,8 @@ def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
     yes)."""
     if picked:
         return (contrast_grids(len(picked)) if kind == "contrast" else len(picked)), None, {}
+    if not isinstance(call, _EstimateCall):
+        call = _EstimateCall(call)
     try:
         if kind == "contrast":
             # No cell table is no refusal: the run finds the cells in the
@@ -502,10 +620,7 @@ def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
             record = call.session.project(project)
             if record.image.is_blank:
                 return 0, "this sample has no image to set the contrast of", {}
-            from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
-
-            order, _skipped, _panel = _markers_for(call, [project], None)
-            match = channel_match(call, [project], order)
+            _order, match = call.match(project)
             if match["state"] == "none":
                 return 0, None, {"blocked": (
                     f"None of the {match['n_markers']} markers matches an image channel. Name "
@@ -518,10 +633,8 @@ def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
             # The markers a session would gate: context markers (a nuclear
             # stain, say) are left out, exactly as gating_session_start does,
             # and so is a marker no image channel matches (`channel_match`).
-            from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
-
-            order, _skipped, _panel = _markers_for(call, [project], None)
-            return _gating_estimate(order, channel_match(call, [project], order))
+            order, match = call.match(project)
+            return _gating_estimate(order, match)
         record = call.session.project(project)
         if record.image.is_blank:
             return 0, "this sample has no image to check", {}
@@ -571,16 +684,36 @@ def cap_block(raw, credit: int = CREDIT_MICRO) -> dict | None:
 
 
 def balance(call, inp):
+    from plexora import _work
     from plexora.ai.harness.gateway import GatewayError
+
+    wanted = () if not inp.project else RUN_KINDS if inp.kind == "both" \
+        else ("qc", "gating") if inp.kind == "qc_gating" else (inp.kind,)
 
     try:
         gateway = _gateway(inp.dev)
-        account = gateway.balance()
-        prices = gateway.pricing()
     except GatewayError as exc:
         raise AgentError("license_required" if exc.code in ("no_license", "ai_not_entitled")
                          else "resource_unavailable", str(exc),
                          detail={"code": exc.code, "retryable": exc.retryable}) from None
+    # The balance and the prices are each a round trip to the gateway (up to
+    # ~2 s apiece), and the units are read from the project here: all three
+    # side by side, so the launcher waits for the slowest, not their sum.
+    # `_work.executor`: threads here, each call inline on the website.
+    with _work.executor(max_workers=2, thread_name_prefix="ai-balance") as pool:
+        asked_balance = pool.submit(gateway.balance)
+        asked_prices = pool.submit(gateway.pricing)
+        estimating = _EstimateCall(call)
+        counted = {}
+        for kind in wanted:
+            picked = inp.markers if kind in ("gating", "contrast") else inp.channels
+            counted[kind] = _units(estimating, kind, inp.project, picked)
+        try:
+            account, prices = asked_balance.result(), asked_prices.result()
+        except GatewayError as exc:
+            raise AgentError("license_required" if exc.code in ("no_license", "ai_not_entitled")
+                             else "resource_unavailable", str(exc),
+                             detail={"code": exc.code, "retryable": exc.retryable}) from None
     credit = int(prices.get("credit_micro") or CREDIT_MICRO)
     action_url = account.get("action_url") or account.get("top_up_url")
     out = {"org_id": account.get("org_id"), "mode": account.get("mode"),
@@ -598,14 +731,11 @@ def balance(call, inp):
                         for name, f in (prices.get("features") or {}).items() if name in ("gating", "qc")}}
     if inp.project:
         estimates = {}
-        wanted = RUN_KINDS if inp.kind == "both" else ("qc", "gating") if inp.kind == "qc_gating" \
-            else (inp.kind,)
         for kind in wanted:
             # A contrast grid is priced as one gating unit (ContrastWorkflow).
             price = (prices.get("features") or {}).get(
                 "gating" if kind == "contrast" else kind) or {}
-            picked = inp.markers if kind in ("gating", "contrast") else inp.channels
-            units, why, words = _units(call, kind, inp.project, picked)
+            units, why, words = counted[kind]
             credits = int(price.get("credits") or 0) * units
             unit = "contrast grid" if kind == "contrast" else price.get("unit")
             estimates[kind] = {"units": units, "unit": unit, "credits": credits,

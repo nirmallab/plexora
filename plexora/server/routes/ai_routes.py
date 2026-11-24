@@ -2,6 +2,7 @@
 
     POST /ai/v1/runs                  start a run (ai.run_session, a job)
     GET  /ai/v1/runs                  the recent runs (ai.run_status)
+    GET  /ai/v1/resumable?project=    its sessions that stopped part-way (ai.run_status)
     GET  /ai/v1/runs/<id>             one run, by run id or job id
     POST /ai/v1/runs/<id>/control     {action: pause | resume | stop} (ai.run_control)
     GET  /ai/v1/balance               credit, prices, and ?project=&kind= an estimate
@@ -116,6 +117,14 @@ def start_run():
 @ai_bp.route("/runs", methods=["GET"])
 def list_runs():
     return _invoke("ai.run_status", {"limit": request.args.get("limit", 20, type=int)})
+
+
+@ai_bp.route("/resumable", methods=["GET"])
+def resumable():
+    """The project's sessions that stopped part-way: the launcher offers
+    each beside starting afresh."""
+    project = request.args.get("project") or request.args.get("datasource")
+    return _invoke("ai.run_status", {"project": project, "resumable": True})
 
 
 @ai_bp.route("/runs/<run_id>", methods=["GET"])

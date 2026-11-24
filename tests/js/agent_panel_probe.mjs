@@ -911,6 +911,47 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
             { mixedSections, buttons: Object.keys(both.buttons), he: heOnly, heAsked });
     }
 
+    {
+        // A session that stopped part-way (Plexora closed mid-run) is offered
+        // back above the tools; Resume posts its resume_session, mirrored here.
+        const page = makePage({ paid: true });
+        const stopped = { kind: "qc", project: "demo", session_id: "qs_old", run_id: "air_old",
+                          status: "interrupted", reason: "the process running this job stopped",
+                          stopped_at: Date.now() / 1000 - 600,
+                          progress: { units_done: 131, units_total: 400 },
+                          resume: { kind: "qc", project: "demo", resume_session: "qs_old" } };
+        page.onFetch = (input, init) => {
+            if (input.includes("ai/v1/balance")) return json(200, BALANCE);
+            if (input.includes("ai/v1/resumable")) return json(200, { success: true, resumable: [stopped] });
+            if (input.endsWith("ai/v1/runs") && init.method === "POST") {
+                return json(201, { success: true, run_id: "air_2", job_id: "job_2" });
+            }
+            return null;
+        };
+        await page.panel.openLauncher();
+        await tick(5);
+        const section = find(page.dom.body, (n) => n.classList && n.classList.contains("plx-ai-resume"));
+        const card = section && find(section, (n) => n.classList && n.classList.contains("plx-ai-resume-tool"));
+        const text = (n) => (n ? (n.textContent || "") + (n.children || []).map(text).join(" ") : "");
+        const words = text(card);
+        const asked = page.fetches.find((f) => f.url.includes("ai/v1/resumable"));
+        const toolsStill = Boolean(page.panel.launcher()?.buttons?.qc) && !page.panel.launcher().buttons.qc.disabled;
+        byAction(page.dom.body, "ai-resume-session").click();
+        await tick(5);
+        const sent = page.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
+        const body = sent && sent.body;
+        check("Plexora AI: a session that stopped part-way is offered above the tools (\"131 of 400 steps "
+            + "done\", why it stopped); Resume posts its resume_session for the open project, mirrored "
+            + "into this tab, and the tools still start afresh",
+            Boolean(section) && section.hidden === false && Boolean(card)
+            && /131 of 400 steps done/.test(words) && /Plexora closed before it finished/.test(words)
+            && Boolean(asked) && /project=demo/.test(asked.url) && toolsStill
+            && body && body.resume_session === "qs_old" && body.kind === "qc" && body.project === "demo"
+            && body.start_options && body.start_options.mirror === true
+            && page.panel.launcher() === null,
+            { section: Boolean(section), words, asked: asked && asked.url, body });
+    }
+
     const poor = makePage({ paid: true });
     poor.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, Object.assign({}, BALANCE, {
         available_credits: 2000.4,
