@@ -116,12 +116,35 @@ def as_agent_error(exc: BaseException) -> AgentError:
         # inverted rectangle, say) is Plexora's bug, not the caller's input:
         # said as `invalid_input` it reads as "your answer was wrong".
         return AgentError("internal_error", f"{type(exc).__name__}: {exc}", detail=foreign)
+    if isinstance(exc, IndexError):
+        # An index out of range is Plexora's own bug (lsp35766_p193_2: an
+        # empty column indexed at -1), never the caller's input: said as
+        # `invalid_input` it read as "your answer was wrong", and the workers
+        # retried the same answer while the session stood still.
+        return AgentError("internal_error", f"IndexError: {exc}", detail=_raised_at(exc))
     if isinstance(exc, KeyError):
         message = exc.args[0] if exc.args else "not found"
         return AgentError("invalid_input", str(message))
     if isinstance(exc, (ValueError, LookupError)):
         return AgentError("invalid_input", str(exc))
     return AgentError("internal_error", f"{type(exc).__name__}: {exc}")
+
+
+def _raised_at(exc):
+    """{raised_in}: the innermost frame of Plexora's own code an exception
+    passed through, or None."""
+    import os
+    import traceback
+
+    if exc.__traceback__ is None:
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ours = [f for f in traceback.extract_tb(exc.__traceback__)
+            if os.path.abspath(f.filename).startswith(root)]
+    if not ours:
+        return None
+    last = ours[-1]
+    return {"raised_in": f"{os.path.relpath(last.filename, os.path.dirname(root))}:{last.lineno}"}
 
 
 def _raised_outside(exc):

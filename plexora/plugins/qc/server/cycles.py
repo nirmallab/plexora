@@ -7,8 +7,11 @@ cycles are inferred here, first rule that fits wins:
 
 1. the user's override (`set_qc_cycles`): groups of channel names, or a period;
 2. repeated nuclear channels at equal gaps (DNA_1 ... DNA_n every k channels);
-3. a cycle suffix on most channel names (`CD3_c2`, `Ki67_cycle3`, `r4`);
-4. none: cross-cycle checks report themselves unavailable, with the hint.
+3. nuclear channels numbered in channel order (DNA1 ... DNA12), whatever the
+   gaps: a panel whose first cycles hold four markers and the later ones
+   three (lsp35766_p193_2) is still one DNA channel per cycle;
+4. a cycle suffix on most channel names (`CD3_c2`, `Ki67_cycle3`, `r4`);
+5. none: cross-cycle checks report themselves unavailable, with the hint.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import re
 from collections import Counter
 
 _CYCLE_SUFFIX = re.compile(r"[_\-\s.](?:c|cyc|cycle|r|round)(\d+)$", re.I)
+_TRAILING_NUMBER = re.compile(r"(\d+)\D*$")
 
 
 def is_nuclear(name) -> bool:
@@ -38,8 +42,12 @@ def infer(names, *, override=None) -> dict:
         by_repeat["confidence"] = 0.95
         by_repeat["evidence"]["agrees_with"] = "name suffix"
         return by_repeat
-    if by_repeat:
+    by_number = _from_numbered(names, nuclear)
+    if by_repeat and (by_repeat["confidence"] >= 0.9 or not by_number):
         return by_repeat
+    if by_number:
+        # Gaps that deviate are a guess (0.75); numbers in order are not.
+        return by_number
     if by_suffix:
         return by_suffix
     return {"cycles": [], "of_channel": {}, "method": "none", "confidence": 0.0,
@@ -100,6 +108,33 @@ def _from_repeats(names, nuclear):
                    {"nuclear_channels": [names[i] for i in nuclear], "gap": mode})
 
 
+def _from_numbered(names, nuclear):
+    """Each cycle starts at its nuclear channel when the nuclear channels are
+    numbered 1..n (or k..k+n-1) in the order they appear: the numbers say
+    which cycle each belongs to, so unequal gaps between them are cycles of
+    different sizes, not doubt. Confidence 0.9, as for equal gaps."""
+    if len(nuclear) < 2:
+        return None
+    numbers = []
+    for index in nuclear:
+        match = _TRAILING_NUMBER.search(str(names[index]))
+        if not match:
+            return None
+        numbers.append(int(match.group(1)))
+    if numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+        return None
+    gaps = [b - a for a, b in zip(nuclear, nuclear[1:])]
+    if min(gaps) < 2:
+        return None                         # two nuclear channels in one cycle
+    groups = []
+    for index, start in enumerate(nuclear):
+        end = nuclear[index + 1] if index + 1 < len(nuclear) else len(names)
+        groups.append(list(range(0 if index == 0 else start, end)))
+    return _result(names, groups, "nuclear_numbered", 0.9,
+                   {"nuclear_channels": [names[i] for i in nuclear],
+                    "numbers": numbers, "gaps": sorted(set(gaps))})
+
+
 def _from_suffix(names):
     found = {}
     for index, name in enumerate(names):
@@ -135,6 +170,11 @@ def resolved(cycles) -> tuple:
     cycles = cycles or {}
     nuclear = [c.get("nuclear") for c in cycles.get("cycles") or [] if c.get("nuclear")]
     if len(nuclear) < 2:
+        named = (cycles.get("evidence") or {}).get("nuclear_channels") or []
+        if len(named) >= 2:
+            return False, (f"{len(named)} DNA channels were found ({', '.join(named[:4])}"
+                           f"{', ...' if len(named) > 4 else ''}) but not which cycle each "
+                           "belongs to; set_qc_cycles states the cycles")
         return False, "fewer than two DNA channels were found, one per cycle"
     confidence = float(cycles.get("confidence") or 0.0)
     if confidence < RESOLVED_CONFIDENCE:

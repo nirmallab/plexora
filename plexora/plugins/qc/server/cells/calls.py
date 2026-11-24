@@ -701,11 +701,20 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
         count = int(np.count_nonzero(entry["note"]))
         if count:
             marker_noted.setdefault(marker, {})[reason] = count
+    # A marker QC failed outright flags every cell (lsp35766_p193_2's CD21:
+    # all 448,649 cells "marker unreliable"). The per-cell columns keep it;
+    # the counts name such markers apart and count the cell-level flags, so
+    # one failed channel does not read as every cell being in doubt.
+    whole = _whole_channel_markers(n, flags)
+    if whole:
+        flagged_any = _marker_cells(n, flags, ("exclude", "warn"), skip=whole)
+        unreliable_any = _marker_cells(n, flags, ("exclude",), skip=whole)
     summary = {"n": n, "n_fail": int(failing.sum()), "n_warn": int((~failing & warned).sum()),
                "n_noted": int(noted_any.sum()),
                # Every cell anything flagged (excluded, warned, or a marker
-               # excluded or warned), each once.
+               # excluded or warned in some of its cells), each once.
                "n_flagged_any": int((failing | warned | flagged_any).sum()),
+               "markers_failed_whole": whole,
                "by_category": by_category,
                "disabled_categories": sorted(disabled),
                "marker_noted": marker_noted,
@@ -1070,6 +1079,36 @@ def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method
 
     return (frame, failing, warned, by_marker, any_of(noted_rows), flagged_any,
             any_of(unreliable_rows))
+
+
+#: A marker whose excluding flag covers at least this share of the cells is
+#: a failed channel, not a cell-level finding (`_whole_channel_markers`).
+WHOLE_CHANNEL_SHARE = 0.999
+
+
+def _whole_channel_markers(n, flags) -> list:
+    """The markers an excluding flag covers in (nearly) every cell."""
+    if not n:
+        return []
+    out = set()
+    for (marker, _reason), masks in flags.items():
+        mask = masks.get("exclude")
+        if mask is not None and np.count_nonzero(mask) >= WHOLE_CHANNEL_SHARE * n:
+            out.add(marker)
+    return sorted(out)
+
+
+def _marker_cells(n, flags, statuses, *, skip=()) -> np.ndarray:
+    """Cells any marker flag of `statuses` hits, leaving out the `skip` markers."""
+    out = np.zeros(n, dtype=bool)
+    for (marker, _reason), masks in flags.items():
+        if marker in skip:
+            continue
+        for status in statuses:
+            mask = masks.get(status)
+            if mask is not None:
+                out |= mask
+    return out
 
 
 def _regions_and_pairs(ds, result, *, previous=None):

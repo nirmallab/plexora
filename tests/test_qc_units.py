@@ -307,6 +307,30 @@ def test_cycles_are_inferred_from_the_names(names, method, groups):
     assert [c["channels"] for c in found["cycles"]] == groups
 
 
+def test_numbered_dna_channels_are_one_per_cycle_whatever_the_gaps():
+    """lsp35766_p193_2 (2026-11-23): 12 DNA channels, five channels apart for
+    three cycles and four after; the gaps rule gave up, and registration and
+    DNA retention were skipped as if fewer than two DNA channels existed."""
+    from plexora.plugins.qc.server import cycles
+
+    names = ["DNA1", "Ki67", "CDX2", "CD31", "panCK", "DNA2", "CD20", "CD3E", "PDPN", "HH3",
+             "DNA3", "CD163", "FOXP3", "GZMB", "aSMA", "DNA4", "Ecadherin", "CD11c", "PD1",
+             "DNA5", "CD8a", "CD34", "CD103"]
+    found = cycles.infer(names)
+    assert found["method"] == "nuclear_numbered"
+    assert [c["nuclear"] for c in found["cycles"]] == ["DNA1", "DNA2", "DNA3", "DNA4", "DNA5"]
+    assert found["cycles"][3]["channels"] == ["DNA4", "Ecadherin", "CD11c", "PD1"]
+    assert cycles.resolved(found) == (True, None)
+    # Numbers out of order are no evidence of the cycles.
+    shuffled = cycles.infer(["DNA2", "CD3", "CD8", "DNA1", "CD20", "DNA3", "CD4"])
+    assert shuffled["method"] != "nuclear_numbered"
+    assert cycles.resolved(shuffled)[0] is False
+    # Nuclear channels found but no cycle structure: the reason says so.
+    ok, why = cycles.resolved({"cycles": [], "method": "none", "confidence": 0.0,
+                               "evidence": {"nuclear_channels": ["DNA1", "DNA2", "DNA3"]}})
+    assert not ok and "3 DNA channels were found" in why and "set_qc_cycles" in why
+
+
 def test_a_cycle_override_wins():
     from plexora.plugins.qc.server import cycles
 
@@ -410,3 +434,26 @@ def test_clip_to_keeps_what_is_inside_and_nothing_else():
     small = box(12, 12, 14, 14)
     touched = polygons.geometry_to_grid(small, grid, touch=True)
     assert touched.sum() == 1 and touched[1, 1]
+
+
+def test_a_failed_channel_is_named_apart_from_the_cells_flagged():
+    """lsp35766_p193_2 (2026-11-23): QC failed CD21 outright and the summary
+    called all 448,649 cells "marker unreliable"; the failed channel is named
+    on its own and the counts are the cells flagged cell by cell."""
+    import numpy as np
+
+    from plexora.plugins.qc.server.cells import calls
+
+    n = 10
+    every = np.ones(n, dtype=bool)
+    some = np.zeros(n, dtype=bool)
+    some[:3] = True
+    none = np.zeros(n, dtype=bool)
+    flags = {("CD21", "failed_channel"): {"exclude": every, "warn": none, "note": none},
+             ("CD8", "saturation"): {"exclude": some, "warn": none, "note": none},
+             ("PD1", "background"): {"exclude": none, "warn": some[::-1].copy(), "note": none}}
+    whole = calls._whole_channel_markers(n, flags)
+    assert whole == ["CD21"]
+    assert int(calls._marker_cells(n, flags, ("exclude",), skip=whole).sum()) == 3
+    assert int(calls._marker_cells(n, flags, ("exclude", "warn"), skip=whole).sum()) == 6
+    assert calls._whole_channel_markers(0, flags) == []
