@@ -4508,7 +4508,23 @@ deliberately left out and what should be built next.
   counts from stepping back). A reader told `busy` sleeps on a condition an
   answer or a check's merge wakes (`session_tools.wake`, `BUSY_POLL_S` 1 s
   cap) and re-checks a stop or pause on every pass; `memo.get` reads each
-  memo file once (`_INDEX`, by mtime and size).
+  memo file once (`_INDEX`, by mtime and size). Every model call and
+  keep-warm ping, across runs in the process, also passes `_PACE` (a sliding
+  60 s window, `PLEXORA_AI_CALLS_PER_MIN`, default 100; a halt is never held).
+  **Packets are drawn outside the session's lock** when a reader asks with
+  `parallel` > 1 for a kind in the engine's `PREPARABLE` (QC:
+  `packets.PREPARABLE` = channel_audit, score_review, artifact_confirm;
+  `PLEXORA_QC_PREPARE=0` turns it off): under the lock `choose` picks the
+  units and `reserve` holds them (`record["reserved"]`, counted as out by
+  `_issue`, `_out_keys` and `next_ready`, lapsing after `RESERVE_TTL_S` 120 s
+  so a dead reader frees them); outside it `prerender` draws the panels
+  from a `snapshot()` into the content-keyed panel cache (`store=False`);
+  back under the lock `unreserve` hands the units to `issue` only if their
+  states are unchanged and none went out meanwhile, else the reader picks
+  afresh. The build then reads its panels from the cache (`sheets._draw`
+  draws outside `_PANELS_LOCK`; LRU of `PANEL_CACHE_SIZE` 1024 and
+  `PLEXORA_QC_PANEL_CACHE_MB`, default 256). The QC engine imports shapely
+  at load when threaded: two threads' first imports hit its circular import.
   The harness (`ai/harness/decision.py`) never sends `needs_setup` to its
   model, and collects the set-up before any model is called:
   `DecisionRun._collect_setup` runs first in `_start` (workflows with
@@ -4686,8 +4702,15 @@ deliberately left out and what should be built next.
   and outlines are traced from what the checks computed — deciding a
   candidate before the pass ended made the result depend on machine speed;
   several packets go out at once with `qc_next(parallel=N)`
-  (`next_ready`, the harness's lanes, `lanes_for` → start's `lanes`, default
-  `DEFAULT_LANES` 8 or `PLEXORA_QC_LANES`, 1 without threads): audit pages,
+  (`next_ready`, the harness's lanes, `lanes_for(requested, units)` → start's
+  `lanes`: the start's own number, else `PLEXORA_QC_LANES`, else sized from
+  the planned work -- stain checks + ⌈score reviews / `REVIEWS_PER_LANE` 4⌉
+  + 1, clamped to `MIN_LANES` 2 .. `MAX_LANES` = `session_tools.MAX_PARALLEL`
+  32, so a 40-channel panel gets 32 and a 5-channel one 5 -- and 1 without
+  threads; `QCWorkflow.max_lanes` 32, `GatingWorkflow.max_lanes` 8; the
+  delegate block offers external MCP workers `min(8, lanes)` lanes, each a
+  scoped reader passing `parallel`, `delegation.ROLES["qc_worker"]`
+  `lanes`/`scoped_parallel`): audit pages,
   score reviews and stain checks depend on no other answer and go out side
   by side (a stain re-read or a second score round only after its own
   unit's answer), the visual pass and the final review go out alone (stain

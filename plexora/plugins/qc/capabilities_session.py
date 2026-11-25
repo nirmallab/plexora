@@ -199,41 +199,56 @@ class QCSessionOptions(AgentModel):
     biology: QCBiology | None = Field(None, description="The tissue and disease the user "
                                       "named, shown to the stain check: a prior, never a rule.")
     seed: int = 0
-    #: Default from PLEXORA_QC_LANES (8).
+    #: Default: from the session's planned work (`lanes_for`), or PLEXORA_QC_LANES.
     lanes: int | None = Field(
         None, ge=1, le=session_tools.MAX_PARALLEL,
         description="How many packets a harness answering this session keeps out at once "
                     "(`qc_next(parallel=...)`). Decisions that depend on no answer still out "
-                    "go side by side; the rest wait. 1: one at a time.")
+                    "go side by side; the rest wait. 1: one at a time. Default: as many as "
+                    "the image's independent looks can fill.")
 
 
-#: The packets an in-app run keeps out at once, unless the start or
-#: PLEXORA_QC_LANES says otherwise. Stain checks (a median 104 s each in the
-#: local trace), score reviews and audit pages are independent: on a
-#: sixteen-channel panel 8 lanes finished in 41 s what 4 did in 51 s and 1 in
-#: 154 s (bench_qc `cyclic`, a tenth of real latency), the same calls and the
-#: same decisions. A lane with nothing ready sleeps until an answer wakes it,
-#: and the harness's limiter drops lanes on a rate limit, so lanes the work
-#: cannot fill cost nothing; 8 calls in flight stay well inside the
-#: gateway's per-device rate.
-DEFAULT_LANES = 8
+#: The fewest and most lanes a session is answered with when the start does
+#: not name a number. The most is the tools' cap (`MAX_PARALLEL`): past it a
+#: device's calls would crowd the gateway's per-minute rate on the short
+#: looks, which the harness paces anyway (`decision._Pace`).
+MIN_LANES = 2
+MAX_LANES = session_tools.MAX_PARALLEL
+#: The most worker conversations a delegate block asks an agent to run at
+#: once on one QC session: a client launches them together (one message),
+#: and each re-reads the skill and the reading guide.
+DELEGATE_LANES = 8
+#: Score reviews a lane answers in the time one stain check takes: a review
+#: is ~5 s, a stain check ~104 s (medians of the local trace), so one lane
+#: covers several reviews while the stain checks run.
+REVIEWS_PER_LANE = 4
 
 
-def lanes_for(requested=None) -> int:
+def lanes_for(requested=None, units=None) -> int:
     """The lanes a session is answered with: the start's `lanes`, else
-    PLEXORA_QC_LANES, else `DEFAULT_LANES`; 1 where no thread can run them
-    (the browser build)."""
+    PLEXORA_QC_LANES, else what its planned work can fill -- every stain
+    check at once (each is independent, and ~104 s), a lane per
+    `REVIEWS_PER_LANE` score reviews, one for the audit -- between
+    `MIN_LANES` and `MAX_LANES`. A 40-channel image fills the cap; a
+    five-channel one, about five. 1 where no thread can run them (the
+    browser build). A lane with nothing ready sleeps until an answer wakes
+    it, so one the work cannot fill costs nothing."""
     import os
 
     if not _work.threaded():
         return 1
     if requested:
-        return max(1, min(session_tools.MAX_PARALLEL, int(requested)))
-    try:
-        lanes = int(os.environ.get("PLEXORA_QC_LANES") or DEFAULT_LANES)
-    except ValueError:
-        lanes = DEFAULT_LANES
-    return max(1, min(session_tools.MAX_PARALLEL, lanes))
+        return max(1, min(MAX_LANES, int(requested)))
+    if os.environ.get("PLEXORA_QC_LANES"):
+        try:
+            return max(1, min(MAX_LANES, int(os.environ["PLEXORA_QC_LANES"])))
+        except ValueError:
+            pass
+    checks = [u for u in (units or {}).values() if u.get("type") == "check"]
+    stains = sum(1 for u in checks if u.get("check") == "stain")
+    reviews = sum(1 for u in checks if u.get("check") in ("blur", "registration", "artifacts"))
+    wanted = stains + -(-reviews // REVIEWS_PER_LANE) + 1
+    return max(MIN_LANES, min(MAX_LANES, wanted))
 
 
 def option_defaults() -> dict:
@@ -332,6 +347,9 @@ def start(call, inp):
         units[engines.unit_key(project, "check", unit["id"])] = unit
     result_id = results.new_result_id()
     options = inp.model_dump(mode="json")
+    # How many packets a harness keeps out at once: what the planned work can
+    # fill, kept with the options so a resume answers with the same.
+    options["lanes"] = lanes_for(inp.lanes, units)
     if inp.map_cell_um:
         options["scan_params"] = {"cell_um": float(inp.map_cell_um)}
     # The user's cycle groups (`set_qc_cycles`) enter the scan's fingerprint.
@@ -383,7 +401,7 @@ def start(call, inp):
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
             "checks": [u["id"] for u in units.values() if u["type"] == "check"],
-            "planning_notes": planning_notes, "lanes": lanes_for(inp.lanes),
+            "planning_notes": planning_notes, "lanes": options["lanes"],
             "mirror": {k: record["mirror"].get(k) for k in ("status", "requested", "view_id",
                                                             "reason", "last_error", "hint")
                        if record["mirror"].get(k)},
@@ -598,14 +616,20 @@ class QCTools(session_tools.SessionTools):
         return _guide(reading, known)
 
     def delegate_block(self, record, session_id):
-        """QC is answered in the coordinator's conversation unless the user's
-        models file maps a QC task: then its packets go to workers, one per
-        model (`plexora.ai.delegation`)."""
+        """How an agent hands QC's packets out (`plexora.ai.delegation`): when
+        the user's models file maps a QC task, one worker per model, each
+        passing `parallel` so the models' workers answer side by side; else,
+        when the session's work fills more than one lane, one worker per lane
+        (`lanes`, at most `DELEGATE_LANES`), each its own reader. A one-lane
+        session is answered in the coordinator's conversation."""
         from plexora.ai import delegation, models_config
 
-        if record.get("state") in self.FINISHED_STATES or not models_config.mapped("qc"):
+        if record.get("state") in self.FINISHED_STATES:
             return {}
-        return {"delegate": delegation.block("qc_worker", session_id=session_id)}
+        lanes = max(1, min(DELEGATE_LANES, int((record.get("options") or {}).get("lanes") or 1)))
+        if not models_config.mapped("qc") and lanes <= 1:
+            return {}
+        return {"delegate": delegation.block("qc_worker", session_id=session_id, lanes=lanes)}
 
     def status_extra(self, engine, detail="brief"):
         record = engine.record

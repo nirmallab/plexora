@@ -80,6 +80,11 @@ ROLES = {
         "next": "qc.next",
         "answer": "qc.answer",
         "first_task": "qc.planning",
+        # Several workers answer the one session at once (`block(lanes=...)`);
+        # with a models file, each model's worker passes `parallel` too, so
+        # the stain reader and the inspector answer side by side.
+        "lanes": True,
+        "scoped_parallel": True,
     },
     "object_review_worker": {
         "tier": "judgement",
@@ -205,7 +210,9 @@ def brief(role: str, *, tasks=None, reader=None, parallel=None, **context) -> st
         lines.append(f"tasks: {', '.join(tasks)} -- pass `tasks` and `reader` on every "
                      f"{_tool(spec['next'])} and {_tool(spec['answer'])}; on `other_tasks`, stop "
                      "and return the line the skill gives for it")
-        lines.append(f"reader: {reader}")
+        lines.append(f"reader: {reader}" + (
+            f", parallel: {parallel} -- pass `parallel` too; other models' workers answer the "
+            "same session beside you" if parallel else ""))
     elif reader and parallel:
         lines.append(f"reader: {reader}, parallel: {parallel} -- pass both on every "
                      f"{_tool(spec['next'])} and {_tool(spec['answer'])}; other lanes answer "
@@ -250,6 +257,9 @@ def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context
     groups = models_config.groups(spec["module"])
     first = first_task or spec.get("first_task")
     starts = next((i for i, g in enumerate(groups) if first in g["tasks"]), 0)
+    # Each model's worker its own reader, several out at once across them
+    # (a role whose session takes it: QC's stain reader beside its inspector).
+    parallel = int(lanes) if lanes > 1 and spec.get("scoped_parallel") else None
     for n, group in enumerate(groups, start=1):
         reader = f"{spec['module']}-{n}"
         chosen = group["model"] or model
@@ -257,7 +267,8 @@ def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context
                         **({"effort": group["effort"]} if group.get("effort") else {}),
                         "tasks": group["tasks"], "reader": reader,
                         "launch": LAUNCH[0] if n - 1 == starts else LAUNCH[1],
-                        "brief": brief(role, tasks=group["tasks"], reader=reader, **context)})
+                        "brief": brief(role, tasks=group["tasks"], reader=reader,
+                                       parallel=parallel, **context)})
     out.pop("brief")
     out["model"] = None
     out.pop("pick", None)
@@ -281,7 +292,7 @@ def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context
 LANES_HOW = ("launch one worker per lane in ONE message -- each a fresh conversation with its "
              "lane's `brief` as the whole prompt, on `model` (or the model `pick` describes), "
              "given only `tools` -- all in the foreground: {wait} The session gives a lane only "
-             "markers that stand on nothing another lane holds, so the gates are what one "
+             "decisions that stand on nothing another lane holds, so the results are what one "
              "worker at a time reaches, sooner. When a lane's worker returns, launch a fresh one "
              "with that lane's brief while the session is not decided. Without workers, follow "
              "the skill yourself")

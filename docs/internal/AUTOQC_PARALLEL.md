@@ -144,12 +144,64 @@ where scoring takes seconds.
   - Two existing bugs are fixed: QC's "paused" state was never shown, and the
     gating classifier ignored `answered.closed[]`.
 
+## Round 2: lanes sized from the panel, external lanes, packets drawn outside the lock
+
+**Lanes come from the work.** A fixed 8 left a 40-channel image's 40 stain
+checks queuing for lanes. A session now sizes its lanes from what it plans:
+stain checks, plus one lane per 4 score reviews, plus one, clamped to 2..32
+(`lanes_for`). A 5-channel panel gets 5 lanes and a 40-channel panel 32. A
+number given at the start, or `PLEXORA_QC_LANES`, still wins. More lanes only
+help while there are more independent looks than lanes. Candidates stay in
+rank order wherever they touch, so the cap is set by the stain checks.
+Gating keeps its cap of 8.
+
+**A pace across the process.** With up to 32 lanes, and several runs at
+once, the limiter that reacts to rate-limit retries is not enough. Every call
+and keep-warm ping now passes a shared per-minute pace
+(`PLEXORA_AI_CALLS_PER_MIN`, default 100) before it is sent.
+
+**External MCP workers get lanes.** The QC delegate block now lists
+`min(8, lanes)` workers. Each is its own reader that passes `parallel`, all
+launched in one message, as gating's are.
+
+**Packets drawn outside the session's lock.** Real sessions'
+`decisions.jsonl` show what building a packet costs: median 2.1 s, p90 7 s,
+max 25 s (audit pages 6.3 s, score reviews 2.65 s, confirm sheets 2.5 s).
+While one lane built a packet, every other lane waited for the lock. Now,
+for audit pages, score reviews and confirm sheets:
+
+1. Under the lock, the units are chosen and reserved. A reservation counts
+   as out and lapses after 120 s.
+2. Outside the lock, their panels are drawn into the content-keyed panel
+   cache.
+3. Under the lock again, the packet is built, reading the panels from the
+   cache, but only if no unit moved meanwhile.
+
+The panel cache grew from 64 entries to 1024, capped at 256 MB
+(`PLEXORA_QC_PANEL_CACHE_MB`). `PLEXORA_QC_PREPARE=0` turns this off.
+
+All runs below use the stand-in model at 0.05× the traced latencies.
+
+| Cyclic scene (16 channels) | Wall s | Model calls | Panel cache hits / misses | Same decisions |
+|---|---|---|---|---|
+| 1 lane | 87.7 | 21 | 5 / 154 | – |
+| 8 lanes | 29.3 | 21 | 156 / 154 | yes |
+| lanes from the panel (16) | 29.0 | 21 | 156 / 154 | yes |
+
+At 8 lanes, the time spent building packets under the lock was:
+
+| Scene | Before | After |
+|---|---|---|
+| cyclic | 4276 ms | 3321 ms (−22%) |
+| mixed | 1980 ms | 1411 ms (−29%) |
+
+The decisions were the same in both cases.
+
+Sixteen lanes match eight here, because the scene has only 12 stain checks.
+The gain from more lanes appears on panels with more stain checks than 8.
+
 ## Not done
 
-- **A live run against the real gateway.** The plan's live serial-against-4-lanes
-  run needs credits and a project chosen by the user, so it waits.
-- **A delegate block with lanes for QC's external MCP workers**
-  (`delegation.py`). The engine already serves them in parallel if they pass
-  `parallel`.
-- **Packet building outside the session lock (Phase 5).** The stand-in runs
-  showed no lock-bound stretch at 8 lanes; revisit if a live run does.
+- **A live run against the real gateway.** The plan's live run, serial
+  against lanes, needs credits and a project chosen by the user, so it
+  waits.

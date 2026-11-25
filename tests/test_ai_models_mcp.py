@@ -233,8 +233,9 @@ def test_a_session_with_lanes_hands_out_one_worker_per_lane_launched_together(
         assert f"reader: {lane['reader']}, parallel: 3" in lane["brief"]
         assert "packets, then stop" in lane["brief"] and "gs_x" in lane["brief"]
     assert "ONE message" in block["how"]
-    # QC takes no lanes: its workers stay one at a time.
-    assert "lanes" not in delegation.block("qc_worker", session_id="qs_x", lanes=3)
+    # QC takes lanes too: the engine hands each only what no other lane holds.
+    qc = delegation.block("qc_worker", session_id="qs_x", lanes=3)
+    assert [lane["reader"] for lane in qc["lanes"]] == ["lane1", "lane2", "lane3"]
 
 
 # -- gating: scoped readers -------------------------------------------------------------------

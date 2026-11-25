@@ -781,7 +781,7 @@ def result_signature(project, session_id) -> dict:
 
 
 def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, latency_scale=0.02,
-                jitter=0.0) -> dict:
+                jitter=0.0, calls_per_min=None) -> dict:
     """The `harness:N` arm: Plexora's own AI harness (`QCRun`) answering a QC
     session with N lanes, against a stand-in gateway whose model waits each
     task's real median latency (`TASK_LATENCY_S` x `latency_scale`, +-`jitter`
@@ -836,11 +836,25 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
         client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None)
         # Every arm asks the model afresh: answers are never replayed from
         # another arm's memo (`reuse_answers`).
-        options = QCOptions(project=project, parallel_markers=max(1, int(lanes)),
+        options = QCOptions(project=project, parallel_markers=None if lanes is None else max(1, int(lanes)),
                             start_options={"map_cell_um": cell_um, "on_limit": "extend",
                                            "seed": seed, "reuse_answers": False, "mirror": False})
-        summary = QCRun(options, gateway=client, trace=TraceStore(Path(tdir) / "trace.sqlite"),
-                        session=session).run()
+        # The stand-in gateway has no per-device rate: the harness's pace
+        # (`decision._Pace`, the real gateway's 120 a minute) is lifted, or
+        # scaled-down runs would measure the pace, not the lanes.
+        from plexora.plugins.qc.server import sheets
+
+        panels0 = dict(sheets.PANEL_STATS)
+        paced = os.environ.get("PLEXORA_AI_CALLS_PER_MIN")
+        os.environ["PLEXORA_AI_CALLS_PER_MIN"] = str(calls_per_min or 100_000)
+        try:
+            summary = QCRun(options, gateway=client, trace=TraceStore(Path(tdir) / "trace.sqlite"),
+                            session=session).run()
+        finally:
+            if paced is None:
+                os.environ.pop("PLEXORA_AI_CALLS_PER_MIN", None)
+            else:
+                os.environ["PLEXORA_AI_CALLS_PER_MIN"] = paced
         calls = list(gateway.calls)
     wall = time.monotonic() - started
     if summary.get("status") != "done":
@@ -852,7 +866,7 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
         task = _task_of_wire(call["body"].get("task"))
         by_task[task] = by_task.get(task, 0) + 1
     tokens = summary.get("tokens") or {}
-    row = {"status": "done", "lanes": int(lanes), "packets": summary.get("packets"),
+    row = {"status": "done", "lanes": summary.get("parallel_markers") or 1, "packets": summary.get("packets"),
            "model_calls": summary.get("model_calls"), "invalid_answers": summary.get("invalid_answers"),
            "wall_s": round(wall, 2), "model_s": round(busy["model_s"], 2),
            "peak_calls_out": busy["peak"], "peak_outstanding": summary.get("peak_outstanding"),
@@ -861,7 +875,8 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
            "tokens_cache_write": tokens.get("cache_write"), "tokens_output": tokens.get("output"),
            "cache_read_share": (summary.get("cache") or {}).get("read_share"),
            "charged_micro": summary.get("charged_micro"), "calls_by_task": by_task,
-           "signature": signature, "timeline": sorted(timeline)}
+           "signature": signature, "timeline": sorted(timeline),
+           "panels": {k: sheets.PANEL_STATS[k] - panels0[k] for k in ("hits", "misses")}}
     from plexora.plugins.qc.server.engine import store
 
     # What did not run and why (a check skipped, say): two arms that differ
@@ -871,6 +886,13 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
                             for n in record.get("planning_notes") or [])
     row["checks"] = sorted(f"{u['id']}={u['state']} ({u.get('reason') or ''})"
                            for u in record["units"].values() if u.get("type") == "check")
+    # How long building a packet held the session's lock (`decisions.jsonl`'s
+    # `ms.build`): what the drawing outside the lock takes off it.
+    builds = sorted(float((d.get("ms") or {}).get("build") or 0)
+                    for d in store().decisions(summary["session_id"])
+                    if d.get("event") == "issued" and (d.get("ms") or {}).get("build") is not None)
+    row["build_ms"] = {"median": round(builds[len(builds) // 2], 1) if builds else None,
+                       "total": round(sum(builds), 1)}
     from plexora.agent import invoke
 
     # Each scene is scored from scratch by the next arm too.
@@ -903,7 +925,8 @@ def run_synthetic(scenarios, agent_style="oracle", *, arms=ARMS, seed=0, size=10
                         # A scene of its own per harness arm, the same pixels: the
                         # stain ledger and the scan caches an earlier arm left
                         # would otherwise answer for this one.
-                        lanes = int(arm.partition(":")[2] or 1)
+                        spec = arm.partition(":")[2]
+                        lanes = None if spec == "auto" else int(spec or 1)
                         own = register(root, f"{name}_h{lanes}_{position}",
                                        SCENARIOS[scenario], size=size, grid=grid, seed=seed + index,
                                        scene=_builder(scenario))

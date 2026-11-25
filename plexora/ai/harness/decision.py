@@ -215,6 +215,8 @@ class Workflow:
     unit_noun = "unit"
     #: Whether the session engine takes several readers at once (`parallel_markers`).
     parallel = False
+    #: The most lanes the workflow's next/answer tools take (`parallel`).
+    max_lanes = 1
     #: Whether the run collects the project's set-up before any model call
     #: (`DecisionRun._collect_setup`: gating's columns and matrix).
     collects_setup = False
@@ -277,6 +279,8 @@ class GatingWorkflow(Workflow):
     STATUS, FINISH = "gating_session_status", "gating_session_finish"
     feature, agent, workflow, unit_noun = "gating", "gating_worker", "auto_gating", "marker"
     parallel = True
+    #: gating_next's own cap (`capabilities_session.MAX_PARALLEL`).
+    max_lanes = 8
     collects_setup = True
     #: The session's `purpose` (`capabilities_session.SessionOptions`): what
     #: its set-up asks for (`capabilities_session.setup_images`).
@@ -398,6 +402,9 @@ class QCWorkflow(Workflow):
     #: Several packets out at once: the session engine hands out side by side
     #: only decisions no pending answer can change (`QCEngine.next_ready`).
     parallel = True
+    #: qc_next's cap (`session_tools.MAX_PARALLEL`); the start says how many
+    #: lanes the session's work can fill (`capabilities_session.lanes_for`).
+    max_lanes = 32
 
     def prefix(self):
         return prefix.qc_prefix()
@@ -596,6 +603,50 @@ class _Throttle:
             return True
 
 
+class _Pace:
+    """Model calls begun per minute by this process's runs, at most
+    `limit()`: the gateway allows a device 120 a minute (`AI_CALLS_PER_MIN`,
+    every run and lane on it together). Thirty lanes of five-second score
+    reviews would ask for several hundred; paced here, a call waits its turn
+    instead of being refused, retried and counted again."""
+
+    #: Calls a minute, unless PLEXORA_AI_CALLS_PER_MIN says otherwise: under
+    #: the gateway's 120, leaving room for a chat or another app.
+    DEFAULT = 100
+
+    def __init__(self, window_s: float = 60.0):
+        from collections import deque
+
+        self.window = float(window_s)
+        self._began = deque()
+        self._cond = threading.Condition()
+
+    def limit(self) -> int:
+        import os
+
+        try:
+            return max(1, int(os.environ.get("PLEXORA_AI_CALLS_PER_MIN") or self.DEFAULT))
+        except ValueError:
+            return self.DEFAULT
+
+    def wait(self, halted=lambda: False) -> float:
+        """Take a slot for one call; returns the seconds it waited."""
+        started = time.monotonic()
+        with self._cond:
+            while True:
+                now = time.monotonic()
+                while self._began and now - self._began[0] >= self.window:
+                    self._began.popleft()
+                if len(self._began) < self.limit() or halted():
+                    self._began.append(now)
+                    return now - started
+                _work.wait_condition(self._cond, min(1.0, self.window - (now - self._began[0])))
+
+
+#: One pace for every run in the process: the gateway counts the device.
+_PACE = _Pace()
+
+
 #: The engine's strikes before it releases a packet to manual review
 #: (`SessionEngine.INVALID_ANSWERS`).
 STRIKES_TO_RELEASE = 2
@@ -690,7 +741,7 @@ class DecisionRun:
         self.session_id: str | None = options.resume_session
         self.context_reading: dict | None = None
         self.gateway_run: dict | None = None
-        self.parallel = max(1, int(options.parallel_markers or 1)) if self.wf.parallel else 1
+        self.parallel = min(self.wf.max_lanes, max(1, int(options.parallel_markers or 1))) if self.wf.parallel else 1
         self.lanes = [_Lane(0, None, _Worker(0))]
         self.workers = 1
         self.seq = 0
@@ -854,6 +905,7 @@ class DecisionRun:
         lane.last_call_at = time.monotonic()
         with self._lock:
             self._task_called[request.task] = lane.last_call_at
+        _PACE.wait()
         ping = replace(request, max_tokens=1,
                        context={**(request.context or {}), "workflow": "keep_warm"})
         with self._lock:
@@ -949,7 +1001,7 @@ class DecisionRun:
             if self.wf.parallel and not self.o.parallel_markers:
                 lanes = self.wf.resume_lanes(self)
                 if lanes:
-                    self.parallel = max(1, int(lanes))
+                    self.parallel = min(self.wf.max_lanes, max(1, int(lanes)))
             if self.o.declare_run:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"), usage=self.usage())
@@ -986,7 +1038,7 @@ class DecisionRun:
             first = None
         self.units = self.wf.units_started(started, self.o)
         if self.wf.parallel and not self.o.parallel_markers and started.get("lanes"):
-            self.parallel = max(1, int(started["lanes"]))
+            self.parallel = min(self.wf.max_lanes, max(1, int(started["lanes"])))
         self._emit("started", units=self.units, unit_noun=self.wf.unit_noun)
         if self.context_reading:
             self._emit("context", **self.context_reading)
@@ -1400,6 +1452,7 @@ class DecisionRun:
 
         if self._throttle is not None:
             self._throttle.acquire(halted=lambda: self._halt is not None)
+        _PACE.wait(halted=lambda: self._halt is not None)
         lane.last_request, lane.last_call_at, lane.pings = request, time.monotonic(), 0
         with self._lock:
             self._task_called[task] = time.monotonic()

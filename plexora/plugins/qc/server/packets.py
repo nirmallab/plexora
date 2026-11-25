@@ -433,6 +433,39 @@ def channel_audit(engine, units):
     scan = engine.scan(project)
     pixel = engine.pixel_for(project)
     calibration = engine.calibration(project)
+    rows, pages, audited, total_pages = _audit_layout(engine, units, scan)
+    packet = {"question": ("For every channel row: is anything technically wrong -- a fold, "
+                           "blur, bubble, debris, aggregates, saturation, uneven "
+                           "illumination, lost tissue, a failed stain? Answer "
+                           "`clean`, `suspicious` (name the outlined candidates that worry "
+                           "you, or `elsewhere`) or `uncertain`, per channel. A staining "
+                           "problem is settled on the row with `class_hint`, never "
+                           "outlined."),
+              "evidence": {"project": project,
+                           **_audit_evidence(rows, scan),
+                           "tissue": scan.meta.get("tissue"),
+                           "cell_um": scan.grid.get("cell_um"),
+                           **_reading(engine, ["audit"])},
+              "allowed": ["clean", "suspicious", "uncertain"], "_image_meta": []}
+    pairs = []
+    for index, page in enumerate(pages, start=1):
+        rendered = sheets.audit_sheet(engine.call.session, project, scan, page,
+                                      index=audited + index, total=max(1, total_pages),
+                                      fmt=_fmt(engine), pixel=pixel, calibration=calibration)
+        _record_artifact([u for u in units if u["id"] in {r["channel"] for r in page}],
+                         rendered)
+        pairs.append((rendered, "audit_sheet", f"channels {page[0]['number']}-"
+                                               f"{page[-1]['number']}"))
+    engine.record["audit_pages"] = audited + len(pages)
+    for unit in units:
+        unit["state"] = "awaiting_audit"
+    return packet, _images(packet, pairs)
+
+
+def _audit_layout(engine, units, scan):
+    """(rows, pages, pages already audited, total pages) of a channel audit:
+    each row a channel with its outlined candidates (labelled here)."""
+    project = units[0]["project"]
     per_sheet = int(schemas.ENGINE["audit_batch"])
     pending_cands = [u for u in engine.units_of("candidate", project)
                      if u["state"] == "awaiting_audit"]
@@ -469,32 +502,69 @@ def channel_audit(engine, units):
     total_pages = audited + len(pages) + int(np.ceil(
         len([u for u in engine.units_of("channel", project)
              if u["state"] == "pending"]) / per_sheet))
-    packet = {"question": ("For every channel row: is anything technically wrong -- a fold, "
-                           "blur, bubble, debris, aggregates, saturation, uneven "
-                           "illumination, lost tissue, a failed stain? Answer "
-                           "`clean`, `suspicious` (name the outlined candidates that worry "
-                           "you, or `elsewhere`) or `uncertain`, per channel. A staining "
-                           "problem is settled on the row with `class_hint`, never "
-                           "outlined."),
-              "evidence": {"project": project,
-                           **_audit_evidence(rows, scan),
-                           "tissue": scan.meta.get("tissue"),
-                           "cell_um": scan.grid.get("cell_um"),
-                           **_reading(engine, ["audit"])},
-              "allowed": ["clean", "suspicious", "uncertain"], "_image_meta": []}
-    pairs = []
-    for index, page in enumerate(pages, start=1):
-        rendered = sheets.audit_sheet(engine.call.session, project, scan, page,
-                                      index=audited + index, total=max(1, total_pages),
-                                      fmt=_fmt(engine), pixel=pixel, calibration=calibration)
-        _record_artifact([u for u in units if u["id"] in {r["channel"] for r in page}],
-                         rendered)
-        pairs.append((rendered, "audit_sheet", f"channels {page[0]['number']}-"
-                                               f"{page[-1]['number']}"))
-    engine.record["audit_pages"] = audited + len(pages)
-    for unit in units:
-        unit["state"] = "awaiting_audit"
-    return packet, _images(packet, pairs)
+    return rows, pages, audited, total_pages
+
+
+# -- prepared outside the session's lock --------------------------------------------------
+
+#: The packet kinds whose pictures are drawn ahead, outside the session's lock
+#: (`prerender`): the ones whose building took seconds in live runs (the
+#: channel audit ~6 s, a score review ~2.7 s, a confirm ~2.5 s, medians of
+#: ten sessions' `decisions.jsonl`). A stain check reads a stored picture.
+PREPARABLE = ("channel_audit", "score_review", "artifact_confirm")
+
+
+def prerender(engine, kind, units):
+    """Draw what building `kind` on `units` will draw, without the session's
+    lock and without keeping anything: the sheets' panels land in their cache
+    (`sheets._draw`, keyed by everything a panel is a function of), so the
+    build under the lock reads them back instead of reading the image again.
+    `engine` is a snapshot (`QCEngine.snapshot`): what this mutates -- a
+    label, a candidate's outline variants -- is thrown away. A panel the build
+    then asks for differently is simply drawn again: never a wrong picture,
+    at worst the time it took before. Returns how many sheets were drawn."""
+    if kind not in PREPARABLE or not units:
+        return 0
+    project = units[0]["project"]
+    scan = engine.scan(project)
+    pixel = engine.pixel_for(project)
+    calibration = engine.calibration(project)
+    session = engine.call.session
+    if kind == "channel_audit":
+        _rows, pages, audited, total_pages = _audit_layout(engine, units, scan)
+        for index, page in enumerate(pages, start=1):
+            sheets.audit_sheet(session, project, scan, page, index=audited + index,
+                               total=max(1, total_pages), fmt=_fmt(engine), pixel=pixel,
+                               calibration=calibration, store=False)
+        return len(pages)
+    if kind == "artifact_confirm":
+        if len(units) > 1:
+            for unit in units:
+                label_of(engine, unit)
+                _variants(engine, unit)
+            sheets.confirm_batch_sheet(session, project, scan, units,
+                                       [engine.mask_of(u) for u in units], fmt=_fmt(engine),
+                                       pixel=pixel, calibration=calibration, store=False)
+            return 1
+        unit = units[0]
+        _variants(engine, unit)
+        sheets.confirm_sheet(session, project, scan, unit, engine.mask_of(unit),
+                             level=int(unit.get("level") or 0), fmt=_fmt(engine), pixel=pixel,
+                             calibration=calibration, store=False)
+        return 1
+    if kind == "score_review":
+        from plexora.plugins.qc.server import checks_bulk
+        from plexora.plugins.qc.server import score_review as review
+
+        unit = units[0]
+        field = checks_bulk.field_of(engine, unit)
+        if field is None:
+            return 0
+        review.review(session, project, field, offset_steps=int(unit.get("offset_steps") or 0),
+                      seed=int(engine.options.get("seed") or 0), fmt=_fmt(engine), scan=scan,
+                      source=unit.get("threshold_source") or "auto", store=False)
+        return 1
+    return 0
 
 
 # -- candidates -------------------------------------------------------------------------

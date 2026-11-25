@@ -109,7 +109,7 @@ class RunInput(AgentModel):
                                          "worker covers (default: 1 marker, 4 QC units).")
     #: Default: the session's `lanes`, chosen from the panel; more lanes
     #: finish sooner.
-    parallel_markers: int | None = Field(None, ge=1, le=8, description="gating and qc: packets "
+    parallel_markers: int | None = Field(None, ge=1, le=32, description="gating and qc: packets "
                                          "answered side by side, each lane its own workers; the "
                                          "results are the serial run's. 1: one at a time.")
     start_options: dict | None = Field(None, description="Extra options for the session's start "

@@ -56,6 +56,15 @@ def wake(session_id) -> None:
         entry[1].notify_all()
 
 
+def prepare_enabled() -> bool:
+    """Whether a reader of several draws its packet's pictures outside the
+    session's lock before building it (`SessionTools.prepare`); off with
+    PLEXORA_QC_PREPARE=0, the build then drawing them under the lock as before."""
+    import os
+
+    return os.environ.get("PLEXORA_QC_PREPARE", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
 def _sleep_busy(session_id, generation, seconds) -> None:
     """Sleep up to `seconds` unless the session changed since `generation`."""
     entry = _wake_entry(session_id)
@@ -101,7 +110,7 @@ MODEL = Field(None, max_length=80,
                           "with the answer, so the session can show which model answered "
                           "each task.")
 #: The most packets of one session out at once (`next(parallel=...)`).
-MAX_PARALLEL = 8
+MAX_PARALLEL = 32
 PARALLEL = Field(None, ge=1, le=MAX_PARALLEL,
                  description="The most packets of this session out at once, across every "
                              "reader. Above 1, decisions that depend on no answer still out "
@@ -443,6 +452,19 @@ class SessionTools:
                         "limits={unit: 'continue' | 'stop'}); otherwise call "
                         f"{tool_name_of(self.NEXT)} again after retry_after_s"}
 
+    def prepare(self, engine, kind, keys):
+        """Draw a reserved decision's pictures without the session's lock, on
+        `engine`'s snapshot (`BaseEngine.prerender`). Never raises: a picture
+        not drawn here is drawn by the build, as it always was."""
+        import logging
+
+        units = [engine.record["units"][k] for k in keys if k in engine.record["units"]]
+        try:
+            engine.prerender(kind, units)
+        except Exception:                     # noqa: BLE001 -- the build draws it instead
+            logging.getLogger("plexora.agent.sessions").debug(
+                "drawing %s ahead failed; the build draws it", kind, exc_info=True)
+
     def before_next(self, call, session_id, st):
         """A workflow's settling step before a packet is looked for."""
 
@@ -457,6 +479,9 @@ class SessionTools:
         deadline = time.monotonic() + float(inp.wait_s)
         needs = None
         first = True
+        #: (token, kind, unit keys) of a decision reserved and drawn outside
+        #: the lock, built on the next pass.
+        plan = None
         while True:
             if not first:
                 # A reader waiting here (`busy`, the bulk pass) is woken by an
@@ -488,12 +513,38 @@ class SessionTools:
                         fresh = False
                     if packet is not None:
                         status = "again"
+                drawn = None
                 if not outstanding or packet is None:
-                    packet, images, status = engine.issue(
-                        reader=reader, parallel=getattr(inp, "parallel", None),
-                        tasks=getattr(inp, "tasks", None))
+                    parallel = getattr(inp, "parallel", None)
+                    tasks = getattr(inp, "tasks", None)
+                    if plan is not None:
+                        # Back from drawing its pictures outside the lock: the
+                        # decision is built as reserved, its panels read back
+                        # from the cache -- unless something moved meanwhile,
+                        # when the next decision is chosen afresh.
+                        wanted = engine.unreserve(plan[0])
+                        plan = None
+                        packet, images, status = engine.issue(
+                            wanted, reader=reader, parallel=parallel, tasks=tasks)
+                    else:
+                        # Several packets out at once: the slow pictures (an
+                        # audit, a score review, a confirm: seconds) are drawn
+                        # without the lock, so other readers' answers and
+                        # packets do not wait behind them.
+                        if parallel and int(parallel) > 1 and engine.PREPARABLE and prepare_enabled():
+                            kind_, units_ = engine.choose(reader=reader, parallel=parallel,
+                                                          tasks=tasks)
+                            if kind_:
+                                plan = (engine.reserve(kind_, units_, reader), kind_,
+                                        [engine.key_of(u) for u in units_])
+                                drawn = (engine.snapshot(), kind_)
+                        if drawn is None:
+                            packet, images, status = engine.issue(
+                                reader=reader, parallel=parallel, tasks=tasks)
+                        else:
+                            packet, images, status = None, [], "prepare"
                     fresh = status == "packet"
-                    needs = engine.needs
+                    needs = getattr(engine, "needs", None)
                 asking = []
                 if status == "wait_user":
                     asking = [dict(u["limit_request"]) for u in images]
@@ -505,6 +556,9 @@ class SessionTools:
                             "outstanding_kind": record.get("outstanding_kind"),
                             "outstanding": dict(record["outstanding"]),
                             "units": record["units"]}
+            if status == "prepare":
+                self.prepare(drawn[0], drawn[1], plan[2])
+                continue
             if status in ("packet", "again"):
                 kind = packet.get("kind")
                 mirrors = mirroring(mirror) and not detached
