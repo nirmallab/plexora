@@ -19,6 +19,10 @@ The unit holds its readings (`verdict_reads`) until they settle; it stays in
 the state that asks the check, so the engine draws the check again, tagged
 with its reading (`evidence.check`, the task it routes to; the answer memo
 keeps each reading apart). `SessionOptions.check_rereads` turns it off.
+
+One reading is enough where nothing a second could say would change the
+outcome: a `qc_confirm` read `real_signal` on a marker whose stain QC's stain
+check read `real` (`agreed_real`).
 """
 
 from __future__ import annotations
@@ -65,6 +69,18 @@ def combine(verdicts, abstain):
     return abstain
 
 
+def agreed_real(unit, kind, verdicts) -> bool:
+    """Whether a first `qc_confirm` reading of `real_signal` stands without a
+    second: QC's stain check (two blind readers of its own picture) read the
+    stain `real` too. With that verdict gating's check cannot close the
+    marker failed anyway (`stain_link.blocks_failure`): more readers could
+    only send it to a person. The readers are still never told the stain
+    verdict; it is weighed only after they answer."""
+    from plexora.plugins.gating.server.autogate import stain_link
+
+    return kind == "qc_confirm" and verdicts == ["real_signal"] and stain_link.category(unit) == "real"
+
+
 def settle(engine, unit, packet, verdict):
     """The verdict the unit acts on for this reading of its check, or None
     while it waits for another reading. Off (`check_rereads`), the reading
@@ -85,6 +101,9 @@ def settle(engine, unit, packet, verdict):
     reads["verdicts"].append(verdict)
     reads["packets"].append(packet.get("packet_id"))
     settled = combine(reads["verdicts"], CHECK_KINDS[kind])
+    if settled is None and agreed_real(unit, kind, reads["verdicts"]):
+        settled = verdict
+        engine.log(event="verdict_agreed", unit=name, kind=kind, stain="real")
     engine.log(event="verdict_read", unit=name, kind=kind, read=read, verdict=verdict,
                settled=settled)
     if settled is None:

@@ -4503,7 +4503,8 @@ deliberately left out and what should be built next.
   ping is the prefix alone, `KEEP_WARM_TEXT` under the same answer schema,
   because that worker's history is read by nothing again), a worker of its
   own per packet of a `Workflow.solo_kinds` kind (QC `stain_check`,
-  `visual_scan`, `final_qc_review`), never written to the cache while the task's worker waits
+  `visual_scan`, `final_qc_review`; gating `cell_panel`, `qc_confirm`,
+  `t1_strip`), never written to the cache while the task's worker waits
   parked, because those packets are whole and independent and sharing a
   worker only re-read and re-wrote the turns before them, and a Stop that cuts a reply still
   streaming (`_runaway_guard(stopped)` → `_Cut`, the session's control looked
@@ -11994,7 +11995,7 @@ in **5.6 s**.
   written for developers; every field keeps its own.
 - **A harness prefix carries no answer schemas, and QC's only the judging
   part of its skill** (`ai/harness/prefix.py`, pinned by
-  `tests/test_ai_token_dedup.py`). QC's guide drops `HARNESS_DROPS`
+  `tests/test_ai_token_dedup.py`). Both guides drop `HARNESS_DROPS`
   (`answer_schemas`, `answer_with`), because every call carries its own
   schema and on Anthropic each schema is a cache entry of its own ahead of
   the system prompt, so the prefix is written once per schema a run uses; a packet's
