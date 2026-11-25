@@ -52,6 +52,15 @@ _CACHE: dict = {}
 _MODEL_SCHEMAS: dict = {}
 
 
+def _provider(source: dict) -> dict:
+    """`structured(source)` without the answer model's docstring: that is
+    written for developers (why a field went, what a bench showed), not for
+    the reader -- every field keeps its own description."""
+    sent = structured(source)
+    sent.pop("description", None)
+    return sent
+
+
 def model_schema(kind: str, workflow: str = "gating") -> dict | None:
     """The answer model's own JSON schema for a packet kind (memoised)."""
     key = (workflow, kind)
@@ -68,7 +77,7 @@ def for_kind(kind: str, workflow: str = "gating") -> dict | None:
     key = (workflow, kind)
     if key not in _CACHE:
         source = model_schema(kind, workflow)
-        _CACHE[key] = structured(source) if source is not None and not _forms(kind, workflow) else None
+        _CACHE[key] = _provider(source) if source is not None and not _forms(kind, workflow) else None
     return _CACHE[key]
 
 
@@ -113,7 +122,7 @@ def for_form(kind: str, form: str, workflow: str = "gating") -> dict | None:
     """The provider-ready schema of one form of a kind's answer (memoised)."""
     key = (workflow, kind, form)
     if key not in _FORM_CACHE:
-        _FORM_CACHE[key] = structured(_narrowed(model_schema(kind, workflow),
+        _FORM_CACHE[key] = _provider(_narrowed(model_schema(kind, workflow),
                                                 tuple(_forms(kind, workflow)[form])))
     return _FORM_CACHE[key]
 
@@ -187,7 +196,7 @@ def for_task(task_id: str | None, workflow: str = "gating") -> dict | None:
     if key not in _TASK_CACHE:
         kinds = _kinds_of(task_id, workflow)
         merged = _merge(kinds, workflow) if len(kinds) > 1 else None
-        _TASK_CACHE[key] = structured(merged) if merged is not None else None
+        _TASK_CACHE[key] = _provider(merged) if merged is not None else None
     return _TASK_CACHE[key]
 
 
@@ -217,6 +226,13 @@ def for_packet(kind: str, task_id: str | None, workflow: str = "gating",
         chosen = shared if shared is not None and kind in shared["properties"]["kind"]["enum"] \
             else for_kind(kind, workflow)
     return None if refused(chosen) else chosen
+
+
+def in_words_for(kind: str, workflow: str = "gating", packet: dict | None = None) -> dict | None:
+    """The schema a packet asked in words is shown: its form's, or its kind's."""
+    if _forms(kind, workflow):
+        return for_form(kind, _models(workflow)[kind].form_of(packet), workflow) if packet is not None else None
+    return for_kind(kind, workflow)
 
 
 def complexity(schema: dict) -> dict:

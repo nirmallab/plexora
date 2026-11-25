@@ -4499,7 +4499,14 @@ deliberately left out and what should be built next.
   retries spent, pauses the run: it is in `PAUSE_CODES`), a warm gate per task
   (`_await_warm`: a task's first call goes alone until its reply's first piece,
   at most `WARM_WAIT_S`, so the cached prefix is written once, not per lane),
-  keep-warm pings shared per task, and a Stop that cuts a reply still
+  keep-warm pings shared per task (after a call whose worker retires, the
+  ping is the prefix alone, `KEEP_WARM_TEXT` under the same answer schema,
+  because that worker's history is read by nothing again), a worker of its
+  own per packet of a `Workflow.solo_kinds` kind (QC `stain_check`,
+  `visual_scan`, `final_qc_review`; gating `cell_panel`, `qc_confirm`,
+  `t1_strip`), never written to the cache while the task's worker waits
+  parked, because those packets are whole and independent and sharing a
+  worker only re-read and re-wrote the turns before them, and a Stop that cuts a reply still
   streaming (`_runaway_guard(stopped)` → `_Cut`, the session's control looked
   at every `STOP_LOOK_S`); `usage()` carries `in_flight` and `lanes`, and the
   tab relay forwards `ai_retry`/`ai_reissued`/`ai_cut` (`AI_EVENTS`), which
@@ -11982,7 +11989,23 @@ in **5.6 s**.
   (`for_form`, via `for_packet(..., packet)`), and is still validated against
   the whole model. A schema the provider refuses anyway is asked for in
   words (`GatewayClient.messages`, `schema.in_words`) and remembered for the
-  process, so it is never sent again.
+  process, so it is never sent again; a later packet of it carries the schema
+  in its text (`schema.in_words_for`). A sent schema has no root
+  description (`schema._provider`), because the answer model's docstring is
+  written for developers; every field keeps its own.
+- **A harness prefix carries no answer schemas, and QC's only the judging
+  part of its skill** (`ai/harness/prefix.py`, pinned by
+  `tests/test_ai_token_dedup.py`). Both guides drop `HARNESS_DROPS`
+  (`answer_schemas`, `answer_with`), because every call carries its own
+  schema and on Anthropic each schema is a cache entry of its own ahead of
+  the system prompt, so the prefix is written once per schema a run uses; a packet's
+  `{"see": "reading_guide.answer_schemas..."}` pointer is rewritten to the
+  call's own schema (`decision._own_schema`). QC's prefix holds
+  `skill_digest` of `qc-image` (its opening, the step-4 kind bullets but
+  `visual_scan`, Uncertainty and Failure modes), cut at text landmarks
+  (`DIGEST_HEAD_END`, `DIGEST_KINDS`, `DIGEST_SECTIONS`): rewording those in
+  the skill makes the digest None and a run send the whole skill, which only
+  the test catches.
 - **Display calibration lives in the plugin store's `"display"` namespace**
   and is what `render_region`'s `"auto"` windows read; `"percentiles"` keeps
   the pre-autogate rule, so an old caller that asked for percentiles is
@@ -12107,7 +12130,9 @@ in **5.6 s**.
 - **`visual_scan` is never replayed and is the coordinator's own packet.**
   `QCEngine.memo_key` returns None for it, because its answer closes a pass
   whose regions the agent draws with its tools while the packet is out — a
-  remembered `done` would end a pass before it began; `ai/tasks.yaml` marks
+  remembered `done` would end a pass before it began (a session started with
+  `agent_tools: false`, as the in-app harness starts one, asks for the places
+  listed in `left` for a person instead, since nothing can be drawn); `ai/tasks.yaml` marks
   `qc.visual_scan` `mcp: false`, so no worker group claims it and a worker
   handed one returns `other_tasks`.
 - **A region the agent draws outside a session is cut to the tissue and

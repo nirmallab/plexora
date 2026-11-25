@@ -66,7 +66,7 @@ def test_the_qc_prefix_is_byte_stable_and_carries_the_skill_and_guide():
     assert cache_plan.fingerprint(first) != cache_plan.fingerprint(prefix.gating_prefix())
     marks = [i for i, block in enumerate(first) if "cache_control" in block]
     assert marks == [len(first) - 1]
-    assert first[1]["text"].startswith("SKILL (qc-image)")
+    assert first[1]["text"].startswith("SKILL (qc-image, the parts that judge a packet)")
     assert prefix.qc_guide_version() in first[-1]["text"]
     assert "{{" not in json.dumps(first)                     # placeholders filled
     assert cache_plan.expected_tokens(first) > 1024

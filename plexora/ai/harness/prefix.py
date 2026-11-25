@@ -13,11 +13,18 @@ external agent: what each packet kind means and how to answer it. A worker
 never re-reads it; it is in the prefix, read from cache at a tenth of the
 input price after the first worker writes it.
 
-QC's prefix (`qc_prefix`) is the same shape with one more block: the
-`qc-image` skill (its placeholders filled from code constants, so it is as
-stable as the build), whose judgement guidance -- what an artifact is, when
-to say `cannot_tell` -- the reading guide does not repeat. Its tool-calling
-steps are for an external agent; the identity says the harness does those.
+QC's prefix (`qc_prefix`) is the same shape with one more block: the parts
+of the `qc-image` skill that judge a packet (`skill_digest`: what an
+artifact is, how each kind is answered, when to say `cannot_tell`), which
+the reading guide does not repeat. Its tool-calling steps -- start, finish,
+report, export, writes -- are an external agent's and stay out: the harness
+does them, and they were over half the skill.
+
+Both guides leave out `answer_schemas` and `answer_with` (`HARNESS_DROPS`):
+every call carries its own answer schema, and on Anthropic each schema is a
+cache entry of its own ahead of the system prompt, so the prefix is written
+once per schema a run uses -- the smaller it is, the less each of those
+writes costs.
 
 A conversation's prefix (`chat_prefix`) is built by spatialagents' mechanism
 (`spatialagents.prefix.build_prefix`) from Plexora's words here: the identity,
@@ -63,12 +70,24 @@ QC_IDENTITY = (
 )
 
 
+#: Guide entries a harness worker never needs: every call carries its own
+#: answer schema (the provider's structured output), whose field descriptions
+#: are the guide's `answer_schemas` word for word, and the harness, not the
+#: worker, calls the answer tool. A packet pointing at `answer_schemas` is
+#: pointed at its call's schema instead (`decision._own_schema`).
+HARNESS_DROPS = ("answer_schemas", "answer_with")
+
+
+def _harness_guide(guide: dict) -> dict:
+    return {k: v for k, v in guide.items() if k not in HARNESS_DROPS}
+
+
 def gating_prefix() -> list:
     from plexora.plugins.gating.server.autogate import packets
 
     return [text_block(IDENTITY),
             text_block("READING GUIDE (version " + packets.guide_version() + ")\n"
-                       + canonical(packets.reading_guide()), cache=True)]
+                       + canonical(_harness_guide(packets.reading_guide())), cache=True)]
 
 
 def guide_version() -> str:
@@ -138,15 +157,53 @@ def subagent_brief(role: str, brief: str, tools: list, inputs: dict | None = Non
 
 QC_SKILL = "qc-image"
 
+#: The parts of the qc-image skill a harness worker is given (`skill_digest`):
+#: what QC is and what each packet kind asks (the skill's opening and its
+#: step 4), what an unsure answer does, and how judgements go wrong. The rest
+#: -- when to run a session, its tools, its start, finish, report, export
+#: and writes -- is the external agent's, which the harness does itself.
+DIGEST_HEAD_END = "The packet is the authority on its own question"
+DIGEST_KINDS = ("   - `channel_audit`:", "   `waiting_for_user`:")
+DIGEST_SKIP_KINDS = ("visual_scan",)
+DIGEST_SECTIONS = ("## Uncertainty", "## Failure modes")
+
+
+def skill_digest(text: str) -> str | None:
+    """The qc-image skill cut to what judges a packet, or None when the
+    skill no longer has the landmarks the cut relies on (a test fails then;
+    a run sends the whole skill)."""
+    import re
+
+    head_end = text.find(DIGEST_HEAD_END)
+    start, stop = text.find(DIGEST_KINDS[0]), text.find(DIGEST_KINDS[1])
+    if head_end < 0 or start < 0 or stop < start:
+        return None
+    head = text[:head_end].rstrip()
+    # One bullet per packet kind. The visual pass's tells an agent to draw
+    # with tools, which a harness worker has none of: its packet says what
+    # to do instead (`agent_tools`).
+    bullets = re.split(r"(?m)^(?=   - `)", text[start:stop])
+    kinds = "".join(b for b in bullets if b.strip()
+                    and not any(b.lstrip().startswith(f"- `{k}`") for k in DIGEST_SKIP_KINDS)).rstrip()
+    parts = [head, "## How to judge each packet kind\n\n" + kinds]
+    for heading in DIGEST_SECTIONS:
+        at = text.find(heading)
+        if at < 0:
+            return None
+        nxt = text.find("\n## ", at + len(heading))
+        parts.append(text[at:nxt if nxt >= 0 else len(text)].rstrip())
+    return "\n\n".join(parts) + "\n"
+
 
 def qc_prefix() -> list:
     from plexora.ai import skills
     from plexora.plugins.qc.server import packets
 
+    full = skills.read_skill(QC_SKILL)
     return [text_block(QC_IDENTITY),
-            text_block("SKILL (" + QC_SKILL + ")\n" + skills.read_skill(QC_SKILL)),
+            text_block("SKILL (" + QC_SKILL + ", the parts that judge a packet)\n" + (skill_digest(full) or full)),
             text_block("READING GUIDE (version " + packets.guide_version() + ")\n"
-                       + canonical(packets.reading_guide()), cache=True)]
+                       + canonical(_harness_guide(packets.reading_guide())), cache=True)]
 
 
 def qc_guide_version() -> str:
