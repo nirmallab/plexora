@@ -46,11 +46,14 @@ READING_GUIDE = {
     "confirm": ("the confirm sheet: the channel with the candidate outlined in magenta, "
                 "its neighbourhood (nuclear stain in blue, the channel in yellow), a close "
                 "crop at the strongest point, and the detector's own map (bright = "
-                "suspicious) or, at deeper looks, the nuclear stain in the same crop and a "
-                "clean field of the same size for comparison. An artifact is technical: "
+                "suspicious). A deeper look is one row: the crop again (closer at the "
+                "third), the nuclear stain in the same crop and a clean field of the same "
+                "size for comparison; the neighbourhood is look 1's. An artifact is technical: "
                 "folds, blur, bubbles, debris, aggregates, saturation, lost or "
                 "shifted tissue. Real biology (a lymphoid follicle, a vessel, necrosis) is "
-                "`not_artifact`. A sheet of several candidates has one row per candidate, "
+                "`not_artifact`. A candidate's `audit_said` is the class the channel audit "
+                "named for it from the whole-tissue tile: check it at this scale, never copy "
+                "it. A sheet of several candidates has one row per candidate, "
                 "labelled (c3 | ...), the same panels smaller and no second look: answer "
                 "`verdicts` keyed by label; `need_more_evidence` on one gives that one its "
                 "own closer sheet. The magenta outline is a search envelope: Plexora traces "
@@ -370,7 +373,12 @@ def _channel_token(channels, scan):
 
 
 def _brief(unit, pixel, scan=None):
+    # `audit_said`: the class the channel audit named for this outline (its
+    # `class_hint` on the rows that named it), so the confirm checks a class
+    # already proposed rather than naming one afresh.
+    said = list(dict.fromkeys(unit.get("agent_hints") or ())) or None
     return {"id": unit["id"], "label": unit.get("label"), "class_hint": unit.get("class_hint"),
+            "audit_said": said,
             "alternatives": unit.get("alternatives"), "scope_hint": unit.get("scope_hint"),
             "channels": _channel_token(unit.get("channels"), scan), "cycles": unit.get("cycles"),
             "detector": unit.get("detector"), "score": unit.get("score"),
@@ -1156,7 +1164,8 @@ def _cycle_of(engine, unit):
 def visual_scan(engine, units):
     """The whole tissue in four views, with every region the session has
     written outlined: the agent outlines large artifacts with its tools
-    while this packet is out, then answers that the pass is done."""
+    while this packet is out, then answers that the pass is done. One with
+    no tools (`agent_tools` false) lists them in `left` for a person."""
     from plexora.agent.registry import tool_name_of
     from plexora.plugins.qc.server import overview, results
 
@@ -1176,26 +1185,34 @@ def visual_scan(engine, units):
             written.append({"candidate": held["id"], "label": held.get("label"),
                             "class": held.get("class"), "action": held.get("action"),
                             "state": held["state"], "roi_id": held.get("roi_id")})
-    evidence = {"session_id": engine.id,
-                "tissue": manifest.get("tissue"),
+    evidence = {"tissue": manifest.get("tissue"),
                 "panels": [p["words"] for p in manifest.get("panels") or []],
                 **overview.for_agent(manifest),
                 "channels": manifest.get("channels"),
-                "max_regions": int(schemas.VISUAL["max_regions"]),
                 "written": written,
-                "tools": {"zoom": tool_name_of("qc.render_artifact_overview"),
-                          "channels": tool_name_of("qc.inspect_artifact_channels"),
-                          "outline": tool_name_of("qc.segment_roi")},
-                "how": ("point on the picture ({artifact_id, px}); zoom with the overview "
-                        "tool's region; pick channels on a box; preview the outline, refine "
-                        "it, then write it with session_id; at most max_regions"),
                 **_reading(engine, ["visual", "classes", "severity"])}
-    packet = {"question": ("Here is the whole tissue in four views, with every region "
-                           "already written outlined. Are there large, obvious artifacts "
-                           "no outline covers -- a fold, a tear, lifted tissue, debris, a "
-                           "bubble? Outline each with the tools, snug to the artifact, then "
-                           "answer done; or nothing_found."),
-              "evidence": evidence, "allowed": ["done", "nothing_found"], "_image_meta": []}
+    asked = ("Here is the whole tissue in four views, with every region already written "
+             "outlined. Are there large, obvious artifacts no outline covers -- a fold, a "
+             "tear, lifted tissue, debris, a bubble? ")
+    if engine.options.get("agent_tools", True):
+        evidence.update({
+            "session_id": engine.id, "max_regions": int(schemas.VISUAL["max_regions"]),
+            "tools": {"zoom": tool_name_of("qc.render_artifact_overview"),
+                      "channels": tool_name_of("qc.inspect_artifact_channels"),
+                      "outline": tool_name_of("qc.segment_roi")},
+            "how": ("point on the picture ({artifact_id, px}); zoom with the overview "
+                    "tool's region; pick channels on a box; preview the outline, refine "
+                    "it, then write it with session_id; at most max_regions")})
+        asked += "Outline each with the tools, snug to the artifact, then answer done; or nothing_found."
+    else:
+        # No tools here (the in-app harness): nothing can be drawn while the
+        # packet is out, so each place is listed for a person (`left`, which
+        # the report shows) -- never answered as if drawn.
+        asked += ("You have no tools here and nothing is drawn: answer done with each "
+                  "such place in `left` (where on the views, and why it looks like an "
+                  "artifact) for a person to check; or nothing_found.")
+    packet = {"question": asked, "evidence": evidence, "allowed": ["done", "nothing_found"],
+              "_image_meta": []}
     return packet, _images(packet, [(rendered, "visual_overview",
                                      "the whole tissue in four views")])
 

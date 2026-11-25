@@ -438,9 +438,11 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
         heat = _map_panel(scan, candidate, mask, PANEL_PX)
         panels.append(((heat, None), f"map: {candidate.get('primary_metric') or 'region'}"))
     else:
+        # No neighbourhood again: look 1 drew that very panel (same box, same
+        # channels), and a deeper look is asked for what it lacked -- the
+        # nuclear stain at the crop and a clean field to compare. Three panels
+        # in a row are a quarter less image than a 2x2 sheet.
         clean = _clean_field(scan, mask, channel, 3)
-        panels.append((_draw(session, project, scan, meso, [*ref, marker], PANEL_PX, pixel=pixel,
-                             shapes=outline, segmentation=seg), f"{channel} | neighbourhood"))
         drawn, caption = _close_crop(session, project, scan, candidate, mask, channel,
                                      crop["width"], PANEL_PX, pixel=pixel,
                                      calibration=calibration, segmentation=seg)
@@ -473,9 +475,10 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
             panels.append((_draw(session, project, scan, clean_box, [same], PANEL_PX,
                                  pixel=pixel),
                            f"{channel} | clean field, same size and window"))
-    sheet = layout.Sheet(2, 2, PANEL_PX, title=f"{project} - {candidate.get('label', '')} "
-                                                f"suspected {words} in {channel} - look "
-                                                f"{level + 1}")
+    cols, rows = (2, 2) if len(panels) > 3 else (max(1, len(panels)), 1)
+    sheet = layout.Sheet(cols, rows, PANEL_PX, title=f"{project} - {candidate.get('label', '')} "
+                                                     f"suspected {words} in {channel} - look "
+                                                     f"{level + 1}")
     placed = []
     for slot, ((picture, manifest), caption) in enumerate(panels[:4]):
         sheet.place(slot, picture, caption)

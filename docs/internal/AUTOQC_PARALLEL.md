@@ -200,8 +200,97 @@ The decisions were the same in both cases.
 Sixteen lanes match eight here, because the scene has only 12 stain checks.
 The gain from more lanes appears on panels with more stain checks than 8.
 
+## Round 3: tokens paid twice (AutoQC and auto gating)
+
+A review of both workflows looked for the same information paid for in two
+steps. What the trace (`<data root>/.agent/ai/trace.sqlite`) showed first:
+$12.5 of ~$20 of QC spend was stain-check replies cut at the 16,000-token cap,
+all before the runaway fix (b346fd45); gating's spend is mostly `cell_panel`
+looks, one call each, ~12k input tokens (mostly cache reads).
+
+**The prefix is written once per answer schema.** Changing
+`output_config.format` invalidates the prompt cache, and the provider adds
+its format prompt ahead of the system prompt: every QC kind's first call read
+0 and wrote ~20k (17,425 / 17,765 / 18,301 / 18,535 tokens read afterwards for
+stain / audit / score / confirm). One schema for all kinds is out of reach
+(24 optional and 16 union parameters per request; `schema.VERIFIED` is lower
+still), and per-task schemas already exist. So the prefix itself shrank:
+
+| Prefix | Before | After |
+|---|---:|---:|
+| QC | 13,902 tokens | 6,296 |
+| gating | 7,635 | 4,021 |
+
+- Both guides leave out `answer_schemas` (the call's own schema carries every
+  field's words) and `answer_with` (the harness calls the tool):
+  `prefix.HARNESS_DROPS`. A packet pointing at `answer_schemas` is pointed at
+  its call's schema (`decision._own_schema`); one asked in words carries the
+  schema itself.
+- QC's prefix carries the qc-image skill cut to what judges a packet
+  (`prefix.skill_digest`: the opening, step 4's kinds, Uncertainty, Failure
+  modes), not the external agent's steps.
+- The answer model's docstring is no longer sent as the schema's description
+  (`schema._provider`); some were developer notes.
+
+**Independent packets get a worker of their own** (`Workflow.solo_kinds`:
+QC `stain_check`, `visual_scan`, `final_qc_review`; gating `cell_panel`,
+`qc_confirm`, `t1_strip`): never written to the cache, and the task's worker
+waits parked. They were re-reading earlier packets at every call and paying
+1.25x to write a turn nothing read. A keep-warm ping after such a packet is
+the prefix alone, with the same schema.
+
+**Bench** (stand-in model, `harness:1` and `harness:auto`, the same scenes as
+above; cost-weighted with reads at 0.1x and writes at 1.25x). The stand-in's
+cache does not key on the schema, so the per-kind prefix writes it saves are
+undercounted.
+
+| Scenario, arm | Input tokens | Weighted | Decisions |
+|---|---|---|---|
+| cyclic, 1 lane | 377,535 → 186,736 | −25% | same |
+| cyclic, auto | 332,774 → 180,441 | −22% | same |
+| mixed, 1 lane | 153,966 → 82,765 | −29% | same |
+| mixed, auto | 140,532 → 76,230 | −28% | same |
+
+**Fixed on the way:**
+
+- A serial gating run trimmed context-sheet rows "already shown" by the
+  session to whichever worker the packet went to. The harness now asks for
+  `sheets: full`, as it already did for `evidence`.
+- The visual pass was served to harness workers, which have no tools, with
+  "outline each with the tools". QC's `agent_tools: false` (the harness's
+  start) asks them to list each place in `left` for a person instead.
+
+**Changed what the model sees** (not measurable on the stand-in model, which
+answers from the truth):
+
+- QC's confirm brief carries `audit_said`, the class the audit named (it was
+  stored as `agent_hints` and read nowhere).
+- A deeper confirm look is one row (crop, nuclear stain, clean field): the
+  neighbourhood was look 1's panel again. That is a quarter less image.
+- Gating's `qc_confirm` read `real_signal` on a marker whose stain QC read
+  `real` stands on one reading (`second_verdict.agreed_real`): with that stain
+  verdict gating cannot close the marker failed (`blocks_failure`), so more
+  readers could only send it to a person.
+
+**Left as it was, and why:**
+
+- Score review round 2 redraws rows round 1 showed. Trimming them would need
+  the threshold logic to carry round 1's verdicts, for an estimated <1% of a
+  run's tokens.
+- The audit's nuclear reference tile on each sheet is the comparison anchor
+  for that sheet.
+- QC's stain reading of a channel the audit called failed: the stain check is
+  never decided from the whole slide alone (stain.py), and such channels are
+  rare.
+- Stain rereads, contested gating rereads and partner review's second draw
+  are deliberate independent reads.
+
+The answer memo keys on a packet's text and image bytes, so packets whose
+contents changed (confirms with `audit_said`, deeper looks, the visual pass)
+are asked again once rather than replayed from an earlier run.
+
 ## Not done
 
 - **A live run against the real gateway.** The plan's live run, serial
   against lanes, needs credits and a project chosen by the user, so it
-  waits.
+  waits. It would also show the per-schema prefix writes the stand-in cannot.

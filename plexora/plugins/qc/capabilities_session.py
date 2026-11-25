@@ -206,6 +206,13 @@ class QCSessionOptions(AgentModel):
                     "(`qc_next(parallel=...)`). Decisions that depend on no answer still out "
                     "go side by side; the rest wait. 1: one at a time. Default: as many as "
                     "the image's independent looks can fill.")
+    #: False for the in-app harness, whose workers answer packets and call no
+    #: tool: the visual pass then asks for the places to be listed for a
+    #: person rather than drawn (`packets.visual_scan`).
+    agent_tools: bool = Field(
+        True, description="Whether whoever answers can call Plexora's tools while a packet "
+                          "is out (the visual pass draws its regions with them). False: the "
+                          "visual pass lists what it sees for a person instead.")
 
 
 #: The fewest and most lanes a session is answered with when the start does

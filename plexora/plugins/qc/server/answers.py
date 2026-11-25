@@ -221,20 +221,22 @@ class FinalReviewAnswer(_Base):
 class LeftPlace(AgentModel):
     where: Annotated[str, clipped(80)] = Field(max_length=80, description="Where: a grid "
                                                "square, a tile, a few words.")
-    why: Annotated[str, clipped(160)] = Field("", max_length=160, description="Why it was "
-                                              "not outlined: unsure, too small, could be "
-                                              "biology, magic select would not take it.")
+    why: Annotated[str, clipped(160)] = Field("", max_length=160, description="Why it is "
+                                              "left for a person: what it looks like, or why "
+                                              "it was not outlined (unsure, too small, could "
+                                              "be biology, magic select would not take it).")
 
 
 class VisualScanAnswer(_Base):
     """The visual pass is over. The regions themselves were written while the
-    packet was out (`segment_qc_roi` with the session's id); the answer says
-    the pass is done and what was seen but left."""
+    packet was out (`segment_qc_roi` with the session's id), by an agent with
+    tools; the answer says the pass is done and what was seen but left."""
 
     kind: Literal["visual_scan"] = "visual_scan"
     status: Literal["done", "nothing_found"] = Field(
-        description="done: the pass is over, the regions you outlined are written; "
-                    "nothing_found: nothing on the overview was clearly abnormal.")
+        description="done: the pass is over (any region you outlined is written, any place "
+                    "you saw but did not outline is in `left`); nothing_found: nothing on the "
+                    "overview was clearly abnormal.")
     left: list[LeftPlace] = Field(default_factory=list, max_length=8,
                                   description="Places that looked abnormal but were not "
                                               "outlined, each with why, for a person.")

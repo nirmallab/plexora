@@ -97,6 +97,8 @@ KEEP_WARM_MIN_TOKENS = 4_000
 #: A ping that read less than this share of its input from cache found the
 #: cache gone (or never written): the run stops pinging that lane.
 KEEP_WARM_HIT_SHARE = 0.9
+#: The whole user turn of a prefix-only keep-warm ping.
+KEEP_WARM_TEXT = "Keep-alive: reply with anything."
 #: Seconds between two looks at a session waiting on the user's set-up form
 #: (`DecisionRun._await_setup`): a form takes a person tens of seconds.
 SETUP_POLL_S = 2.0
@@ -199,6 +201,17 @@ def _runaway_guard(stopped=None, on_first=None):
     return on_delta
 
 
+#: What a packet's pointer into the guide's `answer_schemas` becomes.
+OWN_SCHEMA = {"see": "this call's answer schema"}
+
+
+def _own_schema(value):
+    if isinstance(value, dict) and set(value) == {"see"} \
+            and str(value["see"]).startswith("reading_guide.answer_schemas"):
+        return OWN_SCHEMA
+    return value
+
+
 # -- the workflows -----------------------------------------------------------------------
 
 
@@ -220,6 +233,13 @@ class Workflow:
     #: Whether the run collects the project's set-up before any model call
     #: (`DecisionRun._collect_setup`: gating's columns and matrix).
     collects_setup = False
+    #: Packet kinds each answered by a worker of their own, never written to
+    #: the cache (`_rotate_if_due`, `_last_in_worker`): kinds whose packets
+    #: are whole and independent by design (a blind reading, a look that
+    #: carries its own evidence), so no later call reads their turn. Sharing a
+    #: worker only re-read the earlier packets at every call and paid the
+    #: cache-write premium on each new one.
+    solo_kinds: frozenset = frozenset()
 
     def prefix(self) -> list:
         raise NotImplementedError
@@ -282,6 +302,9 @@ class GatingWorkflow(Workflow):
     #: gating_next's own cap (`capabilities_session.MAX_PARALLEL`).
     max_lanes = 8
     collects_setup = True
+    #: A look carries its own cells and evidence (`evidence: full`), a stain
+    #: or strip reading is read blind: none needs the turns before it.
+    solo_kinds = frozenset({"cell_panel", "qc_confirm", "t1_strip"})
     #: The session's `purpose` (`capabilities_session.SessionOptions`): what
     #: its set-up asks for (`capabilities_session.setup_images`).
     purpose = "gating"
@@ -300,9 +323,11 @@ class GatingWorkflow(Workflow):
         # may never point (`as_in`) at one a predecessor was sent.
         # `setup`: the set-up form is the user's to answer, never this
         # harness's model -- waited for in the viewer, refused on a command line.
+        # sheets "full" for the same reason: a trimmed context sheet leaves out
+        # rows the session showed before, to whichever worker it went.
         arguments = {"scope": "project", "project": options.project, "mode": options.mode, "reading": "once",
-                     "evidence": "full", "agent": _agent(options), "known_guide": self.guide_version(),
-                     "setup": options.on_setup}
+                     "evidence": "full", "sheets": "full", "agent": _agent(options),
+                     "known_guide": self.guide_version(), "setup": options.on_setup}
         if self.selected(options):
             arguments["markers"] = list(self.selected(options))
         if options.parallel_markers:
@@ -405,6 +430,10 @@ class QCWorkflow(Workflow):
     #: qc_next's cap (`session_tools.MAX_PARALLEL`); the start says how many
     #: lanes the session's work can fill (`capabilities_session.lanes_for`).
     max_lanes = 32
+    #: A stain reading is blind by design (another marker's verdict in view
+    #: only works against that); the visual pass and the final review are one
+    #: packet each.
+    solo_kinds = frozenset({"stain_check", "visual_scan", "final_qc_review"})
 
     def prefix(self):
         return prefix.qc_prefix()
@@ -416,8 +445,10 @@ class QCWorkflow(Workflow):
         return getattr(options, "channels", None)
 
     def start_arguments(self, options):
+        # agent_tools False: this harness's workers answer packets and call no
+        # tool, so the visual pass asks them to list what they see.
         arguments = {"project": options.project, "mode": options.mode, "reading": "once",
-                     "agent": _agent(options), "known_guide": self.guide_version()}
+                     "agent": _agent(options), "known_guide": self.guide_version(), "agent_tools": False}
         if self.selected(options):
             arguments["channels"] = list(self.selected(options))
         if options.parallel_markers:
@@ -528,6 +559,8 @@ class _Worker:
         self.images = 0
         #: The packet in hand is its units' last (`last_for_units`).
         self.last_hint = False
+        #: One packet of a `Workflow.solo_kinds` kind: retired after it.
+        self.solo = False
 
     def tokens(self) -> int:
         return int(self.chars / cache_plan.CHARS_PER_TOKEN) + self.images * TOKENS_PER_IMAGE
@@ -552,6 +585,9 @@ class _Lane:
         self.last_request: ModelRequest | None = None
         self.last_call_at = 0.0
         self.last_input_tokens = 0
+        #: The last request's newest turn was not written to the cache (its
+        #: worker retires after it): only the prefix is worth keeping warm.
+        self.last_final = False
         self.pings = 0
         self.warm_off = False
 
@@ -885,7 +921,12 @@ class DecisionRun:
         `max_tokens` 0, and so does a structured-output request, so one token
         is the smallest ping. At most `keep_warm` pings per idle stretch; a
         refusal, or a ping that had to write, ends pinging for the lane.
-        Returns whether a ping went out."""
+
+        When the last request's worker retired after it (a solo packet, a
+        unit's last look), its history is read by nothing again: the ping is
+        the prefix alone, with the same answer schema (a different one is
+        another cache entry), and the same task's call on any lane since
+        has already kept that warm. Returns whether a ping went out."""
         request = lane.last_request
         if request is None or lane.warm_off or self.o.keep_warm <= 0 \
                 or lane.pings >= self.o.keep_warm or lane.last_input_tokens < KEEP_WARM_MIN_TOKENS:
@@ -895,7 +936,11 @@ class DecisionRun:
             return False
         with self._lock:
             shared = time.monotonic() - self._task_called.get(request.task, 0.0)
-        if self.parallel > 1 and shared < KEEP_WARM_AFTER_S \
+        if lane.last_final:
+            if shared < KEEP_WARM_AFTER_S or self.prefix_tokens < KEEP_WARM_MIN_TOKENS:
+                return False
+            request = replace(request, messages=[{"role": "user", "content": [text_block(KEEP_WARM_TEXT)]}])
+        elif self.parallel > 1 and shared < KEEP_WARM_AFTER_S \
                 and lane.last_input_tokens - self.prefix_tokens < KEEP_WARM_MIN_TOKENS:
             # Another lane began a call of this task since, so the shared
             # prefix's entry is fresh; this lane's own history beyond it is
@@ -1367,8 +1412,23 @@ class DecisionRun:
         nothing of another's cache -- carrying the history over only re-writes
         it at full price (2026-10-03: a Sonnet worker's 22k tokens re-written
         for one Opus packet). A worker full by packets, context or units is
-        replaced."""
+        replaced. A packet of a solo kind (`Workflow.solo_kinds`) gets a
+        worker of its own, retired after it; the worker it displaced waits,
+        parked by its task, for that task's next packet."""
         task = self.task_of(packet)
+        solo = packet.get("kind") in self.wf.solo_kinds
+        if lane.worker.solo and lane.worker.packets > 0:
+            waiting = None if solo else lane.parked.pop(task, None)
+            if waiting is not None:
+                lane.worker = waiting
+            else:
+                self._fresh_worker(lane)
+        elif solo and lane.worker.packets > 0:
+            lane.parked[lane.worker.task] = lane.worker
+            self._fresh_worker(lane)
+        if solo:
+            lane.worker.solo = True
+            return
         if lane.worker.packets > 0 and lane.worker.task != task:
             # Another task: this worker waits for its own task to come back
             # (QC interleaves audit, score reviews and confirms), and the
@@ -1392,17 +1452,29 @@ class DecisionRun:
                 self.workers += 1
             self._emit("worker", worker=lane.worker.index)
 
+    def _fresh_worker(self, lane: _Lane) -> None:
+        with self._lock:
+            lane.worker = _Worker(self.workers)
+            self.workers += 1
+        self._emit("worker", worker=lane.worker.index)
+
     def _content(self, packet: dict, images: list) -> list:
-        shown = {k: v for k, v in packet.items() if k not in HIDDEN}
+        # The prefix's guide leaves out `answer_schemas` (`prefix._harness_guide`):
+        # every call carries its own schema. A packet naming that entry (QC's
+        # `allowed` classes, say) is pointed at the call's schema instead.
+        shown = {k: _own_schema(v) for k, v in packet.items() if k not in HIDDEN}
         blocks = []
         for item in images:
             data, fmt = (item.get("data"), item.get("format", "png")) if isinstance(item, dict) else (item, "png")
             if data:
                 blocks.append(image_block(data, fmt))
         text = canonical(shown)
-        if self.wf.schema_for(packet.get("kind", ""), self.task_of(packet), packet) is None \
-                and packet.get("answer_schema"):
-            text += "\nANSWER SCHEMA: " + canonical(packet["answer_schema"])
+        kind = packet.get("kind", "")
+        if self.wf.schema_for(kind, self.task_of(packet), packet) is None:
+            # Refused by the provider: asked in words, with the schema itself.
+            words = schema.in_words_for(kind, self.wf.name, packet)
+            if words is not None:
+                text += "\n" + schema.IN_WORDS + canonical(words)
         blocks.append(text_block(text))
         return blocks
 
@@ -1422,8 +1494,8 @@ class DecisionRun:
         (full by packets or context): its newest turn is then never read
         again, so it is not written to the cache. A rotation by unit or task
         cannot be known before the next packet arrives."""
-        return w.packets + 1 >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker \
-            or (w.last_hint and self.o.units_per_worker <= 1)
+        return w.solo or w.packets + 1 >= self.o.max_packets_per_worker \
+            or w.tokens() >= self.o.context_tokens_per_worker or (w.last_hint and self.o.units_per_worker <= 1)
 
     def _call(self, packet: dict, messages: list, lane: _Lane):
         self.check()
@@ -1436,8 +1508,9 @@ class DecisionRun:
                    "session_id": self.session_id, "attempt": min(n, 99)}
         if self.gateway_run:
             context["run_id"] = self.gateway_run["run_id"]
+        final = self._last_in_worker(lane.worker)
         request = ModelRequest(capability=self.o.capability, system=self.system,
-                               messages=with_breakpoints(messages, final=self._last_in_worker(lane.worker)),
+                               messages=with_breakpoints(messages, final=final),
                                max_tokens=self._max_tokens(packet),
                                output_schema=self.wf.schema_for(kind, task, packet),
                                context=context, model=self.o.model, task=task)
@@ -1454,6 +1527,7 @@ class DecisionRun:
             self._throttle.acquire(halted=lambda: self._halt is not None)
         _PACE.wait(halted=lambda: self._halt is not None)
         lane.last_request, lane.last_call_at, lane.pings = request, time.monotonic(), 0
+        lane.last_final = final
         with self._lock:
             self._task_called[task] = time.monotonic()
             self._in_flight[pid] = {"packet_id": pid, "kind": kind, "task": task,

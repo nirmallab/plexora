@@ -486,7 +486,12 @@ def test_an_open_circuit_is_waited_out_once_then_the_run_pauses():
 
 
 @pytest.mark.pro
-def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gating, tmp_path):
+def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gating, tmp_path, monkeypatch):
+    from plexora.ai.harness import decision
+
+    # Every packet in a shared worker: a solo kind's call is its worker's
+    # last, and marks nothing new (tests/test_ai_token_dedup.py).
+    monkeypatch.setattr(decision.GATING, "solo_kinds", frozenset())
     oracle = Oracle(gating)
     spoiled = {"done": False}
 

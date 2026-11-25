@@ -171,8 +171,9 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      places are a local mismatch, a whole field shifted is a cycle shift
      (`whole_tissue`).
    - `artifact_confirm`: the channel with the outline, its neighbourhood, a
-     close crop, and the detector's own map; deeper looks add the nuclear stain
-     and a matched clean field. `artifact` when it is technical (fold, blur,
+     close crop, and the detector's own map; a deeper look is the crop again
+     beside the nuclear stain and a matched clean field (the neighbourhood is
+     the first look's). `artifact` when it is technical (fold, blur,
      bubble, debris, aggregates, saturation, shifted or lost tissue),
      with `artifact_class`, `severity` (the guide says what each word means),
      `boundary` (`covers`: the whole artifact lies inside the outline, however
