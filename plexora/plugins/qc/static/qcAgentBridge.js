@@ -33,14 +33,43 @@
         return record?.sidebarController || null;
     }
 
+    //: An answer's reload waits this long for the next answer (several looks
+    //: can come back within a second of each other) ...
+    const RELOAD_QUIET_MS = 400;
+    //: ... but never longer than this after the first it holds back.
+    const RELOAD_MAX_WAIT_MS = 2000;
     let pending = null;
+    let firstAsked = 0;
+    let reloading = false;
+    let again = false;
+
+    function runReload() {
+        pending = null;
+        firstAsked = 0;
+        const live = controller();
+        if (!live?.reload) return;
+        if (reloading) {
+            // One read of the state at a time: answers that land while one is
+            // out are read once it is back, not by a second read racing it.
+            again = true;
+            return;
+        }
+        reloading = true;
+        Promise.resolve().then(() => live.reload()).catch(() => {}).finally(() => {
+            reloading = false;
+            if (again) {
+                again = false;
+                reloadSoon();
+            }
+        });
+    }
 
     function reloadSoon() {
+        const now = Date.now();
+        if (!firstAsked) firstAsked = now;
         window.clearTimeout(pending);
-        pending = window.setTimeout(() => {
-            const live = controller();
-            if (live?.reload) live.reload().catch?.(() => {});
-        }, 400);
+        const wait = Math.max(0, Math.min(RELOAD_QUIET_MS, firstAsked + RELOAD_MAX_WAIT_MS - now));
+        pending = window.setTimeout(runReload, wait);
     }
 
     window.addEventListener("plexora:agent-state-changed", (event) => {

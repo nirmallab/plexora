@@ -394,8 +394,71 @@
 }
 
 .plx-agent-narration[hidden],
-.plx-agent-limit[hidden] {
+.plx-agent-limit[hidden],
+.plx-agent-flight[hidden],
+.plx-agent-flight-list[hidden] {
     display: none;
+}
+
+/* Several looks out at once: a quiet chip, opening a short list. */
+.plx-agent-flight {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.plx-agent-flight-chip {
+    align-self: flex-start;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 1px 10px;
+}
+
+.plx-agent-flight-chip::after {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid currentColor;
+    content: "";
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.plx-agent-flight-chip.is-open::after {
+    transform: rotate(180deg);
+}
+
+.plx-agent-flight-chip:hover,
+.plx-agent-flight-chip:focus-visible {
+    color: var(--text-primary);
+}
+
+.plx-agent-flight-list {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    list-style: none;
+    margin: 0;
+    max-height: 9.5em;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.plx-agent-flight-row {
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-agent-flight-row.is-retrying {
+    color: var(--text-primary);
 }
 
 /* A marker at its limit: a small card in the panel, not a page-blocking

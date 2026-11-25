@@ -252,22 +252,36 @@ def run(call, session_id, announce=None) -> dict:
 
     from plexora.plugins.qc.server import cycles as cycle_rules
 
+    import contextvars
+    import threading
+
+    from plexora import _work
+
     with engine_for(call, session_id) as engine:
         project = engine.project
-        todo = [dict(u) for u in planned(engine)]
+        todo = sorted((dict(u) for u in planned(engine)),
+                      key=lambda u: CHECK_ORDER.get(u["check"], len(CHECK_ORDER)))
         unresolved = None
         if any(u["check"] == "registration" for u in todo):
             _ok, unresolved = cycle_rules.resolved(engine.scan(project).meta.get("cycles"))
     ran, skipped = [], []
-    for index, unit in enumerate(todo):
+    lock = threading.Lock()
+    #: unit id -> its own share done (0..1): the blended progress is their sum.
+    shares: dict = {}
+    finished = [0]
+
+    def one(index, unit):
         _check_stopped(session_id)
         check = unit["check"]
 
-        def progress(done=0, total=1, message="", _i=index, _c=check):
+        def progress(done=0, total=1, message="", _id=unit["id"], _c=check):
             step = f" ({int(done)}/{int(total)})" if total and int(total) > 1 else ""
-            call.progress(done=_i, total=len(todo), message=f"{_c} check: {message}{step}")
+            with lock:
+                shares[_id] = min(1.0, float(done) / total) if total else 0.0
+                blended = finished[0] + sum(shares.values())
+                whole = finished[0]
+            call.progress(done=whole, total=len(todo), message=f"{_c} check: {message}{step}")
             if announce is not None:
-                blended = _i + (float(done) / total if total else 0.0)
                 announce("checks", f"{_c} check: {message}{step}", done=blended, total=len(todo))
             _check_stopped(session_id)
 
@@ -309,35 +323,47 @@ def run(call, session_id, announce=None) -> dict:
                                             "manual_review": 0, "residual": 0},
                                    n_regions=0, flagged_pct=0.0,
                                    denominator=summary["at_auto"]["denominator"])
-            ran.append(unit["id"])
+            with lock:
+                ran.append((index, unit["id"]))
         except _Skip as exc:
             outcome.update(state="skipped_not_applicable", reason=str(exc))
-            skipped.append({"id": unit["id"], "check": check, "reason": str(exc),
-                            "fallback": exc.fallback})
+            with lock:
+                skipped.append((index, {"id": unit["id"], "check": check, "reason": str(exc),
+                                        "fallback": exc.fallback}))
         except AgentError as exc:
             outcome.update(state="skipped_not_applicable", reason=exc.message)
-            skipped.append({"id": unit["id"], "check": check, "reason": exc.message})
+            with lock:
+                skipped.append((index, {"id": unit["id"], "check": check, "reason": exc.message}))
         except Exception as exc:  # noqa: BLE001 -- a check never fails the session
             from plexora.agent.jobs import JobCancelled
 
             if isinstance(exc, JobCancelled):
                 raise
             outcome.update(state="skipped_not_applicable", reason=f"failed: {exc}")
-            skipped.append({"id": unit["id"], "check": check, "reason": f"failed: {exc}"})
+            with lock:
+                skipped.append((index, {"id": unit["id"], "check": check,
+                                        "reason": f"failed: {exc}"}))
+        with lock:
+            finished[0] += 1
+            shares.pop(unit["id"], None)
+        # Merged as soon as it is scored, under the session's lock: its look
+        # can go out while the other checks are still scoring.
         with engine_for(call, session_id) as engine:
             held = engine.record["units"].get(f"{project}::check::{unit['id']}")
             if held is None or held["state"] != "pending":
-                continue
+                return
             state = outcome.pop("state")
             held.update({k: v for k, v in outcome.items() if k not in ("id", "check")})
             if one_cycle and state != "skipped_not_applicable":
                 _add_one_cycle(engine, held, one_cycle)
             if state == "skipped_not_applicable":
                 # Said in the report beside the checks not planned at all.
-                engine.record.setdefault("planning_notes", []).append(
-                    {"check": check, "status": "not_run", "unit": unit["id"],
-                     "reason": outcome.get("reason") or "could not run",
-                     "channels": list(unit.get("channels") or [])})
+                notes = engine.record.setdefault("planning_notes", [])
+                notes.append({"check": check, "status": "not_run", "unit": unit["id"],
+                              "reason": outcome.get("reason") or "could not run",
+                              "channels": list(unit.get("channels") or []), "_order": index})
+                # In the planned order, whichever finished first.
+                notes.sort(key=lambda n: n.get("_order", -1))
             if state in ("skipped_not_applicable", "decided"):
                 engine.close(held, state, outcome.get("reason") or "could not run")
             else:
@@ -345,7 +371,84 @@ def run(call, session_id, announce=None) -> dict:
             from plexora.plugins.qc.server import checks_result
 
             checks_result.record(engine, held)
-    return {"ran": ran, "skipped": skipped}
+        from plexora.agent.sessions import tools as session_tools
+
+        # A reader told `busy` looks again: this check's look may be ready.
+        session_tools.wake(session_id)
+
+    # The Artifact Detector's categories share one run (the first computes it,
+    # the rest reuse it by fingerprint): they go one after another on one
+    # worker. Every other check is a group of its own.
+    groups: list = []
+    shared: dict = {}
+    for index, unit in enumerate(todo):
+        if unit["check"] in SHARED_RUN_CHECKS:
+            if unit["check"] not in shared:
+                shared[unit["check"]] = []
+                groups.append(shared[unit["check"]])
+            shared[unit["check"]].append((index, unit))
+        else:
+            groups.append([(index, unit)])
+
+    def run_group(group):
+        for index, unit in group:
+            one(index, unit)
+
+    workers = check_workers(len(groups))
+    if workers <= 1:
+        for group in groups:
+            run_group(group)
+    else:
+        with _work.executor(max_workers=workers, thread_name_prefix="qc-check") as pool:
+            futures = [pool.submit(contextvars.copy_context().run, run_group, group)
+                       for group in groups]
+            try:
+                for future in futures:
+                    future.result()
+            except BaseException:
+                # A stop or cancel: the checks not yet begun are dropped; those
+                # running end at their next progress call.
+                for future in futures:
+                    future.cancel()
+                raise
+    with engine_for(call, session_id) as engine:
+        for note in engine.record.get("planning_notes") or ():
+            note.pop("_order", None)
+    return {"ran": [i for _n, i in sorted(ran)], "skipped": [s for _n, s in sorted(skipped,
+                                                                                   key=lambda p: p[0])]}
+
+
+#: The order the checks are scored in: the ones whose look takes the model
+#: longest first (a stain check's picture is drawn in a second, and read for
+#: a minute and more), so the lanes have work while the slow checks score.
+CHECK_ORDER = {"visual": 0, "stain": 1, "registration": 2, "artifacts": 3, "blur": 4,
+               "segmentation": 5}
+#: Checks whose units share one computation: scored one after another.
+SHARED_RUN_CHECKS = ("artifacts",)
+#: Checks scored at once in a bulk pass, unless PLEXORA_QC_CHECK_WORKERS says.
+DEFAULT_CHECK_WORKERS = 3
+
+
+def check_workers(groups: int) -> int:
+    """How many checks a bulk pass scores at once: PLEXORA_QC_CHECK_WORKERS,
+    else `DEFAULT_CHECK_WORKERS`, at most half the cores and at most the
+    image readers a project keeps open at once (`source_image`'s shelf, 4)."""
+    import os
+
+    if groups <= 1 or not _threads():
+        return 1
+    try:
+        wanted = int(os.environ.get("PLEXORA_QC_CHECK_WORKERS") or DEFAULT_CHECK_WORKERS)
+    except ValueError:
+        wanted = DEFAULT_CHECK_WORKERS
+    cores = max(1, (os.cpu_count() or 2) // 2)
+    return max(1, min(wanted, cores, 4, groups))
+
+
+def _threads() -> bool:
+    from plexora import _work
+
+    return _work.threaded()
 
 
 def _add_one_cycle(engine, check_unit, found_list):

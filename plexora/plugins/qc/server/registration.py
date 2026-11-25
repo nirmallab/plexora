@@ -99,9 +99,21 @@ def _folder(project):
 
 
 def _atomic_write(path, data: bytes):
+    """Write then replace; retried briefly, since on Windows a reader holding
+    the target open (another comparison's thread in a bulk pass, a synced
+    folder) refuses it (WinError 5)."""
+    import time
+
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    for attempt in range(6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def load_state(project) -> dict:

@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from plexora import _work
 from plexora.agent.errors import AgentError
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability, tool_name_of
@@ -198,6 +199,41 @@ class QCSessionOptions(AgentModel):
     biology: QCBiology | None = Field(None, description="The tissue and disease the user "
                                       "named, shown to the stain check: a prior, never a rule.")
     seed: int = 0
+    #: Default from PLEXORA_QC_LANES (8).
+    lanes: int | None = Field(
+        None, ge=1, le=session_tools.MAX_PARALLEL,
+        description="How many packets a harness answering this session keeps out at once "
+                    "(`qc_next(parallel=...)`). Decisions that depend on no answer still out "
+                    "go side by side; the rest wait. 1: one at a time.")
+
+
+#: The packets an in-app run keeps out at once, unless the start or
+#: PLEXORA_QC_LANES says otherwise. Stain checks (a median 104 s each in the
+#: local trace), score reviews and audit pages are independent: on a
+#: sixteen-channel panel 8 lanes finished in 41 s what 4 did in 51 s and 1 in
+#: 154 s (bench_qc `cyclic`, a tenth of real latency), the same calls and the
+#: same decisions. A lane with nothing ready sleeps until an answer wakes it,
+#: and the harness's limiter drops lanes on a rate limit, so lanes the work
+#: cannot fill cost nothing; 8 calls in flight stay well inside the
+#: gateway's per-device rate.
+DEFAULT_LANES = 8
+
+
+def lanes_for(requested=None) -> int:
+    """The lanes a session is answered with: the start's `lanes`, else
+    PLEXORA_QC_LANES, else `DEFAULT_LANES`; 1 where no thread can run them
+    (the browser build)."""
+    import os
+
+    if not _work.threaded():
+        return 1
+    if requested:
+        return max(1, min(session_tools.MAX_PARALLEL, int(requested)))
+    try:
+        lanes = int(os.environ.get("PLEXORA_QC_LANES") or DEFAULT_LANES)
+    except ValueError:
+        lanes = DEFAULT_LANES
+    return max(1, min(session_tools.MAX_PARALLEL, lanes))
 
 
 def option_defaults() -> dict:
@@ -347,7 +383,7 @@ def start(call, inp):
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
             "checks": [u["id"] for u in units.values() if u["type"] == "check"],
-            "planning_notes": planning_notes,
+            "planning_notes": planning_notes, "lanes": lanes_for(inp.lanes),
             "mirror": {k: record["mirror"].get(k) for k in ("status", "requested", "view_id",
                                                             "reason", "last_error", "hint")
                        if record["mirror"].get(k)},

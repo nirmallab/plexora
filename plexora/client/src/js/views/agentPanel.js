@@ -183,6 +183,14 @@ window.PlexoraAgentPanel = (function () {
     const EXPAND_TITLE = "Show the agent's controls";
     const STOP_TITLE = "Stop the agent. Gates it has written so far stay until you or the agent undo them.";
     const CHIP_TITLE = "An agent is working here. Click to show its controls.";
+    const FLIGHT_TITLE = "The looks the agent has out at once. Click to list them.";
+    //: What a look in flight is, in the user's words (the packet's kind).
+    const FLIGHT_KINDS = {
+        channel_audit: "Channel audit", score_review: "Score review", stain_check: "Stain check",
+        visual_scan: "Overview", artifact_confirm: "Region", artifact_scope: "Region's channels",
+        artifact_localize: "Region's outline", artifact_grid: "Region's outline",
+        final_qc_review: "Final review", t1_strip: "Marker strip",
+    };
     const DETACH_TITLE = "Give the viewer back to you. The agent keeps working in the background.";
     const ATTACH_TITLE = "Show what the agent is doing in this viewer again, from where it is now.";
     const ROLLBACK_HINT = "The agent can undo them: gating_session_finish(action=\"rollback\")";
@@ -383,6 +391,15 @@ window.PlexoraAgentPanel = (function () {
         const narration = el("p", "plx-agent-narration");
         narration.setAttribute("aria-hidden", "true");
         narration.hidden = true;
+        // Several looks out at once (a run's lanes): a chip saying how many,
+        // opening the list of them -- each with how long it has been out.
+        const flight = el("div", "plx-agent-flight");
+        flight.hidden = true;
+        const flightChip = button("plx-agent-flight-chip", "", FLIGHT_TITLE);
+        flightChip.setAttribute("aria-expanded", "false");
+        const flightList = el("ul", "plx-agent-flight-list");
+        flightList.hidden = true;
+        flight.append(flightChip, flightList);
         const limit = el("div", "plx-agent-limit");
         limit.setAttribute("role", "alertdialog");
         limit.hidden = true;
@@ -439,7 +456,7 @@ window.PlexoraAgentPanel = (function () {
         // together, tighter than the panel's own gap.
         const meta = el("div", "plx-agent-meta");
         meta.append(progress, usage, context);
-        root.append(live, head, narration, limit, credit, evidence, meta, summary, report, hint, actions);
+        root.append(live, head, narration, flight, limit, credit, evidence, meta, summary, report, hint, actions);
 
         // Minimized: one line that still says what the agent is doing.
         const bar = el("div", "plx-agent-bar");
@@ -486,7 +503,7 @@ window.PlexoraAgentPanel = (function () {
         const session = {
             id, root, bar, chip, host, dock,
             els: { live, orbCanvas, phaseName, subject, toggle, evidence, thumb, thumbButton, caption,
-                   narration, limit, limitText, limitGo, limitStop,
+                   narration, flight, flightChip, flightList, limit, limitText, limitGo, limitStop,
                    credit, creditText, creditResume, creditOther, usage, context,
                    progress, summary, report, hint, viewer, pause, stop, close,
                    barCanvas, barText, barWatch, barToggle, chipCanvas, chipText },
@@ -498,6 +515,12 @@ window.PlexoraAgentPanel = (function () {
             // and `control` say when this tab is being mirrored into.
             attached: false,
             evidence: null, viewId: null,
+            // The looks out now, by packet id, in the order they went out:
+            // an answer removes its own, whatever order they come back in.
+            inFlight: new Map(), flightOpen: false, flightTimer: null,
+            // The newest progress taken (`progress.at`): an older one arriving
+            // late is not shown, so the counts never step back.
+            progressAt: 0,
         };
         session.orb = mountOrb(orbCanvas, orbState("planning"), ORB_SIZE, ORB_DISPLAY);
 
@@ -513,6 +536,10 @@ window.PlexoraAgentPanel = (function () {
         creditResume.addEventListener("click", () => resumeRun(session));
         creditOther.addEventListener("click", () => creditLater(session));
         close.addEventListener("click", () => detach(session));
+        flightChip.addEventListener("click", () => {
+            session.flightOpen = !session.flightOpen;
+            renderFlight(session);
+        });
         thumbButton.addEventListener("click", () => enlarge(session));
         watchSidebar(session);
         return session;
@@ -615,7 +642,142 @@ window.PlexoraAgentPanel = (function () {
         if (by.check && Number(by.check.total) > 0) {
             parts.push(`checks ${Number(by.check.done) || 0}/${by.check.total}`);
         }
+        if (by.candidate && Number(by.candidate.total) > 0) {
+            parts.push(`regions ${Number(by.candidate.done) || 0}/${by.candidate.total}`);
+        }
         return parts.join(" · ");
+    }
+
+    // -- several looks at once -------------------------------------------------------
+
+    /** The look out longest (the Map keeps the order they went out in). */
+    function oldestFlight(session) {
+        for (const entry of session.inFlight.values()) return entry;
+        return null;
+    }
+
+    /** The headline follows the look out longest: it stays put while newer
+     *  ones come and go, rather than flicking between lanes. */
+    function syncHeadline(session) {
+        const first = oldestFlight(session);
+        if (!first) return;
+        session.subject = first.subject;
+        session.narration = first.narration;
+    }
+
+    function flightAdd(session, payload) {
+        if (payload.packet_id === undefined || payload.packet_id === null) return false;
+        const id = String(payload.packet_id);
+        const subject = payload.subject || payload.marker
+            || (Array.isArray(payload.markers) ? payload.markers.join(", ") : "");
+        const known = session.inFlight.get(id);
+        session.inFlight.set(id, {
+            id, kind: payload.kind ? String(payload.kind) : "",
+            subject: subject ? String(subject) : "",
+            narration: payload.narration ? String(payload.narration) : "",
+            since: known ? known.since : Date.now(), status: known ? known.status : "",
+        });
+        return true;
+    }
+
+    /** The looks out, from a run's snapshot (`session.in_flight`: a reloaded
+     *  tab lists every one, not just the next to be issued). */
+    function seedFlight(session, items) {
+        if (!Array.isArray(items) || !items.length) return;
+        for (const item of items) {
+            if (!item || typeof item !== "object") continue;
+            const units = Array.isArray(item.units) ? item.units.map((u) => String(u).split("::").pop()) : [];
+            flightAdd(session, { packet_id: item.packet_id, kind: item.kind, subject: units.join(", ") });
+        }
+        syncHeadline(session);
+        if (!session.done) render(session);
+    }
+
+    /** "CD45 accepted, moderate": the progress line's last clause for a
+     *  unit an answer closed. */
+    function closeLine(session, payload) {
+        const own = session.labels && session.labels.outcomes;
+        const words = (typeof payload.outcome_text === "string" && payload.outcome_text)
+            || (own && own[payload.state]) || OUTCOMES[payload.state]
+            || String(payload.state || "closed").replace(/_/g, " ");
+        const confidence = typeof payload.confidence === "string" && payload.confidence
+            && payload.state !== "accepted_low_confidence" ? `, ${payload.confidence}` : "";
+        session.lastLine = `${payload.marker || "A marker"} ${words}${confidence}`;
+        session.els.progress.title = payload.reason ? String(payload.reason) : "";
+    }
+
+    function flightDrop(session, packetId) {
+        if (packetId === undefined || packetId === null) return;
+        session.inFlight.delete(String(packetId));
+    }
+
+    function elapsed(since) {
+        const s = Math.max(0, Math.round((Date.now() - since) / 1000));
+        return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+    }
+
+    function flightText(entry) {
+        const what = FLIGHT_KINDS[entry.kind] || "Look";
+        return `${what}${entry.subject ? ` · ${entry.subject}` : ""} · ${elapsed(entry.since)}`
+            + (entry.status ? ` · ${entry.status}` : "");
+    }
+
+    function stopFlightTimer(session) {
+        if (session.flightTimer !== null && typeof clearInterval === "function") clearInterval(session.flightTimer);
+        session.flightTimer = null;
+    }
+
+    /** The chip ("3 at once") and, opened, the list of looks out: rows kept
+     *  by packet id, so an answer removes its own row and the rest stay put.
+     *  One timer ticks the elapsed times while the list is open -- no
+     *  re-render of the card for it. */
+    function renderFlight(session) {
+        const { els } = session;
+        const n = session.inFlight.size;
+        els.flight.hidden = n < 2 || session.done;
+        if (els.flight.hidden) {
+            els.flightList.hidden = true;
+            stopFlightTimer(session);
+            return;
+        }
+        els.flightChip.textContent = `${n} at once`;
+        els.flightChip.setAttribute("aria-expanded", String(session.flightOpen));
+        els.flightChip.classList.toggle("is-open", session.flightOpen);
+        els.flightList.hidden = !session.flightOpen;
+        if (!session.flightOpen) {
+            stopFlightTimer(session);
+            return;
+        }
+        // Rows never move: a look that went out later is added at the end,
+        // and an answered one's row is taken out wherever it is.
+        const rows = new Map();
+        for (const row of Array.from(els.flightList.children)) {
+            if (session.inFlight.has(row.dataset.packet)) rows.set(row.dataset.packet, row);
+            else row.remove();
+        }
+        for (const entry of session.inFlight.values()) {
+            let row = rows.get(entry.id);
+            if (!row) {
+                row = el("li", "plx-agent-flight-row");
+                row.dataset.packet = entry.id;
+                els.flightList.appendChild(row);
+            }
+            const text = flightText(entry);
+            if (row.textContent !== text) row.textContent = text;
+            row.classList.toggle("is-retrying", Boolean(entry.status));
+        }
+        if (session.flightTimer === null && typeof setInterval === "function") {
+            session.flightTimer = setInterval(() => {
+                if (session.done || !session.flightOpen || session.inFlight.size < 2) {
+                    stopFlightTimer(session);
+                    return;
+                }
+                for (const row of Array.from(els.flightList.children)) {
+                    const entry = session.inFlight.get(row.dataset.packet);
+                    if (entry) row.textContent = flightText(entry);
+                }
+            }, 1000);
+        }
     }
 
     function render(session) {
@@ -656,8 +818,17 @@ window.PlexoraAgentPanel = (function () {
             if (others) line.push(others);
         }
         if (session.lastLine) line.push(session.lastLine);
-        if (session.stopping) line.push("Stopping");
+        if (session.paused && session.inFlight.size && !session.stopping) {
+            // A pause stops new looks; the ones out finish, and their answers
+            // are kept for the resume (never asked again, never paid twice).
+            line.push(`${plural(session.inFlight.size, "look")} already out kept for when you resume`);
+        }
+        if (session.stopping) {
+            line.push(session.inFlight.size ? `Stopping · cutting ${plural(session.inFlight.size, "look")} short`
+                                            : "Stopping");
+        }
         if (line.length) type(els.progress, line.join(" · "));
+        renderFlight(session);
         els.narration.hidden = !session.narration;
         if (session.narration) type(els.narration, session.narration);
         const spent = usageLine(session);
@@ -1732,9 +1903,19 @@ window.PlexoraAgentPanel = (function () {
     }
 
     function adoptProgress(session, payload) {
-        const progress = payload.progress && typeof payload.progress === "object" ? payload.progress : null;
+        let progress = payload.progress && typeof payload.progress === "object" ? payload.progress : null;
+        // Taken under the session's lock (`progress.at`): with several looks
+        // out, an older count can arrive after a newer one -- it is not shown.
+        const at = progress ? Number(progress.at) : NaN;
+        if (progress && Number.isFinite(at)) {
+            if (at < session.progressAt) progress = null;
+            else session.progressAt = at;
+        }
         if (progress) {
             session.progress = progress;
+            // Nothing out on the server: a look whose answer this tab never
+            // heard of (an event dropped) leaves the list too.
+            if (Number(progress.in_flight) === 0 && session.inFlight.size) session.inFlight.clear();
             // QC's own shortcut, kept beside `progress` the way `phase` and
             // `subject` already are: the bulk pass's stage, while it runs
             // (`progress.bulk`, QC's engine folding `bulk_progress` in).
@@ -1843,16 +2024,45 @@ window.PlexoraAgentPanel = (function () {
         },
         issued(session, payload) {
             adoptPhase(session, payload);
+            // One packet at a time (the server's count says so, or says
+            // nothing): this one replaces whatever the list held.
+            const out = Number(payload.progress && payload.progress.in_flight);
+            if (!(out > 1)) session.inFlight.clear();
+            const tracked = flightAdd(session, payload);
             adoptProgress(session, payload);
-            session.narration = payload.narration ? String(payload.narration) : "";
-            const subject = payload.subject || payload.marker
-                || (Array.isArray(payload.markers) ? payload.markers.join(", ") : "");
-            session.subject = subject ? String(subject) : "";
+            if (tracked) {
+                syncHeadline(session);
+            } else {
+                session.narration = payload.narration ? String(payload.narration) : "";
+                const subject = payload.subject || payload.marker
+                    || (Array.isArray(payload.markers) ? payload.markers.join(", ") : "");
+                session.subject = subject ? String(subject) : "";
+            }
             // The exact pictures the model was sent (`evidence`, a list of
             // `{artifact_id, caption, title, width, height}`), served by the
             // captures route -- shown whether or not a viewer is mirrored.
+            // With several out, the headline's: a picture per lane would
+            // reload the thumbnail at every packet.
             const shown = firstEvidence(payload.evidence);
-            if (shown) setEvidence(session, shown);
+            const headline = oldestFlight(session);
+            if (shown && (!tracked || !session.evidence || (headline && headline.id === String(payload.packet_id)))) {
+                setEvidence(session, shown);
+            }
+        },
+        ai_retry(session, payload) {
+            const entry = payload.packet_id !== undefined && payload.packet_id !== null
+                ? session.inFlight.get(String(payload.packet_id)) : null;
+            const why = payload.code === "rate_limited" || payload.code === "provider_rate_limited"
+                ? "busy, asking again" : "connection dropped, asking again";
+            if (entry) entry.status = why;
+        },
+        ai_reissued(session, payload) {
+            flightDrop(session, payload.packet_id);
+            syncHeadline(session);
+        },
+        ai_cut(session, payload) {
+            flightDrop(session, payload.packet_id);
+            syncHeadline(session);
         },
         phase(session, payload) {
             adoptPhase(session, payload);
@@ -1864,15 +2074,18 @@ window.PlexoraAgentPanel = (function () {
         },
         answered(session, payload) {
             adoptPhase(session, payload);
+            // Its own look leaves the list, whichever order answers come in.
+            flightDrop(session, payload.packet_id);
             // The units this answer closed ride on it (`closed`, each what a
             // `unit_closed` event carries): one event per answer, not per unit.
             if (Array.isArray(payload.closed)) {
                 for (const unit of payload.closed) {
-                    if (unit && typeof unit === "object") HANDLERS.unit_closed(session, unit);
+                    if (unit && typeof unit === "object") closeLine(session, unit);
                 }
             }
             adoptProgress(session, payload);
             if (payload.narration) session.narration = String(payload.narration);
+            syncHeadline(session);
         },
         // A dataset run's images moved on (one started, one finished): sent
         // to a tab on every image of the run, so this card may be the
@@ -1892,16 +2105,11 @@ window.PlexoraAgentPanel = (function () {
             }
         },
         unit_closed(session, payload) {
-            const own = session.labels && session.labels.outcomes;
-            const words = (typeof payload.outcome_text === "string" && payload.outcome_text)
-                || (own && own[payload.state]) || OUTCOMES[payload.state]
-                || String(payload.state || "closed").replace(/_/g, " ");
-            const confidence = typeof payload.confidence === "string" && payload.confidence
-                && payload.state !== "accepted_low_confidence" ? `, ${payload.confidence}` : "";
-            session.lastLine = `${payload.marker || "A marker"} ${words}${confidence}`;
-            session.els.progress.title = payload.reason ? String(payload.reason) : "";
-            // Counted now; `answered` (which carries the closed units, or
-            // follows a server that still sends this event) has the server's count.
+            closeLine(session, payload);
+            // A server that still sends this event on its own: counted here.
+            // The units an `answered` carries are not -- its progress is the
+            // server's own count, taken under the session's lock, and adding
+            // to it as well counted some twice when answers crossed.
             if (session.progress && Number.isFinite(Number(session.progress.units_done))) {
                 session.progress = Object.assign({}, session.progress, {
                     units_done: Math.min(Number(session.progress.units_total) || Infinity,
@@ -1960,6 +2168,8 @@ window.PlexoraAgentPanel = (function () {
             session.paused = false;
             session.stopping = false;
             session.subject = "";
+            session.inFlight.clear();
+            renderFlight(session);
             if (session.collapsed) expand(session);
             const { els } = session;
             session.root.classList.remove("is-active", "is-paused");
@@ -2058,6 +2268,16 @@ window.PlexoraAgentPanel = (function () {
             session = attach(payload.session_id);
         }
         if (payload.control && typeof payload.control === "object") session.control = payload.control;
+        if (session.done && (payload.event === "ai_finished" || payload.event === "ai_usage")) {
+            // The run's own last word comes after the session's `finished` (a
+            // stop is told at once; the calls out settle after): the spend
+            // line still takes it, so the card shows what the run cost.
+            if (payload.usage && typeof payload.usage === "object") session.aiUsage = payload.usage;
+            const spent = usageLine(session);
+            session.els.usage.hidden = !spent;
+            if (spent && session.els.usage.textContent !== spent) session.els.usage.textContent = spent;
+            return;
+        }
         if (session.done && payload.event !== "finished" && payload.event !== "report") return;
         handler(session, payload);
         if (!session.done) render(session);
@@ -2129,6 +2349,8 @@ window.PlexoraAgentPanel = (function () {
                     handle({ session_id: id, event: "control", paused: Boolean(live.paused),
                              ...(live.viewer_attached !== undefined ? { viewer_attached: Boolean(live.viewer_attached) } : {}),
                              ...(live.view_id ? { view_id: String(live.view_id) } : {}) });
+                    // Every look out now, not just the next one to be issued.
+                    if (current && current.id === id) seedFlight(current, live.in_flight);
                 }
                 handle({ session_id: id, event: "ai_run", run_id: row.run_id, kind: row.kind });
                 if (current) await followTab(current, live);

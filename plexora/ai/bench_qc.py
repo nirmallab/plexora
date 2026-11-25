@@ -47,7 +47,20 @@ SCENARIOS = {
     # CHANNEL_FINDING_ARTIFACTS`).
     "edge_rim": ("edge_rim",),
     "broad_background": ("broad_background",),
+    # A sixteen-channel panel of four cycles (`qc_scenes.cyclic_scene`):
+    # twelve stain checks and a registration review per cycle -- the width a
+    # run's lanes fill.
+    "cyclic": ("cycle_fold",),
 }
+#: Scenarios drawn by another scene builder than `qc_scene` (name in qc_scenes).
+SCENE_BUILDERS = {"cyclic": "cyclic_scene"}
+
+
+def _builder(scenario):
+    from plexora.ai import qc_scenes
+
+    name = SCENE_BUILDERS.get(scenario)
+    return getattr(qc_scenes, name) if name else None
 AGENT_STYLES = ("oracle", "lazy", "noisy")
 ARMS = ("detect", "session")
 MATCH_IOU = 0.3
@@ -311,8 +324,10 @@ class QCTruthAgent:
 # -- the scene on disk ----------------------------------------------------------------------
 
 
-def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
-    """Write a QC scene's files and register it; returns what was made."""
+def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0, scene=None):
+    """Write a QC scene's files and register it; returns what was made.
+    `scene`: the builder (`qc_scenes.qc_scene` by default; `cyclic_scene`
+    for a sixteen-channel, four-cycle panel)."""
     from scipy import ndimage
 
     from plexora.ai.bench_data import _pyramid
@@ -324,8 +339,8 @@ def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
     data_root = Path(data_root)
     folder = data_root / f"_{name}_files"
     folder.mkdir(parents=True, exist_ok=True)
-    image, labels, cells, channels, truth = qc_scene(size=size, grid=grid,
-                                                     artifacts=artifacts, seed=seed)
+    image, labels, cells, channels, truth = (scene or qc_scene)(size=size, grid=grid,
+                                                                artifacts=artifacts, seed=seed)
     image_path = _pyramid(folder / "image.ome.tif", image, levels=4, pixel_size=1.0)
     mask_path = _pyramid(folder / "mask.tif", labels, levels=4, ome=False)
     ids = np.arange(1, len(cells) + 1)
@@ -705,8 +720,166 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
     return row
 
 
+#: Median seconds a model call of each QC task took in the local trace's QC
+#: runs (13 runs, 2026-10..11; `plexora ai trace`): what the `harness` arm's
+#: stand-in model waits before it answers, scaled by `latency_scale`. A stain
+#: check reads one large picture with high effort -- most of a run's model time.
+TASK_LATENCY_S = {"qc.stain_check": 104.0, "qc.stain_reader_2": 104.0, "qc.stain_reader_3": 104.0,
+                  "qc.artifact_inspection": 9.9, "qc.roi_refinement": 9.9, "qc.blur": 4.7,
+                  "qc.registration": 4.8, "qc.artifacts": 4.8, "qc.planning": 7.1,
+                  "qc.visual_scan": 11.1, "qc.final_review": 3.8}
+DEFAULT_LATENCY_S = 8.0
+
+
+def _task_of_wire(task):
+    """`plexora.qc.stain_check` -> `qc.stain_check`."""
+    return (task or "").split(".", 1)[1] if (task or "").count(".") >= 2 else (task or "")
+
+
+def result_signature(project, session_id) -> dict:
+    """What a QC run decided, without ids, labels or order: the regions of the
+    active result (class, action, channels, area and box of the outline), each
+    channel's state, each stain verdict and the failing cells. Two runs that
+    decided the same thing have equal signatures."""
+    import hashlib
+
+    from plexora.plugins.qc.server import results
+    from plexora.plugins.qc.server.engine import store
+
+    record = store().load(session_id)
+    result = results.active(results.load(project)) or {}
+    def shape(geometry):
+        """The outline's hash, its coordinates rounded to a tenth of a pixel."""
+        def rounded(value):
+            if isinstance(value, (list, tuple)):
+                return [rounded(v) for v in value]
+            return round(float(value), 1) if isinstance(value, (int, float)) else value
+        coords = rounded((geometry or {}).get("coordinates"))
+        return hashlib.sha1(json.dumps(coords).encode()).hexdigest()[:12]
+
+    regions = []
+    for candidate in (result.get("candidates") or {}).values():
+        if candidate.get("state") == "merged" or candidate.get("consolidated_into"):
+            continue
+        regions.append([candidate.get("class"), candidate.get("action"), candidate.get("state"),
+                        sorted(candidate.get("channels") or []), shape(candidate.get("geometry")),
+                        sorted(shape(f.get("geometry")) for f in candidate.get("findings") or [])])
+    regions.sort(key=lambda r: json.dumps(r))
+    units = record.get("units") or {}
+    channels = {u["id"]: u["state"] for u in units.values() if u.get("type") == "channel"}
+    stains = {u.get("channel"): u.get("verdict") for u in units.values()
+              if u.get("type") == "check" and u.get("check") == "stain"}
+    # How each check ended: one skipped (failed to score) is a different run
+    # even when no region shows it.
+    checks = {u["id"]: u["state"] for u in units.values() if u.get("type") == "check"}
+    cells = results.cells(project)
+    failing = sorted(int(c) for c in cells.filter(~cells["pass"])["cell_id"].to_list()) \
+        if cells is not None and cells.height else []
+    return {"regions": regions, "channels": channels, "stains": stains, "checks": checks,
+            "failing_cells": len(failing),
+            "failing_hash": hashlib.sha1(json.dumps(failing).encode()).hexdigest()[:12]}
+
+
+def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, latency_scale=0.02,
+                jitter=0.0) -> dict:
+    """The `harness:N` arm: Plexora's own AI harness (`QCRun`) answering a QC
+    session with N lanes, against a stand-in gateway whose model waits each
+    task's real median latency (`TASK_LATENCY_S` x `latency_scale`, +-`jitter`
+    share at random) and then answers from the truth (`QCTruthAgent`). What it
+    measures: the run's wall time, its model calls, tokens and prefix writes,
+    the packets out at once, and a signature of what it decided -- which must
+    not depend on the lanes."""
+    import random
+    import threading
+
+    from spatialagents.testing import FakeGateway as _Fake
+
+    from plexora.ai.harness.decision import QCOptions, QCRun
+    from plexora.ai.harness.gateway import GatewayClient, TokenSource
+    from plexora.ai.harness.trace import TraceStore
+
+    class Gateway(_Fake):
+        PRODUCT = "plexora"
+        PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
+
+    agent = QCTruthAgent(made["truth"], agent_style, seed=seed)
+    rng = random.Random(seed)
+    lock = threading.Lock()
+    busy = {"now": 0, "peak": 0, "model_s": 0.0}
+    timeline: list = []
+    started = time.monotonic()
+
+    def brain(packet, body):
+        task = _task_of_wire(body.get("task"))
+        wait = TASK_LATENCY_S.get(task, DEFAULT_LATENCY_S) * latency_scale
+        if jitter:
+            with lock:
+                wait *= 1.0 + rng.uniform(-jitter, jitter)
+        with lock:
+            busy["now"] += 1
+            busy["peak"] = max(busy["peak"], busy["now"])
+        began = time.monotonic() - started
+        try:
+            time.sleep(max(0.0, wait))
+            return agent.answer(packet, body["context"]["session_id"])
+        finally:
+            with lock:
+                busy["now"] -= 1
+                busy["model_s"] += wait
+                timeline.append([round(began, 2), round(time.monotonic() - started, 2),
+                                 packet.get("packet_id"), packet.get("kind"),
+                                 [u.get("id") for u in packet.get("units") or ()]])
+
+    project = made["name"]
+    with tempfile.TemporaryDirectory(prefix="pxbench-trace-", ignore_cleanup_errors=True) as tdir, \
+            Gateway(brain) as gateway:
+        client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None)
+        # Every arm asks the model afresh: answers are never replayed from
+        # another arm's memo (`reuse_answers`).
+        options = QCOptions(project=project, parallel_markers=max(1, int(lanes)),
+                            start_options={"map_cell_um": cell_um, "on_limit": "extend",
+                                           "seed": seed, "reuse_answers": False, "mirror": False})
+        summary = QCRun(options, gateway=client, trace=TraceStore(Path(tdir) / "trace.sqlite"),
+                        session=session).run()
+        calls = list(gateway.calls)
+    wall = time.monotonic() - started
+    if summary.get("status") != "done":
+        return {"seconds": round(wall, 2), "status": summary.get("status"),
+                "reason": summary.get("reason")}
+    signature = result_signature(project, summary["session_id"])
+    by_task: dict = {}
+    for call in calls:
+        task = _task_of_wire(call["body"].get("task"))
+        by_task[task] = by_task.get(task, 0) + 1
+    tokens = summary.get("tokens") or {}
+    row = {"status": "done", "lanes": int(lanes), "packets": summary.get("packets"),
+           "model_calls": summary.get("model_calls"), "invalid_answers": summary.get("invalid_answers"),
+           "wall_s": round(wall, 2), "model_s": round(busy["model_s"], 2),
+           "peak_calls_out": busy["peak"], "peak_outstanding": summary.get("peak_outstanding"),
+           "reissued": summary.get("reissued", 0), "workers": summary.get("workers"),
+           "tokens_input": tokens.get("input"), "tokens_cache_read": tokens.get("cache_read"),
+           "tokens_cache_write": tokens.get("cache_write"), "tokens_output": tokens.get("output"),
+           "cache_read_share": (summary.get("cache") or {}).get("read_share"),
+           "charged_micro": summary.get("charged_micro"), "calls_by_task": by_task,
+           "signature": signature, "timeline": sorted(timeline)}
+    from plexora.plugins.qc.server.engine import store
+
+    # What did not run and why (a check skipped, say): two arms that differ
+    # in their calls differ here first.
+    record = store().load(summary["session_id"])
+    row["not_run"] = sorted(f"{n.get('check')}:{n.get('unit')}: {n.get('reason')}"
+                            for n in record.get("planning_notes") or [])
+    row["checks"] = sorted(f"{u['id']}={u['state']} ({u.get('reason') or ''})"
+                           for u in record["units"].values() if u.get("type") == "check")
+    from plexora.agent import invoke
+
+    # Each scene is scored from scratch by the next arm too.
+    invoke(session, "qc_session_finish", {"session_id": summary["session_id"], "action": "rollback"})
+    return row
+
+
 def run_synthetic(scenarios, agent_style="oracle", *, arms=ARMS, seed=0, size=1024,
-                  grid=40) -> list:
+                  grid=40, latency_scale=0.02, jitter=0.0) -> list:
     from plexora import paths
     from plexora.agent import AgentSession, registry
 
@@ -724,9 +897,21 @@ def run_synthetic(scenarios, agent_style="oracle", *, arms=ARMS, seed=0, size=10
             for index, scenario in enumerate(scenarios):
                 name = f"qcbench_{scenario}"
                 made = register(root, name, SCENARIOS[scenario], size=size, grid=grid,
-                                seed=seed + index)
-                for arm in arms:
-                    row = run_scene(session, made, arm, agent_style, seed=seed + index)
+                                seed=seed + index, scene=_builder(scenario))
+                for position, arm in enumerate(arms):
+                    if arm.startswith("harness"):
+                        # A scene of its own per harness arm, the same pixels: the
+                        # stain ledger and the scan caches an earlier arm left
+                        # would otherwise answer for this one.
+                        lanes = int(arm.partition(":")[2] or 1)
+                        own = register(root, f"{name}_h{lanes}_{position}",
+                                       SCENARIOS[scenario], size=size, grid=grid, seed=seed + index,
+                                       scene=_builder(scenario))
+                        row = {"arm": arm, "agent": agent_style,
+                               **run_harness(session, own, lanes, agent_style, seed=seed + index,
+                                             latency_scale=latency_scale, jitter=jitter)}
+                    else:
+                        row = run_scene(session, made, arm, agent_style, seed=seed + index)
                     row["scenario"] = scenario
                     rows.append(row)
             session.close()

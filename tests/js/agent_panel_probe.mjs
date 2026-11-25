@@ -1403,6 +1403,67 @@ const attachPosts = (page) => page.fetches.filter((f) => f.method === "POST" && 
         { posts, quiet, named });
 }
 
+// -- several looks out at once (a run's lanes) ------------------------------------
+
+{
+    const pg = await running({}, "CD3");
+    const root = pg.root();
+    pg.send("issued", { packet_id: "p2", kind: "stain_check", subject: "CD8", phase: "thinking",
+                        progress: { units_done: 0, units_total: 3, at: 10, in_flight: 2 } });
+    pg.send("issued", { packet_id: "p3", kind: "score_review", subject: "blur DNA", phase: "thinking",
+                        progress: { units_done: 0, units_total: 3, at: 20, in_flight: 3 } });
+    const flight = byClass(root, "plx-agent-flight");
+    const chip = byClass(root, "plx-agent-flight-chip");
+    const list = byClass(root, "plx-agent-flight-list");
+    const subject = () => byClass(root, "plx-agent-subject").textContent;
+    const rows = () => list.children.map((row) => row.dataset.packet).join(",");
+    const chipText = chip.textContent;
+    const closedAtFirst = list.hidden;
+    const headlineAtFirst = subject();
+    chip.click();
+    const opened = !list.hidden && chip.getAttribute("aria-expanded") === "true";
+    const before = rows();
+    // The second look comes back first.
+    pg.send("answered", { packet_id: "p2", kind: "stain_check", phase: "thinking",
+                          progress: { units_done: 1, units_total: 3, at: 30, in_flight: 2 } });
+    const afterOne = rows();
+    const headlineKept = subject();
+    pg.send("answered", { packet_id: "p1", kind: "t1_strip", phase: "thinking",
+                          progress: { units_done: 2, units_total: 3, at: 40, in_flight: 1 } });
+    const headlineMoved = subject();
+    const oneLeftHidden = flight.hidden;
+    check("several looks out: a chip counts them (closed until clicked), the headline stays on the look out "
+        + "longest, and answers coming back in any order take out only their own row",
+        chipText === "3 at once" && closedAtFirst && opened && before === "p1,p2,p3" && afterOne === "p1,p3"
+        && headlineAtFirst === " · CD3" && headlineKept === " · CD3" && headlineMoved === " · blur DNA"
+        && oneLeftHidden,
+        { chipText, closedAtFirst, opened, before, afterOne, headlineAtFirst, headlineKept, headlineMoved,
+          oneLeftHidden });
+
+    // A count taken before the last one shown arrives late: not shown.
+    const progress = byClass(root, "plx-agent-progress");
+    const shown = progress.textContent;
+    pg.send("phase", { phase: "thinking", progress: { units_done: 1, units_total: 3, at: 35, in_flight: 1 } });
+    check("an older count arriving after a newer one is not shown: the progress never steps back",
+        /^2 of 3 markers/.test(shown) && progress.textContent === shown, { shown, now: progress.textContent });
+
+    pg.send("issued", { packet_id: "p4", kind: "stain_check", subject: "CD20", phase: "thinking",
+                        progress: { units_done: 2, units_total: 3, at: 50, in_flight: 2 } });
+    pg.send("ai_retry", { packet_id: "p4", code: "rate_limited", attempt: 1, retry_after: 6 });
+    pg.send("control", { paused: false });
+    const row = list.children.find((r) => r.dataset.packet === "p4");
+    const retrying = Boolean(row) && /Stain check · CD20 · \d+s · busy, asking again/.test(row.textContent)
+        && row.classList.contains("is-retrying");
+    pg.send("control", { paused: true });
+    const pausedLine = progress.textContent;
+    pg.send("finished", { reason: "stopped", summary: {} });
+    const cleared = flight.hidden && list.hidden;
+    check("a look asked again is marked so in the list; a pause says the looks already out are kept; "
+        + "the end of the session clears them",
+        retrying && /2 looks already out kept for when you resume/.test(pausedLine) && cleared,
+        { row: row && row.textContent, pausedLine, cleared });
+}
+
 if (failures.length) {
     console.error(`\n${failures.length} check(s) failed`);
     process.exit(1);

@@ -136,10 +136,28 @@ def _folder(project):
     return path
 
 
+#: One writer of a project's pointer file (`current.json`) and its sweep at a
+#: time: a session's bulk pass scores several channels at once, and two saves
+#: read-modify-writing the pointers lost one channel's -- whose result the
+#: sweep then deleted -- or met on Windows' replace (WinError 5).
+_POINT_LOCK = threading.RLock()
+
+
 def _atomic_write(path, data: bytes):
+    """Write then replace; retried briefly, since on Windows a reader holding
+    the target open (another check's thread, a synced folder) refuses it."""
+    import time
+
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    for attempt in range(6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def _read_json(path):
@@ -732,13 +750,14 @@ def _pointers(project) -> dict:
 
 
 def _point(project, label, fp):
-    pointers = _pointers(project)
-    if fp is None:
-        pointers.pop(label, None)
-    else:
-        pointers[label] = fp
-    _atomic_write(_folder(project) / "current.json",
-                  json.dumps({"by_channel": pointers}, sort_keys=True).encode("utf-8"))
+    with _POINT_LOCK:
+        pointers = _pointers(project)
+        if fp is None:
+            pointers.pop(label, None)
+        else:
+            pointers[label] = fp
+        _atomic_write(_folder(project) / "current.json",
+                      json.dumps({"by_channel": pointers}, sort_keys=True).encode("utf-8"))
 
 
 def _save(project, fp, result):
@@ -752,8 +771,11 @@ def _save(project, fp, result):
     np.savez_compressed(buffer, **result["arrays"])
     _atomic_write(folder / f"{fp}.npz", buffer.getvalue())
     _atomic_write(folder / f"{fp}.json", json.dumps(summary, default=str).encode("utf-8"))
-    _point(project, label_of(summary.get("channel")), fp)
-    _sweep(project, keep=3)
+    with _POINT_LOCK:
+        # Pointed and swept as one step: a sweep between another channel's
+        # save and its pointer would take that channel's new result.
+        _point(project, label_of(summary.get("channel")), fp)
+        _sweep(project, keep=3)
     _remember(project, fp, summary, result["arrays"])
     return summary
 

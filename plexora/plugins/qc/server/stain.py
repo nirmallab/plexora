@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import io
 import re
+import threading
 
 import numpy as np
 
@@ -419,6 +420,9 @@ class _Image:
 
 
 _CACHE: dict = {}
+#: Built once when several stain pictures are drawn at once (a bulk pass
+#: scores its checks side by side): the others wait for it.
+_CACHE_LOCK = threading.Lock()
 
 
 def image_context(session, project) -> _Image:
@@ -431,10 +435,11 @@ def image_context(session, project) -> _Image:
     except Exception:  # noqa: BLE001
         stamp = None
     key = (project, str(session.image_data(project)), stamp)
-    held = _CACHE.get(key)
-    if held is None:
-        _CACHE.clear()
-        held = _CACHE[key] = _Image(session, project)
+    with _CACHE_LOCK:
+        held = _CACHE.get(key)
+        if held is None:
+            _CACHE.clear()
+            held = _CACHE[key] = _Image(session, project)
     return held
 
 

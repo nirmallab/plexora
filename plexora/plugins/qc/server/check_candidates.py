@@ -368,6 +368,12 @@ def settle_held(engine, project=None) -> int:
                                 for cid in group["held"]) if h is not None]
             common = verdicts[0] if verdicts and verdicts[0] is not None \
                 and all(v == verdicts[0] for v in verdicts) else None
+            if common is not None and _touches_a_look_out(engine, held):
+                # A candidate overlapping a held region is out for its look
+                # (several packets out at once): carrying the verdict now
+                # would decide the region before that look, where a serial
+                # run decides it after. It waits for that answer.
+                continue
             if common is None:
                 for unit in held:
                     unit.pop("held_for", None)
@@ -410,6 +416,17 @@ def settle_held(engine, project=None) -> int:
 
             checks_result.record(engine, check)
     return touched
+
+
+def _touches_a_look_out(engine, held) -> bool:
+    """Whether a candidate out for a look overlaps one of `held` (only an
+    engine serving several packets at once has any)."""
+    if not held or not engine.record.get("outstanding") \
+            or getattr(engine, "touching", None) is None:
+        return False
+    out = [u for u in engine.units_of("candidate", held[0]["project"])
+           if engine.outstanding_unit(u)]
+    return bool(out) and any(engine.touching(unit, out) for unit in held)
 
 
 def still_held(engine, unit) -> bool:

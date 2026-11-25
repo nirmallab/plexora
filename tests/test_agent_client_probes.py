@@ -110,6 +110,11 @@ PANEL_CHECKS = [
     "session lists this image (a run that does not is passed over)",
     "a dataset run mirrored into this tab follows it: the reloaded page posts attach_viewer with "
     "its view id and project; a run that does not follow the tab, or is mirrored elsewhere, is left be",
+    "several looks out: a chip counts them (closed until clicked), the headline stays on the look out "
+    "longest, and answers coming back in any order take out only their own row",
+    "an older count arriving after a newer one is not shown: the progress never steps back",
+    "a look asked again is marked so in the list; a pause says the looks already out are kept; "
+    "the end of the session clears them",
 ]
 
 LAUNCH_CHECKS = [
