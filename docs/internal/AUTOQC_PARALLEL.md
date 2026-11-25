@@ -346,9 +346,40 @@ nothing.
   and a worker skips it only when its last call was under the same schema
   (`_Worker.cache_key`).
 
+### Gating on LSP35766A: does a look in a worker of its own change the call?
+
+LSP35766A (51 channels, 448,649 cells), four markers the user knows: panCK
+and NKG2A stain badly, CD8a and Ecadherin well. Three projects hard-linked
+to the same image, mask and table (`lsp-before`, `lsp-after`, `lsp-shared`)
+with the original's set-up, channel names and pixel size. Arms: before
+(fd1a049d), after (3e056f8e), and after with a marker's looks sharing a
+worker again (`cell_panel` out of `GatingWorkflow.solo_kinds`). One run each;
+each reached its 100-credit quote, so credits are metered.
+
+| Arm | Calls | Input | Output | Metered credits |
+|---|---|---|---|---|
+| before | 26 | 329,862 | 25,134 | 203.4 |
+| after | 21 | 170,290 | 19,403 | 134.9 (−34%) |
+| after, shared looks | 27 | 227,292 | 25,895 | 169.5 (−17%) |
+
+| Marker | before | after | after, shared looks |
+|---|---|---|---|
+| NKG2A | technically failed | technically failed | technically failed |
+| panCK | manual review | manual review | manual review |
+| CD8a | manual review | manual review | manual review |
+| Ecadherin | manual review (looks spent) | accepted, 5.06 (T2) | accepted, 5.06 (T2) |
+
+Solo looks and shared looks reached the same call on every marker, the
+same Ecadherin gate included, with fewer looks (15 against 21). So nothing
+here says a look in a worker of its own judges worse, and exemplar-001's
+difference reads as chance on contested cells. Neither arm (nor before)
+accepts CD8a, which the user knows stains well: each closes it for review
+on its own checks (`flip_share`, `delta_from_gmm`) or on looks that could
+not separate the rival gates -- a gating question apart from tokens.
+
 ## Not done
 
-- **Replicates.** One run per arm. Gating's outcome difference wants a
-  second run of after, and one of after with gating looks sharing a worker
-  again (`GatingWorkflow.solo_kinds` without `cell_panel`), before the solo
-  change is called neutral for gating.
+- **Replicates.** One run per arm throughout; the outcome comparisons are
+  single runs.
+- **CD8a on LSP35766A** goes to manual review in every arm, though it
+  stains well.
