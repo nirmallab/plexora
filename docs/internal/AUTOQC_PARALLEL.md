@@ -240,16 +240,30 @@ waits parked. They were re-reading earlier packets at every call and paying
 the prefix alone, with the same schema.
 
 **Bench** (stand-in model, `harness:1` and `harness:auto`, the same scenes as
-above; cost-weighted with reads at 0.1x and writes at 1.25x). The stand-in's
-cache does not key on the schema, so the per-kind prefix writes it saves are
-undercounted.
+above; before is fd1a049d, after is a41e81c4; cost at the stand-in's prices,
+reads 0.05x and writes 1.25x of input). The stand-in's cache keys on the
+answer schema as the provider's does (`SchemaKeyedCache`, below); a first
+measurement on a stand-in that did not showed only −22% to −29%, because it
+let every kind read one shared prefix.
 
-| Scenario, arm | Input tokens | Weighted | Decisions |
-|---|---|---|---|
-| cyclic, 1 lane | 377,535 → 186,736 | −25% | same |
-| cyclic, auto | 332,774 → 180,441 | −22% | same |
-| mixed, 1 lane | 153,966 → 82,765 | −29% | same |
-| mixed, auto | 140,532 → 76,230 | −28% | same |
+| Scenario, arm | Input tokens | Cache writes | Cost | Decisions, calls |
+|---|---|---|---|---|
+| cyclic, 1 lane | 377,535 → 186,736 | 131,836 → 88,706 | −34% | same |
+| cyclic, auto | 330,484 → 180,453 | 129,571 → 86,700 | −33% | same |
+| mixed, 1 lane | 153,974 → 82,765 | 91,358 → 55,574 | −39% | same |
+| mixed, auto | 140,532 → 76,219 | 86,945 → 51,208 | −41% | same |
+
+**The stand-in's cache and the harness's verdicts key on the schema.** The
+provider puts a format prompt ahead of the system prompt, so a prefix is
+cached per answer schema. spatialagents' `FakeGateway` now keys on it
+(a62d0d4, after 0.2.6); until Plexora pins a release with it, `bench_qc.
+SchemaKeyedCache` is mixed into the bench's and the tests' stand-in. The bench
+reports `prefix_writes` and `answer_schemas`, and `test_qc_parallel` pins one
+write per schema at 1 and 4 lanes. The harness's cache monitor keyed a prefix
+on the system prompt alone, so every kind's first call (and a warm worker's
+first call under a second kind's schema, as `artifact_inspection` asks
+`score_review` then `artifact_confirm`) was logged as a "prompt-cache miss";
+it keys on the schema too (`_cache_key`), and those calls are cold.
 
 **Fixed on the way:**
 
@@ -293,4 +307,4 @@ are asked again once rather than replayed from an earlier run.
 
 - **A live run against the real gateway.** The plan's live run, serial
   against lanes, needs credits and a project chosen by the user, so it
-  waits. It would also show the per-schema prefix writes the stand-in cannot.
+  waits.

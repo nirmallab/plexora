@@ -22,7 +22,7 @@ from plexora.ai.harness.decision import GatingOptions, GatingRun
 from plexora.ai.harness.trace import TraceStore
 from plexora.plugins.gating.server.autogate import engine as engines
 from plexora.plugins.gating.server.autogate import schemas
-from tests.ai_harness_fixtures import FakeGateway
+from tests.ai_harness_fixtures import FakeGateway, answer_schemas
 from tests.autogate_fixtures import make_gating_project
 from tests.test_ai_harness import client, oracle_brain
 from tests.test_gating_session import Oracle
@@ -605,7 +605,8 @@ def test_the_harness_gates_with_parallel_markers_and_writes_the_prefix_once(tmp_
     assert parallel["invalid_answers"] == 0
     assert len({c["idempotency_key"] for c in calls}) == len(calls)
     # Each lane had its own conversations: no call carries another marker's
-    # packet; and the prefix was written to the cache once, by the first call.
+    # packet; and the prefix was written to the cache once per answer schema
+    # (the provider keys it on the schema), by the first call under it.
     for call in calls:
         packets = [json.loads(m["content"][-1]["text"])
                    for m in call["body"]["request"]["messages"] if m["role"] == "user"]
@@ -614,7 +615,7 @@ def test_the_harness_gates_with_parallel_markers_and_writes_the_prefix_once(tmp_
         first = {u["marker"] for u in packets[0]["units"]} if packets else set()
         for packet in packets[1:]:
             assert {u["marker"] for u in packet["units"]} <= first
-    assert len([c for c in calls if c["usage"]["cache_read"] == 0]) == 1
+    assert len([c for c in calls if c["usage"]["cache_read"] == 0]) == len(answer_schemas(calls))
     assert parallel["cache"]["verdicts"]["miss"] == 0
     readers = {(json.loads(c["body"]["request"]["messages"][-1]["content"][-1]["text"])
                 .get("briefed") or {}).get("reader") for c in calls}

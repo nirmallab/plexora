@@ -20,7 +20,7 @@ from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.decision import QCOptions, QCRun
 from plexora.ai.harness.gateway import GatewayClient, TokenSource
 from plexora.ai.harness.trace import TraceStore
-from tests.ai_harness_fixtures import FakeGateway
+from tests.ai_harness_fixtures import FakeGateway, after_first_per_schema, answer_schemas
 from tests.qc_fixtures import make_qc_project
 from tests.test_qc_session import QCOracle, classes_of, rois_of
 
@@ -181,12 +181,13 @@ def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path)
               if b["type"] == "image"]
     assert images and all(b["source"]["media_type"] == "image/webp" for b in images)
 
-    # One prefix, identical on every call; read from cache after the first.
+    # One prefix, identical on every call; read from cache after the first
+    # call under each answer schema (the provider keys it on the schema).
     systems = {json.dumps(c["body"]["request"]["system"], sort_keys=True) for c in gateway.calls}
     assert len(systems) == 1
     assert summary["cache"]["verdicts"].get("miss", 0) == 0
-    assert summary["cache"]["verdicts"]["cold"] == 1
-    for call in gateway.calls[1:]:
+    assert summary["cache"]["verdicts"]["cold"] == len(answer_schemas(gateway.calls))
+    for call in after_first_per_schema(gateway.calls):
         assert call["usage"]["cache_read"] >= cache_plan.expected_tokens(prefix.qc_prefix()) * 0.8
     report = trace.cache_report(summary["run_id"])
     assert report["calls"] == len(gateway.calls) and report["verdicts"].get("miss", 0) == 0

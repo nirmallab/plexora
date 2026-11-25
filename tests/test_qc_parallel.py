@@ -36,6 +36,10 @@ def test_four_lanes_decide_what_one_lane_decides_with_the_same_calls(jitter):
         assert four["reissued"] == 0 and four["invalid_answers"] == 0, scene
         # Side by side for real: more than one call was out at once.
         assert four["peak_calls_out"] >= 2, scene
+        # The prefix is written once per answer schema (the provider keys it
+        # on the schema), however many lanes: the warm gate holds the rest.
+        for row in (one, four):
+            assert row["prefix_writes"] == row["answer_schemas"], (scene, row["arm"], row["calls_by_task"])
 
 
 @pytest.mark.pro

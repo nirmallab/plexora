@@ -1497,6 +1497,14 @@ class DecisionRun:
         return w.solo or w.packets + 1 >= self.o.max_packets_per_worker \
             or w.tokens() >= self.o.context_tokens_per_worker or (w.last_hint and self.o.units_per_worker <= 1)
 
+    def _cache_key(self, output_schema) -> str:
+        """The prefix as the provider caches it: the system prompt under one
+        answer schema (its format prompt sits ahead of the system prompt), so
+        a kind's first call under its schema is cold, not a miss."""
+        if output_schema is None:
+            return self.prefix_fp
+        return cache_plan.fingerprint([*self.system, {"output_schema": output_schema}])
+
     def _call(self, packet: dict, messages: list, lane: _Lane):
         self.check()
         kind = packet.get("kind", "")
@@ -1563,8 +1571,12 @@ class DecisionRun:
         usage = response.usage
         lane.last_input_tokens = int((usage.input_uncached or 0) + (usage.cache_read or 0)
                                      + (usage.cache_write or 0))
+        key = self._cache_key(request.output_schema)
         with self._lock:
-            verdict = self.monitor.observe(self.prefix_fp, self.prefix_tokens, response.usage, warm=warm)
+            # A warm worker's first call under another schema (a task asking
+            # two kinds) is that schema's first: cold, as a new worker's is.
+            verdict = self.monitor.observe(key, self.prefix_tokens, response.usage,
+                                           warm=warm and bool(self.monitor.seen.get(key)))
             self.charged += response.charged_micro
             if response.run:
                 self.gateway_run = {**(self.gateway_run or {}), **response.run}
