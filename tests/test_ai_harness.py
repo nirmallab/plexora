@@ -24,7 +24,7 @@ from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.decision import GatingOptions, GatingRun, run_many
 from plexora.ai.harness.gateway import GatewayClient, GatewayError, TokenSource
 from plexora.ai.harness.trace import TraceStore
-from tests.ai_harness_fixtures import FakeGateway, _tokens
+from tests.ai_harness_fixtures import FakeGateway, _tokens, after_first_per_schema, answer_schemas
 from tests.autogate_fixtures import make_gating_project
 from tests.test_gating_session import Oracle
 
@@ -774,13 +774,14 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
             assert {u["marker"] for u in packet["units"]} <= first
         assert len(packets) <= 8
 
-    # The prefix is identical on every call, and from the second call on the
-    # cache reads it; there is no miss anywhere.
+    # The prefix is identical on every call, and from the second call under
+    # an answer schema on the cache reads it (the provider keys it on the
+    # schema); there is no miss anywhere.
     systems = {json.dumps(c["body"]["request"]["system"], sort_keys=True) for c in gateway.calls}
     assert len(systems) == 1
     assert summary["cache"]["verdicts"]["miss"] == 0
-    assert summary["cache"]["verdicts"]["cold"] == 1
-    for call in gateway.calls[1:]:
+    assert summary["cache"]["verdicts"]["cold"] == len(answer_schemas(gateway.calls))
+    for call in after_first_per_schema(gateway.calls):
         assert call["usage"]["cache_read"] >= cache_plan.expected_tokens(prefix.gating_prefix()) * 0.8
     # A worker's later packets also read its earlier packets from cache (the
     # moving breakpoint on the newest message), so only the new packet is written.
@@ -1198,9 +1199,11 @@ def test_several_projects_are_gated_in_parallel_with_one_prefix_write(tmp_path):
                           trace=TraceStore(tmp_path / "t.sqlite"))
     assert report["done"] == 3 and report["failed"] == 0, report
     assert report["peak_parallel"] >= 2
-    # The system prompt was written to the cache by the first call only.
+    # The system prompt was written to the cache once per answer schema (the
+    # provider keys it on the schema), by the first call under it, whatever
+    # project asked.
     writes = [c for c in gateway.calls if c["usage"]["cache_read"] == 0]
-    assert len(writes) == 1
+    assert len(writes) == len(answer_schemas(gateway.calls))
     for summary in report["sessions"].values():
         assert summary["cache"]["verdicts"]["miss"] == 0
 

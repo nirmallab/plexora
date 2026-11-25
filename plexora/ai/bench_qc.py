@@ -61,6 +61,40 @@ def _builder(scenario):
 
     name = SCENE_BUILDERS.get(scenario)
     return getattr(qc_scenes, name) if name else None
+
+
+class SchemaKeyedCache:
+    """Mixed in ahead of `spatialagents.testing.FakeGateway`: its prompt-cache
+    emulation keyed on the answer schema, as the provider's is (a format prompt
+    sits ahead of the system prompt, so each `output_schema` writes the prefix
+    once). spatialagents' own FakeGateway does this after 0.2.6 (a62d0d4); drop
+    this when Plexora pins a release that has it."""
+
+    def _usage(self, request: dict) -> dict:
+        import hashlib
+
+        from spatialagents.testing import _marked, _tokens, _unmarked
+        from spatialagents.wire import canonical
+
+        tools = [request["tools"]] if request.get("tools") else []
+        segments = tools + [request.get("system") or []] + list(request["messages"])
+        running = hashlib.sha256()
+        keys = []
+        for index, segment in enumerate(segments):
+            if index == len(tools) and request.get("output_schema") is not None:
+                running.update(canonical({"output_schema": request["output_schema"]}).encode())
+            running.update(canonical(_unmarked(segment)).encode())
+            keys.append(running.hexdigest())
+        tokens = [_tokens(segment) for segment in segments]
+        with self.lock:
+            hit = max((i + 1 for i, key in enumerate(keys) if key in self.seen_prefixes), default=0)
+            for segment, key in zip(segments, keys):
+                if _marked(segment):
+                    self.seen_prefixes.add(key)
+        return {"input_uncached": 3, "cache_read": sum(tokens[:hit]), "cache_write_5m": sum(tokens[hit:]),
+                "cache_write_1h": 0}
+
+
 AGENT_STYLES = ("oracle", "lazy", "noisy")
 ARMS = ("detect", "session")
 MATCH_IOU = 0.3
@@ -798,7 +832,7 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
     from plexora.ai.harness.gateway import GatewayClient, TokenSource
     from plexora.ai.harness.trace import TraceStore
 
-    class Gateway(_Fake):
+    class Gateway(SchemaKeyedCache, _Fake):
         PRODUCT = "plexora"
         PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 
@@ -866,7 +900,12 @@ def run_harness(session, made, lanes, agent_style, *, seed=0, cell_um=25.0, late
         task = _task_of_wire(call["body"].get("task"))
         by_task[task] = by_task.get(task, 0) + 1
     tokens = summary.get("tokens") or {}
+    # A call that read nothing wrote the prefix (its system prompt is the
+    # first breakpoint); the provider keys that prefix on the answer schema.
+    schemas = {json.dumps(call["body"]["request"].get("output_schema"), sort_keys=True) for call in calls}
+    prefix_writes = sum(1 for call in calls if not (call.get("usage") or {}).get("cache_read"))
     row = {"status": "done", "lanes": summary.get("parallel_markers") or 1, "packets": summary.get("packets"),
+           "answer_schemas": len(schemas), "prefix_writes": prefix_writes,
            "model_calls": summary.get("model_calls"), "invalid_answers": summary.get("invalid_answers"),
            "wall_s": round(wall, 2), "model_s": round(busy["model_s"], 2),
            "peak_calls_out": busy["peak"], "peak_outstanding": summary.get("peak_outstanding"),

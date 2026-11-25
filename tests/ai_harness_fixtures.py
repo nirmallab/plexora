@@ -21,13 +21,40 @@ from spatialagents.testing import (CHARS_PER_TOKEN, IMAGE_TOKENS, UNIT, WIRE_KEY
                                   _tokens, _unmarked, last_packet, last_user_text, result_text, tool_results)
 from spatialagents.testing import FakeGateway as _FakeGateway
 
+from plexora.ai.bench_qc import SchemaKeyedCache
+
 __all__ = ["CHARS_PER_TOKEN", "IMAGE_TOKENS", "PRICES", "UNIT", "WIRE_KEYS", "WIRE_TASK", "FakeGateway", "Reply",
+           "after_first_per_schema", "answer_schemas",
            "_marked", "_tokens", "_unmarked", "last_packet", "last_user_text", "result_text", "tool_results"]
 
 #: The run prices the real gateway's catalogue (workers/ai/src/ai/catalog.ts in the platform) quotes.
 PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 
 
-class FakeGateway(_FakeGateway):
+def answer_schemas(calls) -> set:
+    """The distinct answer schemas a stand-in gateway's calls asked for: the
+    provider writes a prefix once per schema."""
+    import json
+
+    return {json.dumps(c["body"]["request"].get("output_schema"), sort_keys=True) for c in calls}
+
+
+def after_first_per_schema(calls) -> list:
+    """The calls that follow another under the same answer schema: those read
+    the prefix from cache (the first under each schema writes it)."""
+    import json
+
+    seen, out = set(), []
+    for call in calls:
+        schema = json.dumps(call["body"]["request"].get("output_schema"), sort_keys=True)
+        if schema in seen:
+            out.append(call)
+        seen.add(schema)
+    return out
+
+
+class FakeGateway(SchemaKeyedCache, _FakeGateway):
+    """Its cache keys on the answer schema, as the provider's does (`SchemaKeyedCache`)."""
+
     PRODUCT = "plexora"
     PRICES = PRICES
