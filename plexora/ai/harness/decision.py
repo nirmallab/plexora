@@ -302,9 +302,6 @@ class GatingWorkflow(Workflow):
     #: gating_next's own cap (`capabilities_session.MAX_PARALLEL`).
     max_lanes = 8
     collects_setup = True
-    #: A look carries its own cells and evidence (`evidence: full`), a stain
-    #: or strip reading is read blind: none needs the turns before it.
-    solo_kinds = frozenset({"cell_panel", "qc_confirm", "t1_strip"})
     #: The session's `purpose` (`capabilities_session.SessionOptions`): what
     #: its set-up asks for (`capabilities_session.setup_images`).
     purpose = "gating"

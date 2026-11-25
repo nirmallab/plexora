@@ -20,7 +20,7 @@ the reading guide does not repeat. Its tool-calling steps -- start, finish,
 report, export, writes -- are an external agent's and stay out: the harness
 does them, and they were over half the skill.
 
-Both guides leave out `answer_schemas` and `answer_with` (`HARNESS_DROPS`):
+QC's guide leaves out `answer_schemas` and `answer_with` (`HARNESS_DROPS`):
 every call carries its own answer schema, and on Anthropic each schema is a
 cache entry of its own ahead of the system prompt, so the prefix is written
 once per schema a run uses -- the smaller it is, the less each of those
@@ -87,7 +87,7 @@ def gating_prefix() -> list:
 
     return [text_block(IDENTITY),
             text_block("READING GUIDE (version " + packets.guide_version() + ")\n"
-                       + canonical(_harness_guide(packets.reading_guide())), cache=True)]
+                       + canonical(packets.reading_guide()), cache=True)]
 
 
 def guide_version() -> str:
