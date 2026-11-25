@@ -6,7 +6,7 @@
   `answer_with` (the harness calls the tool). On Anthropic each answer schema
   is a cache entry of its own ahead of the system prompt, so the prefix is
   written once per schema a run uses: halving it halves each of those writes.
-- Independent packets (a blind stain reading) get a worker of
+- Independent packets (a blind stain reading, a gating look) get a worker of
   their own and are never written to the cache; the task's worker waits
   parked for its next packet.
 - A keep-warm ping after such a packet is the prefix alone.
@@ -15,6 +15,8 @@
 - QC's visual pass asks a worker with no tools to list, not to draw.
 - QC's confirm sees the class the audit named; a deeper look drops the
   neighbourhood look 1 drew.
+- Gating's `qc_confirm` read real by its first reader on a stain QC read real
+  is not read twice more.
 """
 
 import json
@@ -65,15 +67,16 @@ def test_the_qc_prefix_carries_the_skills_judgement_not_its_tool_steps():
         assert gone not in digest, gone
 
 
-def test_qcs_guide_in_its_prefix_does_not_repeat_the_answer_schemas():
-    for build in (prefix.qc_prefix,):
+def test_neither_guide_in_a_prefix_repeats_the_answer_schemas():
+    for build in (prefix.qc_prefix, prefix.gating_prefix):
         guide_text = build()[-1]["text"]
         guide = json.loads(guide_text.split("\n", 1)[1])
         assert not set(prefix.HARNESS_DROPS) & set(guide), build.__name__
     # The prefix is the same bytes every time, and much smaller than it was:
-    # QC 13.9k tokens before (2026-11-24).
+    # QC 13.9k and gating 7.6k tokens before (2026-11-24).
     assert prefix.qc_prefix() == prefix.qc_prefix()
     assert cache_plan.expected_tokens(prefix.qc_prefix()) < 8_000
+    assert cache_plan.expected_tokens(prefix.gating_prefix()) < 5_000
 
 
 def test_the_schema_sent_carries_every_fields_words_but_no_developers_docstring():
@@ -123,7 +126,19 @@ def test_an_independent_packet_gets_a_worker_of_its_own_and_is_never_cached(tmp_
     lane.worker.packets = 1
     run._rotate_if_due(review, lane)
     assert lane.worker is task_worker                # the task's worker goes on where it stopped
-    assert QC.solo_kinds >= {"stain_check"}
+    assert QC.solo_kinds >= {"stain_check"} and GATING.solo_kinds >= {"cell_panel", "qc_confirm"}
+
+
+def test_a_gating_look_is_a_worker_of_its_own(tmp_path):
+    run = _gating_run(tmp_path)
+    lane = run.lanes[0]
+    seen = []                                        # the workers themselves: an id is reused once one is freed
+    for marker in ("CD3", "CD3", "CD8"):
+        run._rotate_if_due({"kind": "cell_panel", "units": [{"marker": marker}]}, lane)
+        assert lane.worker.solo and all(lane.worker is not w for w in seen)
+        assert run._last_in_worker(lane.worker)
+        seen.append(lane.worker)
+        lane.worker.packets = 1
 
 
 class _PingGateway:
@@ -164,6 +179,40 @@ def test_the_harness_asks_for_whole_sheets_and_says_it_has_no_tools():
     gating = GATING.start_arguments(GatingOptions(project="p"))
     assert gating["sheets"] == "full" and gating["evidence"] == "full"
     assert QC.start_arguments(QCOptions(project="p"))["agent_tools"] is False
+
+
+# -- gating's second reading ---------------------------------------------------------------
+
+
+class _Engine:
+    def __init__(self):
+        self.options = {"check_rereads": "all"}
+        self.logged = []
+
+    def log(self, **event):
+        self.logged.append(event)
+
+
+@pytest.mark.parametrize("stain, first, settled", [
+    ("real", "real_signal", "real_signal"),          # QC agrees: one reading stands
+    ("real", "technical_failure", None),             # disagrees: read again
+    ("weak", "real_signal", None),                   # QC unsure: read again
+    (None, "real_signal", None),                     # no stain verdict: read again
+])
+def test_a_check_read_real_on_a_stain_qc_read_real_is_not_read_again(stain, first, settled):
+    from plexora.plugins.gating.server.autogate import second_verdict
+
+    unit = {"project": "p", "marker": "CD3"}
+    if stain:
+        unit["stain"] = {"verdict": stain, "contested": False}
+    engine = _Engine()
+    packet = {"kind": "qc_confirm", "packet_id": "pk1", "evidence": {}}
+    assert second_verdict.settle(engine, unit, packet, first) == settled
+    assert ("verdict_reads" in unit) == (settled is None)
+    # A strip is read twice whatever the stain says.
+    strip_unit = {"project": "p", "marker": "CD3", "stain": {"verdict": "real", "contested": False}}
+    assert second_verdict.settle(engine, strip_unit, {"kind": "t1_strip", "packet_id": "pk2",
+                                                      "evidence": {}}, "ok") is None
 
 
 # -- QC sessions ---------------------------------------------------------------------------
