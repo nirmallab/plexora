@@ -22,9 +22,10 @@ A session that exists (`qc_session_status` finds it).
 
 1. Read skill qc-image with `read_skill` for its step four only: how to judge
    each packet kind. Do nothing else that skill says.
-2. `qc_next` with the `session_id`, and the `tasks` and `reader` from your
-   brief on every call. Answer each packet with `qc_answer`
-   `{session_id, packet_id, answer: {kind, ...}, tasks, reader, model}` --
+2. `qc_next` with the `session_id`, and the `tasks`, `reader` and `parallel`
+   from your brief on every call (other workers share the session when your
+   brief names a `parallel`). Answer each packet with `qc_answer`
+   `{session_id, packet_id, answer: {kind, ...}, tasks, reader, parallel, model}` --
    `model` is the model you run on, as your client names it. Its `next` is
    the next packet.
 3. Stop, without answering the packet in hand, when you answered the number

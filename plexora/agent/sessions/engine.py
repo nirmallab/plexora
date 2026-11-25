@@ -34,6 +34,7 @@ import hashlib
 import json
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 
 from plexora.agent.errors import AgentError
@@ -585,6 +586,92 @@ class BaseEngine:
             self.needs = getattr(self, "_needs", None) if self._scope is not None else None
             self._scope = self._needs = None
 
+    # -- prepared outside the lock: choose and reserve, draw, then build --
+
+    #: The packet kinds a workflow can draw ahead of building, outside the
+    #: session's lock (`prerender`); none by default.
+    PREPARABLE: tuple = ()
+    #: Seconds a reservation holds its units: a reader that reserved and then
+    #: died (a crash, a killed process) must not hold them for ever.
+    RESERVE_TTL_S = 120.0
+
+    def reservations(self) -> dict:
+        """{token: {kind, units, reader, at}} of the decisions readers are
+        drawing outside the lock, expired ones dropped."""
+        held = self.record.setdefault("reserved", {})
+        now = time.time()
+        for token in [t for t, r in held.items() if now - float(r.get("at") or 0) > self.RESERVE_TTL_S]:
+            del held[token]
+        return held
+
+    def reserved_keys(self) -> set:
+        return {k for r in self.reservations().values() for k in r.get("units") or ()}
+
+    def reserve(self, kind, units, reader=None) -> str:
+        """Hold `units` for `reader` while their packet is drawn outside the
+        lock: `next_ready` hands them to no one else (they count as out).
+        Returns the token `unreserve` takes."""
+        token = f"rs_{int(self.record.get('packet_seq') or 0):04d}_{uuid.uuid4().hex[:6]}"
+        self.reservations()[token] = {"kind": kind, "units": [self.key_of(u) for u in units],
+                                      "states": [u.get("state") for u in units],
+                                      "reader": reader or DEFAULT_READER, "at": time.time()}
+        return token
+
+    def unreserve(self, token):
+        """(kind, units) a reservation held, when its units are as they were
+        reserved and none is out (the packet is then built as drawn); else
+        None. The reservation is let go either way."""
+        held = self.reservations().pop(token, None)
+        if held is None:
+            return None
+        units = [self.record["units"].get(k) for k in held["units"]]
+        out = {k for e in self.record["outstanding"].values() for k in e.get("units") or ()}
+        if any(u is None for u in units) or [u.get("state") for u in units] != held["states"] \
+                or out & set(held["units"]):
+            return None
+        return held["kind"], units
+
+    def choose(self, *, reader=None, parallel=None, tasks=None):
+        """(kind, units) the next `issue` would build for `reader`, without
+        building it -- or (None, []) when what comes next is not a packet to
+        draw ahead (busy, a wait, done, another task's). Called with the lock
+        held; what it settles on the way (a channel closed, a candidate
+        explained) is what `issue` would have settled."""
+        reader = reader or DEFAULT_READER
+        parallel = int(parallel) if parallel and int(parallel) > 1 else None
+        self._scope = frozenset(tasks) if tasks else None
+        try:
+            held = self.record["outstanding"]
+            out = len(held) + len(self.reservations())
+            if parallel or held or self._scope is not None:
+                if out >= (int(parallel or 0) or out + 1):
+                    return None, []
+                kind, units = self.next_ready(reader)
+            else:
+                kind, units = self.next_unit()
+            if kind not in self.PREPARABLE or not units or not self.accepts(kind, units):
+                return None, []
+            return kind, units
+        finally:
+            self._scope = self._needs = None
+
+    def snapshot(self):
+        """This engine over a copy of its record, for drawing outside the lock
+        (`prerender`): every unit a shallow copy, so the outline variants or a
+        label set while drawing never reach the session. Never saved."""
+        import copy
+
+        clone = copy.copy(self)
+        clone.record = {**self.record,
+                        "units": {k: dict(u) for k, u in self.record["units"].items()}}
+        clone.save = lambda *a, **k: None
+        return clone
+
+    def prerender(self, kind, units) -> int:
+        """Draw `kind`'s pictures for `units` ahead, into whatever cache the
+        build reads; on a snapshot, without the lock. None by default."""
+        return 0
+
     def _issue(self, unit, reader, parallel):
         wanted = unit
         while True:
@@ -593,8 +680,11 @@ class BaseEngine:
             if wanted is not None:
                 (kind, units), wanted = wanted, None
             elif parallel or held or self._scope is not None:
-                limit = int(parallel or 0) or len(held) + 1
-                if len(held) >= limit:
+                # Reservations (packets other readers are drawing outside
+                # the lock) count as out.
+                out = len(held) + len(self.reservations())
+                limit = int(parallel or 0) or out + 1
+                if out >= limit:
                     return None, [], "busy"
                 self._needs = None
                 with self.timed("choose"):

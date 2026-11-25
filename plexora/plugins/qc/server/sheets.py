@@ -26,6 +26,8 @@ channels and windows), however many sheets show it.
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from plexora.agent.evidence import sheet_layout as layout
@@ -173,10 +175,27 @@ def _at_scale(channels, bounds, size):
     return out
 
 
-#: Rendered panels kept for reuse, newest last (see `_render`).
+#: Rendered panels kept for reuse, newest last (see `_render`). Bounded by
+#: count and by bytes: one audit page of sixteen channels draws 144 panels,
+#: and with several packets prepared ahead (`packets.prerender`) the next
+#: packet's panels must still be here when it is built.
 _PANELS: "OrderedDict" = None
-PANEL_CACHE_SIZE = 64
+PANEL_CACHE_SIZE = 1024
+#: Bytes of panel pixels kept, unless PLEXORA_QC_PANEL_CACHE_MB says otherwise.
+PANEL_CACHE_MB = 256
 PANEL_STATS = {"hits": 0, "misses": 0}
+_PANELS_LOCK = threading.Lock()
+_PANEL_BYTES = [0]
+
+
+def _panel_budget() -> int:
+    import os
+
+    try:
+        mb = float(os.environ.get("PLEXORA_QC_PANEL_CACHE_MB") or PANEL_CACHE_MB)
+    except ValueError:
+        mb = PANEL_CACHE_MB
+    return int(max(16.0, mb) * 1024 * 1024)
 
 
 def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmentation="none"):
@@ -197,8 +216,10 @@ def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmenta
 
 def clear_panel_cache():
     global _PANELS
-    _PANELS = None
-    PANEL_STATS.update(hits=0, misses=0)
+    with _PANELS_LOCK:
+        _PANELS = None
+        _PANEL_BYTES[0] = 0
+        PANEL_STATS.update(hits=0, misses=0)
 
 
 def _render(session, project, bounds, channels, size, *, pixel, shapes=None,
@@ -225,24 +246,35 @@ def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
     global _PANELS
     channels = _at_scale(channels, bounds, size)
     key = _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmentation)
-    if _PANELS is None:
-        _PANELS = OrderedDict()
-    held = _PANELS.get(key) if key is not None else None
-    if held is not None:
-        _PANELS.move_to_end(key)
-        PANEL_STATS["hits"] += 1
-        picture, manifest = held[0].copy(), copy.deepcopy(held[1])
-    else:
+    with _PANELS_LOCK:
+        if _PANELS is None:
+            _PANELS = OrderedDict()
+        held = _PANELS.get(key) if key is not None else None
+        if held is not None:
+            _PANELS.move_to_end(key)
+            PANEL_STATS["hits"] += 1
+            picture, manifest = held[0].copy(), copy.deepcopy(held[1])
+    if held is None:
+        # Drawn outside the cache's lock: a session's packets are prepared
+        # outside its own lock now (`packets.prerender`), several at once.
         spec = RenderInput(project=project, bounds=Bounds(**bounds), channels=channels,
                            segmentation=segmentation,
                            output=OutputSpec(width=size, height=size),
                            scale_bar=scale_bar, layers="none")
         picture, manifest = layout.render_panel(session, spec, pixel=pixel)
-        PANEL_STATS["misses"] += 1
         if key is not None:
-            _PANELS[key] = (picture.copy(), copy.deepcopy(manifest))
-            while len(_PANELS) > PANEL_CACHE_SIZE:
-                _PANELS.popitem(last=False)
+            entry = (picture.copy(), copy.deepcopy(manifest))
+            with _PANELS_LOCK:
+                PANEL_STATS["misses"] += 1
+                if key not in _PANELS:
+                    _PANELS[key] = entry
+                    _PANEL_BYTES[0] += int(getattr(entry[0], "nbytes", 0))
+                while _PANELS and (len(_PANELS) > PANEL_CACHE_SIZE
+                                   or _PANEL_BYTES[0] > _panel_budget()):
+                    _old, dropped = _PANELS.popitem(last=False)
+                    _PANEL_BYTES[0] -= int(getattr(dropped[0], "nbytes", 0))
+        else:
+            PANEL_STATS["misses"] += 1
     if shapes:
         layout.shapes_onto(picture, manifest, shapes)
     return picture, manifest

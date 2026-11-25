@@ -45,6 +45,17 @@ from plexora.agent.sessions.store import SessionStore
 from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import answers as answer_models
 from plexora.plugins.qc.server import schemas, strictness
+from plexora import _work
+
+if _work.threaded():
+    # Imported once, here, by the thread that loads QC: the modules that
+    # use shapely import it lazily, and with a session's packets drawn on
+    # several threads at once (`packets.prerender`) and its checks scored on
+    # several more, two first imports met in shapely's circular one
+    # ("partially initialized module 'shapely.geometry.base'"). The browser
+    # build runs one thing at a time and keeps the import lazy.
+    import shapely.geometry  # noqa: F401,E402
+    import shapely.ops  # noqa: F401,E402
 
 KIND = "qc"
 TERMINAL = schemas.TERMINAL_STATES
@@ -1164,8 +1175,21 @@ class QCEngine(BaseEngine):
         return packet, images, status
 
     def _out_keys(self):
-        """The unit keys of every packet out for an answer."""
-        return {k for entry in self.record["outstanding"].values() for k in entry.get("units") or ()}
+        """The unit keys of every packet out for an answer, and of every
+        decision a reader is drawing outside the lock (`reserve`)."""
+        return {k for entry in self.record["outstanding"].values() for k in entry.get("units") or ()} \
+            | self.reserved_keys()
+
+    @property
+    def PREPARABLE(self):
+        from plexora.plugins.qc.server import packets
+
+        return packets.PREPARABLE
+
+    def prerender(self, kind, units) -> int:
+        from plexora.plugins.qc.server import packets
+
+        return packets.prerender(self, kind, units)
 
     def outstanding_unit(self, unit) -> bool:
         """Whether a packet holding `unit` is out: its look is under way, so
@@ -1312,7 +1336,9 @@ class QCEngine(BaseEngine):
         Among what is ready, the reader's own task first, so its rolling
         worker's cache is read rather than another written."""
         record = self.record
-        held = record["outstanding"]
+        # A decision another reader is drawing outside the lock (`reserve`)
+        # counts as out, exactly as its packet will once built.
+        held = {**record["outstanding"], **self.reservations()}
         out_kinds = {entry.get("kind") for entry in held.values()}
         if "final_qc_review" in out_kinds:
             return "busy", []
