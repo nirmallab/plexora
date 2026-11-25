@@ -1105,7 +1105,12 @@ class GateClassifierControl {
             // a layer, and a gate that moved makes one stale: the dots and,
             // in this mode, the block catch up -- once, after the burst.
             const what = detail.payload?.event;
-            if (detail.kind === "gating.session" && what !== "unit_closed" && what !== "finished") {
+            // The units an answer closed ride on `answered` (`closed`), not on
+            // a `unit_closed` event of their own any more.
+            const closed = what === "answered" && Array.isArray(detail.payload?.closed)
+                && detail.payload.closed.length > 0;
+            if (detail.kind === "gating.session" && what !== "unit_closed" && what !== "finished"
+                    && !closed) {
                 return;
             }
             window.clearTimeout(this._runsTimer);

@@ -342,11 +342,43 @@ def test_stop_through_control_ends_the_session_at_its_next_packet(client, gatewa
             assert answer.get_json()["control"]["stopped"] is True
         return original(handler, body)
     gateway._messages = stop_on_second
-    started = _start(client)
+    started = _start(client, parallel_markers=1)
     jobs.drain(240)
     run = client.get(f"/ai/v1/runs/{started['run_id']}").get_json()
     assert state["stopped"] and run["status"] == "stopped", run
     assert len(gateway.calls) == 2, [c["packet_id"] for c in gateway.calls]
+
+
+@pytest.mark.pro
+def test_a_stop_with_several_looks_out_asks_nothing_issued_after_it(client, gateway):
+    """With lanes, the looks already out when the user stops may still reach
+    the model (a reply streaming is cut); no packet the session would have
+    issued after the stop ever does, and the run ends stopped."""
+    from plexora.plugins.qc.server.engine import store
+
+    original = gateway._messages
+    state = {"stopped": False, "issued": None}
+
+    def stop_on_second(handler, body):
+        if len(gateway.calls) == 1 and not state["stopped"]:
+            state["stopped"] = True
+            other = plexora.app.test_client()
+            runs = other.get("/ai/v1/runs").get_json()["runs"]
+            answer = other.post(f"/ai/v1/runs/{runs[0]['run_id']}/control", json={"action": "stop"})
+            assert answer.status_code == 200, answer.get_json()
+            # Under the session's lock: a packet another lane is issuing at
+            # this moment is counted once it is saved.
+            st = store()
+            with st.lock(runs[0]["session_id"]):
+                state["issued"] = int(st.load(runs[0]["session_id"]).get("packet_seq") or 0)
+        return original(handler, body)
+    gateway._messages = stop_on_second
+    started = _start(client, parallel_markers=4)
+    jobs.drain(240)
+    run = client.get(f"/ai/v1/runs/{started['run_id']}").get_json()
+    assert state["stopped"] and run["status"] == "stopped", run
+    asked = [int(c["packet_id"].split("_")[1]) for c in gateway.calls if c.get("packet_id")]
+    assert asked and max(asked) <= state["issued"], (asked, state["issued"])
 
 
 def test_the_harness_tells_a_tab_on_any_image_of_a_dataset_session(client):

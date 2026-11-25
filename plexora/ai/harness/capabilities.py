@@ -38,7 +38,9 @@ TAGS = ("ai", "plexora_ai", "harness", "gating", "qc", "session", "credits")
 STATE = "ai_runs"
 #: The harness's own events on a session's channel (beside the workflow's
 #: `SESSION_EVENTS`); agentPanel.js handles each.
-AI_EVENTS = ("ai_run", "ai_context", "ai_usage", "ai_paused", "ai_finished")
+AI_EVENTS = ("ai_run", "ai_context", "ai_usage", "ai_paused", "ai_finished",
+             # One look of several out: asked again, asked afresh, cut by a stop.
+             "ai_retry", "ai_reissued", "ai_cut")
 #: Credits are 10,000 micro-dollars (the gateway's `credit_micro`).
 CREDIT_MICRO = 10_000
 
@@ -107,9 +109,9 @@ class RunInput(AgentModel):
                                          "worker covers (default: 1 marker, 4 QC units).")
     #: Default: the session's `lanes`, chosen from the panel; more lanes
     #: finish sooner.
-    parallel_markers: int | None = Field(None, ge=1, le=8, description="gating: markers answered "
-                                         "side by side, each lane its own workers; the gates are "
-                                         "the serial run's.")
+    parallel_markers: int | None = Field(None, ge=1, le=8, description="gating and qc: packets "
+                                         "answered side by side, each lane its own workers; the "
+                                         "results are the serial run's. 1: one at a time.")
     start_options: dict | None = Field(None, description="Extra options for the session's start "
                                        "(the workflow's own, e.g. QC's map_cell_um).")
     #: A cheap text model normalises it (plexora.ai.context); empty: no call.
@@ -193,6 +195,14 @@ class _Relay:
             self.call.progress(usage.get("packets"), None,
                                f"{usage.get('packets')} packets, {usage.get('charged_credits')} credits")
             self._tell("ai_usage", session_id, usage=usage, **run)
+        elif name == "retry":
+            # A call asked again (a dropped stream, a rate limit): the panel
+            # marks that look "retrying" rather than leaving it to look stuck.
+            self._tell("ai_retry", session_id, packet_id=event.get("packet_id"), code=event.get("code"),
+                       attempt=event.get("attempt"), retry_after=event.get("retry_after"),
+                       throttle=event.get("throttle"), **run)
+        elif name in ("reissued", "cut"):
+            self._tell(f"ai_{name}", session_id, packet_id=event.get("packet_id"), **run)
         elif name == "parked":
             # The user's pause, in the viewer: the plugin's control route has
             # told the tabs already; the run waits on its thread.
@@ -273,7 +283,7 @@ def _run_one(call, inp, gateway, run_id):
     elif inp.kind == "contrast":
         options = GatingOptions(markers=inp.markers, **common)
     else:
-        options = QCOptions(channels=inp.channels, **common)
+        options = QCOptions(channels=inp.channels, parallel_markers=inp.parallel_markers, **common)
     if inp.units_per_worker:
         options = replace(options, units_per_worker=inp.units_per_worker)
     relay = _Relay(call, inp)
@@ -460,7 +470,15 @@ def _session_snapshot(kind, session_id, record=None) -> dict | None:
         progress["dataset_progress"] = engine.dataset_progress(record)
     mirror = record.get("mirror") or {}
     mirroring = bool(mirror.get("enabled")) and mirror.get("status") != "off"
+    # The packets out now, oldest first: a reloaded tab (or one that missed
+    # events) lists every look under way, not just the newest.
+    held = record.get("outstanding") or {}
+    in_flight = [{"packet_id": pid, "kind": entry.get("kind"), "reader": entry.get("reader"),
+                  "units": list(entry.get("units") or ())}
+                 for pid, entry in sorted(held.items(), key=lambda kv: kv[1].get("seq", 0))]
+    progress["in_flight"] = len(in_flight)
     return {"session_id": session_id, "control": events.control_for(session_id),
+            "in_flight": in_flight,
             "scope": record.get("scope"), "images": list(record.get("images") or ()),
             "phase": engine.phase_for(record), "progress": progress,
             "paused": bool(control.get("paused")), "paused_by": control.get("paused_by"),

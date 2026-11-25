@@ -792,7 +792,20 @@ class BaseEngine:
                 "waiting_for_user": [self.unit_label(u) for u in self.waiting_for_user()],
                 "images": len(self.record["images"]),
                 "bulk": {"job_id": self.record.get("bulk_job_id"),
-                         "state": self.record.get("state")}}
+                         "state": self.record.get("state")},
+                # Taken under the session's lock: with several packets out,
+                # two events can reach a tab in the other order, and the
+                # later count is the one with the larger `at`.
+                "at": time.time_ns(), "in_flight": len(self.record.get("outstanding") or {})}
+
+    def in_flight(self) -> list:
+        """The packets out for an answer, oldest first: what a panel lists
+        while several are out (`{packet_id, kind, reader, units}`)."""
+        held = self.record.get("outstanding") or {}
+        return [{"packet_id": pid, "kind": held[pid].get("kind"),
+                 "reader": held[pid].get("reader") or DEFAULT_READER,
+                 "units": list(held[pid].get("units") or ())}
+                for pid in self.outstanding()]
 
     # -- answers --
 

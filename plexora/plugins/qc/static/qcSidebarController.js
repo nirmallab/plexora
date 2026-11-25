@@ -339,8 +339,11 @@ class QcSidebarController {
         if (event === "finished") {
             this.session = { state: "finished" };
         } else if (event !== "needs_setup") {
-            const paused = payload.control && payload.control.state === "paused";
             const before = this.session || {};
+            // A pause is told by the `control` event (`paused`); `control` on
+            // other events is the route and its actions, never a state.
+            const paused = event === "control" && payload.paused !== undefined
+                ? Boolean(payload.paused) : before.state === "paused";
             this.session = { state: paused ? "paused" : "running",
                              phase: payload.phase || before.phase,
                              jobId: payload.job_id || before.jobId,

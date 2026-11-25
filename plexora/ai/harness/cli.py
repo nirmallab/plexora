@@ -104,7 +104,8 @@ def run_command(args) -> int:
         common["units_per_worker"] = max(1, args.units_per_worker)
     if target == "qc":
         _apply_qc_limits(args)
-        options = QCOptions(channels=_names(getattr(args, "channels", None)), **common)
+        options = QCOptions(channels=_names(getattr(args, "channels", None)), **common,
+                            parallel_markers=getattr(args, "parallel_markers", None))
     elif target == "contrast":
         # Auto contrast: always on the markers that match an image channel
         # (contrast_session_start), so no --force; a matrix named here is used.

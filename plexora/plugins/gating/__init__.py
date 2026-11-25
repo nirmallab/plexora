@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261115_timeline"
+VERSION = "20261124_parallel_looks"
 
 
 def _blueprint():

@@ -11,6 +11,7 @@ server is resubmitted; limits held for the user are surfaced as
 from __future__ import annotations
 
 import dataclasses
+import threading
 import time
 from typing import Any, Literal
 
@@ -26,9 +27,41 @@ from plexora.agent.schemas import AgentModel
 from plexora.agent.sessions import budget as budgets
 from plexora.agent.sessions.engine import DEFAULT_READER
 
-#: How often a reader whose next decision waits on another reader's answer
-#: looks again (`busy`), within its `wait_s`.
-BUSY_POLL_S = 0.1
+#: The longest a reader whose next decision waits on another reader's answer
+#: (`busy`) sleeps before it looks again, within its `wait_s`. An answer wakes
+#: it at once (`wake`); this only bounds a wake-up missed for another reason
+#: (a pause lifted, a bulk merge). It used to poll every 0.1 s, each look
+#: taking the session's lock from the lanes answering.
+BUSY_POLL_S = 1.0
+
+#: session id -> [generation, condition]: what a busy reader sleeps on.
+_WAKE: dict = {}
+_WAKE_LOCK = threading.Lock()
+
+
+def _wake_entry(session_id):
+    with _WAKE_LOCK:
+        entry = _WAKE.get(session_id)
+        if entry is None:
+            entry = _WAKE[session_id] = [0, threading.Condition()]
+        return entry
+
+
+def wake(session_id) -> None:
+    """Wake the readers of `session_id` told `busy`: an answer may have freed
+    the decisions they wait on."""
+    entry = _wake_entry(session_id)
+    with entry[1]:
+        entry[0] += 1
+        entry[1].notify_all()
+
+
+def _sleep_busy(session_id, generation, seconds) -> None:
+    """Sleep up to `seconds` unless the session changed since `generation`."""
+    entry = _wake_entry(session_id)
+    with entry[1]:
+        if entry[0] == generation and seconds > 0:
+            _work.wait_condition(entry[1], seconds)
 #: How many receipt ids an answer lists; beyond that it says how many, the
 #: first and the last (`receipts_summary`). The full list stays in the
 #: session record, which status, finish and undo read.
@@ -67,6 +100,13 @@ MODEL = Field(None, max_length=80,
               description="The model you are running on, as your client names it: recorded "
                           "with the answer, so the session can show which model answered "
                           "each task.")
+#: The most packets of one session out at once (`next(parallel=...)`).
+MAX_PARALLEL = 8
+PARALLEL = Field(None, ge=1, le=MAX_PARALLEL,
+                 description="The most packets of this session out at once, across every "
+                             "reader. Above 1, decisions that depend on no answer still out "
+                             "are handed out side by side; the rest wait (`busy`). Omit for "
+                             "one at a time.")
 
 
 class NextInput(AgentModel):
@@ -78,6 +118,7 @@ class NextInput(AgentModel):
     rerender: bool = Field(False, description="Draw the outstanding packet's images again "
                            "(same packet, same charge).")
     reader: str | None = READER
+    parallel: int | None = PARALLEL
     tasks: list[str] | None = TASKS
 
 
@@ -89,6 +130,7 @@ class AnswerInput(AgentModel):
     include_next: bool = Field(True, description="Return the next packet with the outcome, "
                                                  "saving a next call.")
     reader: str | None = READER
+    parallel: int | None = PARALLEL
     tasks: list[str] | None = TASKS
     model: str | None = MODEL
 
@@ -414,7 +456,17 @@ class SessionTools:
         self.resume_bulk(call, inp.session_id, st)
         deadline = time.monotonic() + float(inp.wait_s)
         needs = None
+        first = True
         while True:
+            if not first:
+                # A reader waiting here (`busy`, the bulk pass) is woken by an
+                # answer: a stop or pause that came meanwhile holds it, rather
+                # than it drawing a packet the user stopped.
+                halted = self.halted(call, st, inp.session_id)
+                if halted:
+                    return halted
+            first = False
+            generation = _wake_entry(inp.session_id)[0]
             with self.engine_for(call, inp.session_id, st=st) as engine:
                 record = engine.record
                 if record["state"] in self.FINISHED_STATES:
@@ -461,7 +513,7 @@ class SessionTools:
                     phase = self.phase_for(snapshot, mirroring=mirrors)
                     self._last_phase[inp.session_id] = phase
                     self.announce(call, snapshot, inp.session_id, "issued",
-                                  packet_id=packet.get("packet_id"), kind=kind,
+                                  packet_id=packet.get("packet_id"), kind=kind, reader=reader,
                                   project=refs[0]["project"] if refs else None,
                                   subject=self.subject(packet), phase=phase,
                                   progress=progress, narration=packet.get("narration"),
@@ -502,7 +554,11 @@ class SessionTools:
                                  if record.get("bulk_job_id") else
                                  f"call {tool_name_of(self.NEXT)} again; the deterministic "
                                  "pass is still running")}
-            _work.wait(BUSY_POLL_S if status == "busy" else 0.5)
+            if status == "busy":
+                _sleep_busy(inp.session_id, generation,
+                            min(BUSY_POLL_S, max(0.0, deadline - time.monotonic())))
+            else:
+                _work.wait(0.5)
 
     def answer(self, call, inp):
         st = self.store()
@@ -530,14 +586,19 @@ class SessionTools:
             closed = [u for k, u in record["units"].items()
                       if u["state"] in self.TERMINAL_STATES
                       and states_before.get(k) not in self.TERMINAL_STATES]
+            # What is still out beside this answer (other readers' packets):
+            # the phase is read from them, not reset to "analyzing".
             snapshot = {"images": record["images"], "state": record["state"],
-                        "outstanding_kind": None, "units": record["units"]}
+                        "outstanding_kind": record.get("outstanding_kind"),
+                        "outstanding": dict(record["outstanding"]), "units": record["units"]}
+        # The readers told `busy` look again: this answer may free their decisions.
+        wake(inp.session_id)
         if not outcome.get("already_applied"):
             # One event per answer: the units it closed ride on `answered`
             # (`closed`, each what a `unit_closed` event carried), not one
             # event -- one round trip to the viewer -- per unit.
             self.announce(call, snapshot, inp.session_id, "answered",
-                          packet_id=inp.packet_id, kind=kind,
+                          packet_id=inp.packet_id, kind=kind, reader=reader or DEFAULT_READER,
                           outcome_state=outcome.get("state"),
                           phase=self.phase_for(snapshot), progress=progress,
                           closed=[{"project": unit.get("project"), **self.closed_event(unit)}
@@ -550,6 +611,7 @@ class SessionTools:
         if inp.include_next and not outcome.get("already_applied"):
             following = self.next_packet(call, NextInput(session_id=inp.session_id,
                                                          wait_s=5.0, reader=reader,
+                                                         parallel=getattr(inp, "parallel", None),
                                                          tasks=tasks))
             images = following.pop("_images", None)
             result["next"] = following
@@ -626,6 +688,9 @@ class SessionTools:
                        "summary": self.summary_of(record), **guide,
                        "mirror": record.get("mirror"), "control": st.control(inp.session_id),
                        "outstanding_packet": record.get("outstanding_packet"),
+                       "outstanding_peak": int(record.get("outstanding_peak") or 0),
+                       "options": {k: record["options"].get(k) for k in ("lanes",)
+                                   if k in record["options"]},
                        "receipts": len(record.get("receipts") or []),
                        "replayed": len(record.get("replayed") or []),
                        "limit_requests": [self.limit_brief(u["limit_request"])

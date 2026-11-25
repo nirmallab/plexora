@@ -108,7 +108,14 @@ SETUP_REMIND_S = 10.0
 #: not licensed), and the harness's own -- a provider still down after its
 #: retries, a closed run, the dev route refused, no licence on this device.
 #: spatialagents', so a conversation pauses on exactly these too.
-PAUSE_CODES = _gateway.PAUSE_CODES
+#: The gateway's own per-device rate limit too (`rate_limited`), once the
+#: client's retries are spent: several lanes can reach it where one never
+#: did, and a run that stops there resumes where it stopped, not failed.
+PAUSE_CODES = tuple(_gateway.PAUSE_CODES) + ("rate_limited",)
+#: The retry codes that say "too many calls at once" (`_Throttle`).
+RATE_CODES = ("rate_limited", "provider_rate_limited")
+#: Clean calls in a row after which a throttled run takes back one lane.
+THROTTLE_RECOVER_AFTER = 10
 #: The pauses that money or a raised cap answers ("add credits, then resume").
 CREDIT_CODES = _gateway.CREDIT_CODES
 #: A stream that broke mid-answer (`interrupted`: the connection dropped, or
@@ -147,15 +154,40 @@ class _Runaway(Exception):
         self.why = why
 
 
-def _runaway_guard():
+class _Cut(Exception):
+    """The user stopped the session while this reply streamed: the stream is
+    closed, so the gateway settles only what was streamed, and the answer is
+    never applied (a stopped session takes none)."""
+
+
+#: Seconds between two looks at a session's stop flag while a reply streams.
+STOP_LOOK_S = 1.0
+#: The longest lanes wait for a task's first call before calling that task
+#: themselves (`DecisionRun._await_warm`): its reply's first piece says the
+#: prompt was read and the prefix cached; a model that reasons before it
+#: writes says nothing for a minute or more, and a prompt is read in seconds.
+WARM_WAIT_S = 8.0
+
+
+def _runaway_guard(stopped=None, on_first=None):
     """An `on_delta` that stops a reply once it has run RUNAWAY_BLANK blank
-    characters, or REPLY_CHAR_CAP characters in all."""
+    characters, or REPLY_CHAR_CAP characters in all -- or, given `stopped`,
+    once that says the user stopped the session (looked at once a second).
+    `on_first` is called at the reply's first piece: the prompt has been read,
+    so the provider has written its cache."""
     seen: list[str] = []
     blank = 0
     total = 0
+    looked = [time.monotonic()]
 
     def on_delta(piece: str) -> None:
         nonlocal blank, total
+        if on_first is not None and not seen:
+            on_first()
+        if stopped is not None and time.monotonic() - looked[0] >= STOP_LOOK_S:
+            looked[0] = time.monotonic()
+            if stopped():
+                raise _Cut()
         seen.append(piece)
         total += len(piece)
         stripped = piece.rstrip()
@@ -215,6 +247,11 @@ class Workflow:
     def units_of(self, packet: dict) -> set:
         """The names a packet concerns, for worker rotation."""
         raise NotImplementedError
+
+    def resume_lanes(self, run) -> int | None:
+        """The lanes a resumed session is answered with, when the options
+        name none (a start says it in `lanes`; a resume has no start)."""
+        return None
 
     def answer_models(self):
         raise NotImplementedError
@@ -358,6 +395,9 @@ class QCWorkflow(Workflow):
     START, NEXT, ANSWER = "qc_session_start", "qc_next", "qc_answer"
     STATUS, FINISH = "qc_session_status", "qc_session_finish"
     feature, agent, workflow, unit_noun = "qc", "qc_worker", "auto_qc", "channel"
+    #: Several packets out at once: the session engine hands out side by side
+    #: only decisions no pending answer can change (`QCEngine.next_ready`).
+    parallel = True
 
     def prefix(self):
         return prefix.qc_prefix()
@@ -373,6 +413,8 @@ class QCWorkflow(Workflow):
                      "agent": _agent(options), "known_guide": self.guide_version()}
         if self.selected(options):
             arguments["channels"] = list(self.selected(options))
+        if options.parallel_markers:
+            arguments["lanes"] = int(options.parallel_markers)
         return arguments
 
     def units_started(self, started, options):
@@ -382,6 +424,16 @@ class QCWorkflow(Workflow):
 
     def units_of(self, packet):
         return {f"{u.get('type')}:{u.get('id')}" for u in packet.get("units") or () if isinstance(u, dict)}
+
+    def resume_lanes(self, run):
+        from plexora.plugins.qc.capabilities_session import lanes_for
+
+        try:
+            state = _ok(run._invoke(self.STATUS, {"session_id": run.session_id, "detail": "full"}))
+            requested = (state.get("options") or {}).get("lanes")
+        except Exception:                 # noqa: BLE001 -- the default then
+            requested = None
+        return lanes_for(requested)
 
     def answer_models(self):
         from plexora.plugins.qc.server import answers
@@ -497,6 +549,53 @@ class _Lane:
         self.warm_off = False
 
 
+class _Throttle:
+    """How many model calls the run's lanes may have out at once: the lane
+    count, one fewer each time the gateway or the provider says too many
+    calls (a rate-limit retry), and one back after `THROTTLE_RECOVER_AFTER`
+    clean calls (additive increase, multiplicative-ish decrease: one lane
+    at a time, never below one). A call already out is never cut."""
+
+    def __init__(self, lanes: int):
+        self.most = max(1, int(lanes))
+        self.limit = self.most
+        self.out = 0
+        self.clean = 0
+        self.lowest = self.most
+        self._cond = threading.Condition()
+
+    def acquire(self, halted=lambda: False) -> None:
+        with self._cond:
+            while self.out >= self.limit:
+                if halted():
+                    return self._take()
+                _work.wait_condition(self._cond, 0.5)
+            self._take()
+
+    def _take(self):
+        self.out += 1
+
+    def release(self, ok: bool) -> None:
+        with self._cond:
+            self.out = max(0, self.out - 1)
+            if ok:
+                self.clean += 1
+                if self.clean >= THROTTLE_RECOVER_AFTER and self.limit < self.most:
+                    self.limit += 1
+                    self.clean = 0
+            self._cond.notify_all()
+
+    def slow_down(self) -> bool:
+        """A rate-limit retry: one lane fewer. Returns whether it lowered."""
+        with self._cond:
+            self.clean = 0
+            if self.limit <= 1:
+                return False
+            self.limit -= 1
+            self.lowest = min(self.lowest, self.limit)
+            return True
+
+
 #: The engine's strikes before it releases a packet to manual review
 #: (`SessionEngine.INVALID_ANSWERS`).
 STRIKES_TO_RELEASE = 2
@@ -609,6 +708,15 @@ class DecisionRun:
         # Lanes share the counters above; a refusal in one stops them all.
         self._lock = threading.Lock()
         self._halt: Exception | None = None
+        #: Lanes only: how many calls may be out at once (`_Throttle`).
+        self._throttle: _Throttle | None = None
+        #: task -> Event set once that task's first call has returned: the
+        #: cached prefix is written once per task, not once per lane.
+        self._warming: dict = {}
+        #: task -> when a lane last began a call of it (keep-warm, shared).
+        self._task_called: dict = {}
+        #: packet id -> {packet_id, kind, task, lane, started}: the calls out now.
+        self._in_flight: dict = {}
         # How capabilities are invoked: in-process (the app's job) passes its
         # call's policy, audit, viewer link and notifier, so the session's
         # events reach the open tabs and the receipts are the job's own.
@@ -655,7 +763,17 @@ class DecisionRun:
                 "session_charged_micro": self.prior_micro + self.charged,
                 "session_charged_credits": round((self.prior_micro + self.charged) / 10_000, 2),
                 "cache_read_share": round(self.monitor.read_share(), 4), "workers": self.workers,
-                "invalid_answers": self.invalid}
+                "invalid_answers": self.invalid,
+                **({"lanes": self.parallel, "in_flight": self.in_flight(),
+                    "throttle": self._throttle.limit if self._throttle else self.parallel,
+                    "reissued": self.reissued} if self.parallel > 1 else {})}
+
+    def in_flight(self) -> list:
+        """The model calls out now, oldest first: what a panel lists."""
+        with self._lock:
+            held = sorted(self._in_flight.values(), key=lambda e: e["started"])
+        now = time.time()
+        return [{**e, "elapsed_s": round(now - e["started"], 1)} for e in held]
 
     def _count_prior(self) -> None:
         """What the session's earlier runs spent and answered: each run's
@@ -724,8 +842,18 @@ class DecisionRun:
         idle = time.monotonic() - lane.last_call_at
         if idle < KEEP_WARM_AFTER_S or idle >= CACHE_TTL_S:
             return False
+        with self._lock:
+            shared = time.monotonic() - self._task_called.get(request.task, 0.0)
+        if self.parallel > 1 and shared < KEEP_WARM_AFTER_S \
+                and lane.last_input_tokens - self.prefix_tokens < KEEP_WARM_MIN_TOKENS:
+            # Another lane began a call of this task since, so the shared
+            # prefix's entry is fresh; this lane's own history beyond it is
+            # too short to be worth a ping of its own.
+            return False
         lane.pings += 1
         lane.last_call_at = time.monotonic()
+        with self._lock:
+            self._task_called[request.task] = lane.last_call_at
         ping = replace(request, max_tokens=1,
                        context={**(request.context or {}), "workflow": "keep_warm"})
         with self._lock:
@@ -783,6 +911,9 @@ class DecisionRun:
                                     f"Session {self.session_id} is already being answered by "
                                     f"run {holder}; wait for it to stop before resuming."})
             result = self._start()
+            if not _work.threaded():
+                # The browser build runs one thing at a time: lanes would only queue.
+                self.parallel = 1
             if self.parallel > 1:
                 status, reason = self._run_lanes(result)
             else:
@@ -815,6 +946,10 @@ class DecisionRun:
             # the session (for credit) is lifted before the next packet.
             self._invoke(self.wf.STATUS, {"session_id": self.session_id, "pause": False})
             self._count_prior()
+            if self.wf.parallel and not self.o.parallel_markers:
+                lanes = self.wf.resume_lanes(self)
+                if lanes:
+                    self.parallel = max(1, int(lanes))
             if self.o.declare_run:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"), usage=self.usage())
@@ -1137,6 +1272,7 @@ class DecisionRun:
                 self.workers += 1
             self.lanes.append(_Lane(index, f"lane{index}", worker))
         outcomes: dict = {}
+        self._throttle = _Throttle(self.parallel)
 
         def body(lane):
             def task(ctx):
@@ -1254,14 +1390,26 @@ class DecisionRun:
                                output_schema=self.wf.schema_for(kind, task, packet),
                                context=context, model=self.o.model, task=task)
 
-        lane.last_request, lane.last_call_at, lane.pings = request, time.monotonic(), 0
+        warmer = self._await_warm(task, lane)
 
         def on_retry(attempt, exc):
+            slowed = exc.code in RATE_CODES and self._throttle is not None and self._throttle.slow_down()
             self._emit("retry", packet_id=pid, attempt=attempt, code=exc.code,
-                       retry_after=exc.retry_after, message=str(exc)[:200])
+                       retry_after=exc.retry_after, message=str(exc)[:200],
+                       **({"throttle": self._throttle.limit} if slowed else {}))
 
+        if self._throttle is not None:
+            self._throttle.acquire(halted=lambda: self._halt is not None)
+        lane.last_request, lane.last_call_at, lane.pings = request, time.monotonic(), 0
+        with self._lock:
+            self._task_called[task] = time.monotonic()
+            self._in_flight[pid] = {"packet_id": pid, "kind": kind, "task": task,
+                                    "lane": lane.index, "started": time.time()}
+        ok = False
         try:
-            response = self._send(request, pid, n, on_retry)
+            response = self._send(request, pid, n, on_retry,
+                                  on_first=warmer.set if warmer is not None else None)
+            ok = True
         except _Runaway as exc:
             # Cut off: the gateway settles what was streamed (it is on the
             # account, not in this trace), and the answer is graded invalid.
@@ -1272,6 +1420,12 @@ class DecisionRun:
                                      stop_reason="runaway" if exc.why == "blank" else "runaway_long",
                                      usage=Usage())
         finally:
+            with self._lock:
+                self._in_flight.pop(pid, None)
+            if self._throttle is not None:
+                self._throttle.release(ok)
+            if warmer is not None:
+                warmer.set()
             if lane.on_first_call is not None:
                 # The prefix is in the provider's cache now (or the call
                 # failed): the scheduler may start the other lanes.
@@ -1291,13 +1445,50 @@ class DecisionRun:
             seq = self.seq
         return response, verdict, seq
 
-    def _send(self, request, pid: str, n: int, on_retry):
+    def _stop_requested(self) -> bool:
+        """Whether the user stopped this run's session in the viewer (its
+        control file): a reply still streaming is then cut (`_Cut`). Never
+        raises: a control that cannot be read stops nothing."""
+        if not self.session_id:
+            return False
+        try:
+            from plexora.agent.sessions.store import SessionStore
+
+            kind = "gating" if self.wf.name == "contrast" else self.wf.name
+            return bool(SessionStore(kind).control(self.session_id).get("stopped"))
+        except Exception:                 # noqa: BLE001 -- a look, not a decision
+            return False
+
+    def _await_warm(self, task, lane: _Lane):
+        """Several lanes: the first call of each task goes alone, so the
+        provider writes the cached prefix (identity + skill + guide) once, and
+        the lanes about to start that task read it. Returns the Event this
+        lane sets when its call returns (it is the task's first), else None
+        once the task is warm. A lane whose worker has called before holds the
+        prefix already; a halt or a stop ends the wait."""
+        if self.parallel <= 1 or lane.worker.calls > 0:
+            return None
+        with self._lock:
+            event = self._warming.get(task)
+            if event is None:
+                self._warming[task] = event = threading.Event()
+                return event
+        deadline = time.monotonic() + WARM_WAIT_S
+        while not event.is_set() and time.monotonic() < deadline:
+            self.check()
+            if self._halt is not None:
+                raise self._halt
+            _work.wait_event(event, min(0.5, max(0.0, deadline - time.monotonic())))
+        return None
+
+    def _send(self, request, pid: str, n: int, on_retry, on_first=None):
         """`gateway.messages`, asked again when the stream breaks mid-answer
         (`INTERRUPTED_RETRIES`), each time as a new attempt of the packet."""
         for tries in range(INTERRUPTED_RETRIES + 1):
             try:
                 return self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
-                                             on_delta=_runaway_guard(), on_retry=on_retry)
+                                             on_delta=_runaway_guard(self._stop_requested, on_first),
+                                             on_retry=on_retry)
             except GatewayError as exc:
                 if exc.code != "interrupted" or tries >= INTERRUPTED_RETRIES:
                     raise
@@ -1386,7 +1577,14 @@ class DecisionRun:
         # no more calls are spent on it, and it is never served again.
         answer, problem, response, submitted = None, None, None, None
         for attempt in range(2):
-            response, verdict, seq = self._call(packet, w.messages, lane)
+            try:
+                response, verdict, seq = self._call(packet, w.messages, lane)
+            except _Cut:
+                # The user stopped the session while this reply streamed: the
+                # stream is closed, nothing is applied, and the session says
+                # it stopped.
+                self._emit("cut", packet_id=packet.get("packet_id"), kind=packet.get("kind"))
+                return self._next(lane, wait_s=0)
             answer, problem = self._validate(packet, response)
             self.trace.call(self.run_id, worker=w.index, seq=seq, packet_id=packet.get("packet_id"),
                             kind=packet.get("kind"), capability=self.o.capability, prefix_fp=self.prefix_fp,
@@ -1514,7 +1712,9 @@ class DecisionRun:
             "project": self.o.project, "session_id": self.session_id, "packets": self.packets,
             "model_calls": self.seq, "workers": self.workers, "invalid_answers": self.invalid,
             **({"parallel_markers": self.parallel, "peak_outstanding": self.peak_outstanding,
-                "reissued": self.reissued} if self.parallel > 1 else {}),
+                "reissued": self.reissued,
+                "throttled_to": self._throttle.lowest if self._throttle else self.parallel}
+               if self.parallel > 1 else {}),
             "charged_micro": (run or {}).get("charged_micro", self.charged),
             "charged_credits": round(((run or {}).get("charged_micro", self.charged)) / 10_000, 2),
             "gateway_run": (run or self.gateway_run or {}).get("run_id"),

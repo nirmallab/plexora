@@ -4491,6 +4491,24 @@ deliberately left out and what should be built next.
   second asker on the same project (Thresholding and a waiting session) rather
   than replacing it, because the replaced asker's promise never settled
   (both files at `?v=20261015_setup_wait`; the ten boundary goldens carry it).
+  The harness runs QC in lanes too (`QCWorkflow.parallel`; `parallel_markers`,
+  CLI `--lanes`, is the count for both workflows; a QC resume takes
+  `resume_lanes`; no lanes without threads). Lanes share a `_Throttle` (one
+  lane fewer on a `rate_limited`/`provider_rate_limited` retry, one back after
+  `THROTTLE_RECOVER_AFTER` clean calls; the gateway's own `rate_limited`, its
+  retries spent, pauses the run: it is in `PAUSE_CODES`), a warm gate per task
+  (`_await_warm`: a task's first call goes alone until its reply's first piece,
+  at most `WARM_WAIT_S`, so the cached prefix is written once, not per lane),
+  keep-warm pings shared per task, and a Stop that cuts a reply still
+  streaming (`_runaway_guard(stopped)` → `_Cut`, the session's control looked
+  at every `STOP_LOOK_S`); `usage()` carries `in_flight` and `lanes`, and the
+  tab relay forwards `ai_retry`/`ai_reissued`/`ai_cut` (`AI_EVENTS`), which
+  agentPanel.js lists as the looks out ("N at once", headline on the oldest,
+  rows by packet id; `progress.at`, taken under the session's lock, keeps
+  counts from stepping back). A reader told `busy` sleeps on a condition an
+  answer or a check's merge wakes (`session_tools.wake`, `BUSY_POLL_S` 1 s
+  cap) and re-checks a stop or pause on every pass; `memo.get` reads each
+  memo file once (`_INDEX`, by mtime and size).
   The harness (`ai/harness/decision.py`) never sends `needs_setup` to its
   model, and collects the set-up before any model is called:
   `DecisionRun._collect_setup` runs first in `_start` (workflows with
@@ -4661,6 +4679,32 @@ deliberately left out and what should be built next.
   for `visual_scan` and `memo_get` tolerates None, because the answer closes
   a pass whose regions the agent draws with its tools while the packet is
   out — a replayed `done` would end a pass before it began;
+  candidates and the visual pass wait for the whole bulk pass
+  (`region_checks_scoring`: the record is `bulk_running`), serially and in
+  lanes, because a check's region absorbs the undecided detector candidates
+  at its place (`transitions._absorb`), a fallback detector adds candidates,
+  and outlines are traced from what the checks computed — deciding a
+  candidate before the pass ended made the result depend on machine speed;
+  several packets go out at once with `qc_next(parallel=N)`
+  (`next_ready`, the harness's lanes, `lanes_for` → start's `lanes`, default
+  `DEFAULT_LANES` 8 or `PLEXORA_QC_LANES`, 1 without threads): audit pages,
+  score reviews and stain checks depend on no other answer and go out side
+  by side (a stain re-read or a second score round only after its own
+  unit's answer), the visual pass and the final review go out alone (stain
+  checks may run beside the visual pass), and candidates go out together
+  only when their map boxes do not meet (`touching`, `_candidate_free`):
+  every interaction between candidates (`_explained_by`, `_merge_target`,
+  `_absorb`, a confirm's neighbours) needs overlapping masks, so touching
+  ones are decided in the serial rank order — conflict-serializable, the
+  serial run's decisions; a blocker that `_candidate_kind` would close
+  unasked is settled on the way (`_closes_unasked`), as `next_unit` does;
+  `_absorb` and `check_candidates.settle_held` never decide a candidate whose
+  look is out (`outstanding_unit`, `_touches_a_look_out`); `ledger_fingerprint`
+  covers the decided touching candidates only (a candidate the bulk pass adds
+  meanwhile is not a reason to reissue); the reader keeps its task
+  (`reader["task"]`) so its worker's cache is read; `tests/test_qc_parallel.py`
+  pins 4 lanes deciding what 1 lane decides with the same calls
+  (`bench_qc.run_harness`, `harness:N` arms, `result_signature`);
   `_candidate_record` keeps `reasoning` and, for an agent-drawn region,
   `method`/`view`/`overlaps`; `trim` delegates to `packets.trim`), `nuclei_trace.py` (registration and one-cycle
   tissue-loss regions are outlined by the reference-cycle nuclei they hold,
@@ -4711,7 +4755,14 @@ deliberately left out and what should be built next.
   shared by the session's `score_review` packet and the Pro
   `sample_qc_examples` tool: a tile of tissue round each sampled place, so
   the same field/bar/seed give the same places and the same sheet),
-  `checks_bulk.py` (the checks scored inside a session's bulk pass — Blur
+  `checks_bulk.py` (the checks scored inside a session's bulk pass, several at
+  once on `check_workers()` threads (`PLEXORA_QC_CHECK_WORKERS`, default 3,
+  at most half the cores and 4, the image reader shelf), in `CHECK_ORDER`
+  (stain pictures and registration first, so the slow stain looks start
+  early), the Artifact Detector's categories one after another on one worker
+  (`SHARED_RUN_CHECKS`: one run, reused by fingerprint), each merged under
+  the lock as soon as it is scored, `planning_notes` sorted back into the
+  planned order, a busy reader woken (`session_tools.wake`) — Blur
   QC (every channel when no DNA channel is recognisable), the Registration
   Check (every DNA channel, no cap), Segmentation QC (scored, no look: its
   unit closes `decided` with the counts of its calls, `SCORED_NO_LOOK`, and

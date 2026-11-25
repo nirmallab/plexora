@@ -56,29 +56,63 @@ def path(kind, project) -> Path:
     return paths.agent_root() / "memo" / _safe(kind) / f"{_safe(project)}.jsonl"
 
 
+#: str(path) -> ((mtime_ns, size), {(key, agent): entry}): each memo file read
+#: once, not once per packet -- a session asks the memo before every packet it
+#: issues, and with several packets out it asked as often again. A file whose
+#: modification time or size changed (another process appended, or `forget`)
+#: is read afresh.
+_INDEX: dict = {}
+
+
+def _stamp(target):
+    stat = target.stat()
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _index(target) -> dict:
+    """{(key, agent): entry} of a memo file, the last entry of a key winning;
+    called with `_LOCK` held."""
+    stamp = _stamp(target)
+    held = _INDEX.get(str(target))
+    if held is not None and held[0] == stamp:
+        return held[1]
+    entries = {}
+    for line in target.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        entries[(entry.get("key"), entry.get("agent"))] = entry
+    _INDEX[str(target)] = (stamp, entries)
+    return entries
+
+
 def get(kind, project, packet_key, agent):
     """The answer `agent` gave to this packet before, or None."""
     target = path(kind, project)
     if not target.is_file():
         return None
-    found = None
     with _LOCK:
-        for line in target.read_text(encoding="utf-8").splitlines():
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if entry.get("key") == packet_key and entry.get("agent") == agent:
-                found = entry
-    return found
+        return _index(target).get((packet_key, agent))
 
 
 def put(workflow, project, packet_key, agent, answer, /, **about) -> None:
     target = path(workflow, project)
     target.parent.mkdir(parents=True, exist_ok=True)
     entry = {"key": packet_key, "agent": agent, "answer": answer, **about}
-    with _LOCK, target.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, sort_keys=True, default=str) + "\n")
+    line = json.dumps(entry, sort_keys=True, default=str) + "\n"
+    with _LOCK:
+        held = _INDEX.get(str(target))
+        current = held is not None and target.is_file() and held[0] == _stamp(target)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        if current:
+            # The index held the whole file: it takes this entry too, read
+            # back as written (JSON), as a fresh read of the file would.
+            held[1][(packet_key, agent)] = json.loads(line)
+            _INDEX[str(target)] = (_stamp(target), held[1])
+        else:
+            _INDEX.pop(str(target), None)
 
 
 def forget(kind, project, *, agent=None) -> int:
@@ -90,4 +124,5 @@ def forget(kind, project, *, agent=None) -> int:
         lines = target.read_text(encoding="utf-8").splitlines()
         kept = [l for l in lines if agent is not None and json.loads(l).get("agent") != agent]
         target.write_text("".join(l + "\n" for l in kept), encoding="utf-8")
+        _INDEX.pop(str(target), None)
     return len(lines) - len(kept)

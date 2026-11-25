@@ -498,6 +498,7 @@ def apply_grid(engine, packet, answer):
         unit["grid_spec"] = None
         return _outcome(unit, refine=True)
     unit["mask"] = cand.encode_mask(mask)
+    unit.pop("grid_box", None)          # `QCEngine.grid_box` of the old mask
     unit["variants"] = None
     unit["variant"] = "tight"
     # The squares named are the envelope; the artifact is traced inside them.
@@ -888,6 +889,10 @@ def _absorb(engine, decided, *, because=None):
         if other is decided or other.get("origin") == "check" or \
                 other["state"] not in ("awaiting_audit", "awaiting_confirm") or \
                 int(other.get("level") or 0) or other.get("class_hint") != klass:
+            continue
+        if getattr(engine, "outstanding_unit", None) is not None and engine.outstanding_unit(other):
+            # Its look is out (a run with several packets out): that look
+            # decides it, as a serial run would already have decided it.
             continue
         theirs = engine.mask_of(other)
         inside = np.logical_and(mask, theirs).sum()

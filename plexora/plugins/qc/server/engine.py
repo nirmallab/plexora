@@ -1114,7 +1114,7 @@ class QCEngine(BaseEngine):
         # detector candidates: a region the agent outlines on the overview
         # explains the candidates inside it (`_explained_by`), so no look is
         # spent on them.
-        for unit in self.units_of("check", project):
+        for unit in self.units_of("check", project) if not self.region_checks_scoring() else ():
             if unit.get("check") == "visual" and unit["state"] == "awaiting_visual_scan":
                 return "visual_scan", [unit]
         # Low quality staining: one picture per marker, in channel order; a
@@ -1132,7 +1132,7 @@ class QCEngine(BaseEngine):
         candidates = sorted(self.units_of("candidate", project),
                             key=lambda u: (order.get(u.get("audit_channel"), 0),
                                            -float(u.get("score") or 0), u["id"]))
-        for unit in candidates:
+        for unit in candidates if not self.region_checks_scoring() else ():
             kind = self._candidate_kind(unit)
             if kind:
                 return kind, self._confirm_batch(unit, candidates) \
@@ -1151,6 +1151,266 @@ class QCEngine(BaseEngine):
         if waiting:
             return "wait_user", waiting
         return None, []
+
+    # -- several packets out at once (`issue(parallel=N)`, the harness's lanes) ---------
+
+    def issue(self, unit=None, *, reader=None, parallel=None, tasks=None):
+        """`BaseEngine.issue`, remembering the AI task of the packet each
+        reader was given last: `next_ready` keeps a reader on its task while
+        that task has work, so its worker's cached history stays useful."""
+        packet, images, status = super().issue(unit, reader=reader, parallel=parallel, tasks=tasks)
+        if status == "packet" and packet is not None and packet.get("task"):
+            self.reader(reader)["task"] = packet["task"]
+        return packet, images, status
+
+    def _out_keys(self):
+        """The unit keys of every packet out for an answer."""
+        return {k for entry in self.record["outstanding"].values() for k in entry.get("units") or ()}
+
+    def outstanding_unit(self, unit) -> bool:
+        """Whether a packet holding `unit` is out: its look is under way, so
+        nothing closes it without that look (`transitions._absorb`,
+        `check_candidates.settle_held`) -- in a serial run it would already
+        have been decided by then."""
+        return self.key_of(unit) in self._out_keys()
+
+    def grid_box(self, unit):
+        """[y0, x0, y1, x1) of a candidate's mask on the map grid, kept on the
+        unit (`transitions` drops it when it redraws the mask). None for an
+        empty mask."""
+        box = unit.get("grid_box")
+        if box is None and "grid_box" not in unit:
+            mask = self.mask_of(unit)
+            ys, xs = np.nonzero(mask)
+            box = [int(ys.min()), int(xs.min()), int(ys.max()) + 1, int(xs.max()) + 1] \
+                if ys.size else None
+            unit["grid_box"] = box
+        return box
+
+    def touching(self, unit, others):
+        """The candidates of `others` whose map box meets `unit`'s. Every way
+        one candidate's decision changes another's -- `_explained_by`,
+        `_merge_target`, `transitions._absorb`, a confirm packet's
+        neighbours -- needs their masks to overlap, so candidates whose boxes
+        do not meet are decided independently. A box is a superset of its
+        mask: a pair that may interact is never missed."""
+        mine = self.grid_box(unit)
+        if mine is None:
+            return []
+        y0, x0, y1, x1 = mine
+        out = []
+        for other in others:
+            if other is unit:
+                continue
+            box = self.grid_box(other)
+            if box is not None and box[0] < y1 and y0 < box[2] and box[1] < x1 and x0 < box[3]:
+                out.append(other)
+        return out
+
+    def ledger_fingerprint(self, units) -> str:
+        """For a candidate packet issued beside others: the decided candidates
+        it can interact with (`touching`) and how each was decided -- what
+        `_merge_target`, `_explained_by` and `transitions._absorb` read.
+        `next_ready` never lets another answer decide one while the packet is
+        out, so this is a safety net: a change refuses the answer (`reissue`)
+        rather than apply it beside decisions it was not built on. A candidate
+        the bulk pass adds meanwhile is undecided, and is not part of it: a
+        serial run applies its answer beside that one too."""
+        import hashlib
+
+        cands = [u for u in units if u.get("type") == "candidate"]
+        if not cands:
+            return ""
+        others = self.units_of("candidate", cands[0]["project"])
+        seen = {}
+        for unit in cands:
+            for other in self.touching(unit, others):
+                if other in cands or other["state"] not in TERMINAL:
+                    continue
+                seen[other["id"]] = other["state"]
+        if not seen:
+            return ""
+        text = ";".join(f"{k}={v}" for k, v in sorted(seen.items()))
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+    def _candidate_free(self, unit, ranked, out_keys, batch=()):
+        """Whether `unit` may be looked at now beside the packets out: no
+        candidate it touches is out, and none ranked before it is still to be
+        decided -- except one held for its probes, which a serial run passes
+        by too. Touching candidates are so decided in the serial order, and
+        their decisions are the serial run's (conflict-serializable). A
+        candidate in `batch` counts as decided with it (a serial batch puts
+        touching first looks on one sheet)."""
+        if self.key_of(unit) in out_keys:
+            return False
+        rank = ranked[unit["id"]]
+        in_batch = {u["id"] for u in batch}
+        for other in self.touching(unit, self._open_candidates):
+            if other["id"] in in_batch or other["state"] in TERMINAL:
+                continue
+            if self.key_of(other) in out_keys:
+                return False
+            if ranked.get(other["id"], 1 << 30) < rank and not other.get("held_for") \
+                    and not self._closes_unasked(other, out_keys):
+                return False
+        return True
+
+    def _closes_unasked(self, unit, out_keys) -> bool:
+        """Whether `unit` is settled without a look now (`_candidate_kind`:
+        explained by a region already confirmed, a channel verdict left for a
+        person, a user's edit) -- evaluated, as `next_unit` evaluates the
+        candidates it passes, only when no candidate it touches is out: what
+        settles it reads only decisions already made, which no pending answer
+        can then change. A serial run would have settled it on its way to the
+        candidates after it; here it no longer holds them back."""
+        if unit["state"] not in CANDIDATE_ASKS:
+            return unit["state"] in TERMINAL
+        if any(self.key_of(o) in out_keys for o in self.touching(unit, self._open_candidates)):
+            return False
+        self._candidate_kind(unit)
+        return unit["state"] in TERMINAL
+
+    def region_checks_scoring(self) -> bool:
+        """Whether the bulk pass is still running past its scan: scoring the
+        image checks, or running the detectors a skipped check falls back to.
+        The candidates and the visual pass wait for it. A check's region takes
+        in the detector candidates at its place that no one has looked at
+        (`transitions._absorb`), a fallback detector adds candidates beside
+        the ones there, and a region's outline is traced from what the checks
+        computed (`nuclei_trace`): a candidate decided before the pass ends is
+        decided differently from one decided after, so the result would follow
+        which finished first, the bulk pass or the looks. The channel audit,
+        the score reviews and the stain checks go out meanwhile."""
+        return self.record.get("state") == "bulk_running"
+
+    def _check_phase_open(self, out_kinds, checks):
+        """Whether a score review is still to come or out, or a check that
+        writes regions is still scoring: the detector candidates and the
+        visual pass wait for every one (`next_unit`)."""
+        if "score_review" in out_kinds or self.region_checks_scoring():
+            return True
+        return any(u["state"] == "awaiting_score_review" and not self.check_user_edit(u)
+                   for u in checks)
+
+    def next_ready(self, reader):
+        """The next decision for `reader` beside the packets already out, or
+        `busy` when everything left waits on an answer. Nothing goes out that
+        a pending answer could make unnecessary or change:
+
+        - channel audit pages, score reviews and stain checks depend on no
+          other answer (a score review reads only its own check's field, a
+          stain verdict changes no channel, cell or gate), so any number go
+          out side by side -- a stain re-read only after its unit's previous
+          reading was answered, a second score round after the first;
+        - the visual pass waits for every score review, as in `next_unit`,
+          and goes out with nothing but stain checks beside it;
+        - candidates wait for the score reviews and the visual pass, as in
+          `next_unit`, and then go out side by side only where they do not
+          touch (`_candidate_free`); a reader follows on its own candidate;
+        - the final review waits for everything, and goes out alone.
+
+        Among what is ready, the reader's own task first, so its rolling
+        worker's cache is read rather than another written."""
+        record = self.record
+        held = record["outstanding"]
+        out_kinds = {entry.get("kind") for entry in held.values()}
+        if "final_qc_review" in out_kinds:
+            return "busy", []
+        out_keys = self._out_keys()
+        project = self.project
+        bulk_running = record.get("state") == "bulk_running"
+        self.settle_channels()
+        visual_out = "visual_scan" in out_kinds
+        order = {u["id"]: u["order"] for u in self.units_of("channel", project)}
+        checks = self.units_of("check", project)
+        picks = []
+
+        # The reader's own candidate, while it still needs a look: its
+        # deeper looks follow on, as in `next_unit`.
+        last = self.last_unit(reader)
+        cands_ready = not visual_out and not self._check_phase_open(out_kinds, checks) \
+            and not any(u.get("check") == "visual" and u["state"] == "awaiting_visual_scan"
+                        for u in checks)
+        candidates = sorted(self.units_of("candidate", project),
+                            key=lambda u: (order.get(u.get("audit_channel"), 0),
+                                           -float(u.get("score") or 0), u["id"]))
+        ranked = {u["id"]: i for i, u in enumerate(candidates)}
+        self._open_candidates = [u for u in candidates if u["state"] not in TERMINAL]
+        if cands_ready and last is not None and last["type"] == "candidate" \
+                and last["state"] in CANDIDATE_ASKS \
+                and self._candidate_free(last, ranked, out_keys):
+            kind = self._candidate_kind(last)
+            if kind and self.accepts(kind, [last]):
+                # As `next_unit`'s follow-on: the batch drawn in score order.
+                by_score = sorted(candidates, key=lambda u: (-float(u.get("score") or 0), u["id"]))
+                return kind, (self._free_batch(last, by_score, ranked, out_keys)
+                              if kind == "artifact_confirm" else [last])
+
+        if not visual_out:
+            channels = sorted(self.units_of("channel", project), key=lambda u: u["order"])
+            batch = int(ENGINE["audit_batch"]) * int(ENGINE["audit_sheets_per_packet"])
+            ready = [u for u in channels if u["state"] == "scanned"]
+            waiting_scan = any(u["state"] == "pending" for u in channels)
+            if ready and (len(ready) >= batch or not (bulk_running and waiting_scan)):
+                picks.append(("channel_audit", ready[:batch]))
+            rank = {c: i for i, c in enumerate(REVIEW_ORDER)}
+            for unit in sorted(checks, key=lambda u: (rank.get(u.get("check"), 9),
+                                                      order.get(u.get("channel"), 0), u["id"])):
+                if unit["state"] == "awaiting_score_review" and self.key_of(unit) not in out_keys \
+                        and not self.check_user_edit(unit) and self.wants(unit, "score_review"):
+                    picks.append(("score_review", [unit]))
+            if not held or out_kinds <= {"stain_check"}:
+                if not self._check_phase_open(out_kinds, checks):
+                    for unit in checks:
+                        if unit.get("check") == "visual" and unit["state"] == "awaiting_visual_scan" \
+                                and self.key_of(unit) not in out_keys:
+                            picks.append(("visual_scan", [unit]))
+        for unit in sorted((u for u in checks if u.get("check") == "stain"
+                            and u["state"] == "awaiting_stain_check"
+                            and self.key_of(u) not in out_keys),
+                           key=lambda u: (int(u.get("stain_read") or 1),
+                                          order.get(u.get("channel"), 0), u["id"])):
+            picks.append(("stain_check", [unit]))
+        if cands_ready:
+            for unit in candidates:
+                if unit["state"] not in CANDIDATE_ASKS \
+                        or not self._candidate_free(unit, ranked, out_keys):
+                    continue
+                kind = self._candidate_kind(unit)
+                if kind:
+                    picks.append((kind, self._free_batch(unit, candidates, ranked, out_keys)
+                                  if kind == "artifact_confirm" else [unit]))
+                    break        # one candidate packet per pick: the batch is drawn from it
+        mine = [pick for pick in picks if self.accepts(*pick)]
+        if mine:
+            task = self.reader(reader).get("task")
+            same = [pick for pick in mine if task and self.task_of(*pick) == task]
+            return (same or mine)[0]
+        if picks:
+            return ("busy", []) if held else (None, [])
+        if held:
+            return "busy", []
+        # Nothing out and nothing ready here: the serial order decides what
+        # remains (the final review, a wait for the bulk pass or the user).
+        return self.next_unit()
+
+    def _free_batch(self, first, candidates, ranked, out_keys):
+        """`_confirm_batch` from the candidates free to go beside the packets
+        out: the same picks a serial batch makes, among those."""
+        size = int(ENGINE["confirm_batch"])
+        if size <= 1 or not self._batchable(first):
+            return [first]
+        klass, channel = first.get("class_hint"), first.get("channel")
+        others = [u for u in candidates if u is not first and self._batchable(u)]
+        others.sort(key=lambda u: (u.get("class_hint") != klass, u.get("channel") != channel))
+        batch = [first]
+        for unit in others:
+            if len(batch) >= size:
+                break
+            if self._candidate_free(unit, ranked, out_keys, batch=batch) \
+                    and self._candidate_kind(unit) == "artifact_confirm":
+                batch.append(unit)
+        return batch
 
     def progress(self):
         out = super().progress()
@@ -1173,14 +1433,18 @@ class QCEngine(BaseEngine):
 
 
 def phase_for(record, *, mirroring=False) -> str:
+    """The viewer's phase. With several packets out it is read from all of
+    them -- set-up first, then a look, then a check -- not from whichever went
+    out last, so it does not flick between lanes."""
     if record.get("state") in schemas.FINISHED_STATES:
         return "summarizing"
-    kind = record.get("outstanding_kind")
-    if kind in schemas.SETUP_KINDS:
+    kinds = {entry.get("kind") for entry in (record.get("outstanding") or {}).values()}
+    kinds.add(record.get("outstanding_kind"))
+    if kinds & set(schemas.SETUP_KINDS):
         return "planning"
-    if kind in schemas.LOOK_KINDS:
+    if kinds & set(schemas.LOOK_KINDS):
         return "inspecting" if mirroring else "thinking"
-    if kind in schemas.CHECK_KINDS:
+    if kinds & set(schemas.CHECK_KINDS):
         return "validating"
     units = list((record.get("units") or {}).values())
     if units and all(u.get("state") in TERMINAL for u in units):
