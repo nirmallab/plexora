@@ -303,8 +303,52 @@ The answer memo keys on a packet's text and image bytes, so packets whose
 contents changed (confirms with `audit_said`, deeper looks, the visual pass)
 are asked again once rather than replayed from an earlier run.
 
+## Round 3, live: before and after on the real gateway (2026-11-25)
+
+exemplar-001 (12 channels, 2511 x 3138, 11,201 cells), copied twice
+(`exab-before`, `exab-after`: own image files, so no shared QC state, stain
+ledger or memo), the set-up answers of exemplar-001 applied to both. Before
+is fd1a049d, after is ba951908; default lanes; one run per arm. Credits are
+the gateway's metered price of each call (trace `model_calls.price_micro`);
+both gating runs reached their 225-credit quote, so their charge says
+nothing.
+
+| Run | Calls | Input tokens | Cache writes | Output | Metered credits |
+|---|---|---|---|---|---|
+| QC before | 21 | 425,294 | 194,007 | 6,204 | 118.7 |
+| QC after | 21 | 225,841 | 88,742 | 6,490 | 73.5 (−38%) |
+| Gating before | 39 | 511,284 | 116,511 | 43,386 | 306.0 (7.85 a call) |
+| Gating after | 44 | 351,561 | 38,039 | 51,137 | 300.3 (6.83 a call, −13%) |
+
+- **QC:** the same packets and calls, the saving the bench predicted. Its
+  decisions differ in two score reviews, both DNA_7 and both one step:
+  registration (before stepped once, then accepted what after accepted at
+  once, with the same strata) and blur (both read every borderline cell
+  normal; before answered `too_aggressive`, after `accept`, against its own
+  strata and the packet's rule). The trimmed skill keeps every line on
+  score review, so this reads as run-to-run variation, not lost guidance.
+- **Gating:** dearer output (43-51k tokens, at 5x input) is most of its
+  cost, so the input saving is 13% a call. `qc_confirm` took 2 reads, not
+  4 (`agreed_real`). The after run took 7 more cell looks, so its total is
+  about level. Its markers: 8 to manual review and none accepted, against
+  before's 6 to review, 2 accepted (CD57, FOXP3) and ELANE no positive
+  population; rereads 16 against 10. CD57 traced: the per-cell reads of each
+  panel are nearly the same in both; after's second reader disagreed on one
+  `uncertain` cell, which asked a third and spent the looks. What differs by
+  design is that a gating look is a worker of its own (`solo_kinds`): before,
+  one worker answered all CD57's looks and saw its earlier ones. One run per
+  arm cannot say whether that, or chance on contested cells, moved the
+  outcome.
+- **The warm gate keyed on the task.** artifact_confirm has two forms (one
+  candidate, a batch), so two schemas in one task; a lane started a form's
+  first call beside another of that form and both wrote the prefix (both
+  runs). The gate keys on task and schema (`_await_warm(task, key, lane)`),
+  and a worker skips it only when its last call was under the same schema
+  (`_Worker.cache_key`).
+
 ## Not done
 
-- **A live run against the real gateway.** The plan's live run, serial
-  against lanes, needs credits and a project chosen by the user, so it
-  waits.
+- **Replicates.** One run per arm. Gating's outcome difference wants a
+  second run of after, and one of after with gating looks sharing a worker
+  again (`GatingWorkflow.solo_kinds` without `cell_panel`), before the solo
+  change is called neutral for gating.

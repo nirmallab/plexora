@@ -12,6 +12,7 @@ that cuts a streaming reply, the memo's index.
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -192,15 +193,15 @@ def test_the_first_call_of_a_task_goes_alone_and_the_rest_wait_for_it(monkeypatc
 
     run = Run()
     lanes = [decision._Lane(i, f"lane{i}", decision._Worker(i)) for i in range(3)]
-    warmer = decision.DecisionRun._await_warm(run, "qc.stain_check", lanes[0])
+    warmer = decision.DecisionRun._await_warm(run, "qc.stain_check", "s", lanes[0])
     assert isinstance(warmer, threading.Event)
     # Another task is not held back.
-    other = decision.DecisionRun._await_warm(run, "qc.blur", lanes[1])
+    other = decision.DecisionRun._await_warm(run, "qc.blur", "b", lanes[1])
     assert isinstance(other, threading.Event)
     released = []
 
     def second():
-        assert decision.DecisionRun._await_warm(run, "qc.stain_check", lanes[2]) is None
+        assert decision.DecisionRun._await_warm(run, "qc.stain_check", "s", lanes[2]) is None
         released.append(1)
     waiter = threading.Thread(target=second)
     waiter.start()
@@ -209,9 +210,39 @@ def test_the_first_call_of_a_task_goes_alone_and_the_rest_wait_for_it(monkeypatc
     warmer.set()                                           # its reply's first piece
     waiter.join(2)
     assert released == [1]
-    # A worker that has called before holds the prefix: it never waits.
-    lanes[2].worker.calls = 1
-    assert decision.DecisionRun._await_warm(run, "qc.final_review", lanes[2]) is None
+    # A worker whose last call was under the same schema holds the prefix: it
+    # never waits.
+    lanes[2].worker.cache_key = "f"
+    assert decision.DecisionRun._await_warm(run, "qc.final_review", "f", lanes[2]) is None
+
+
+def test_a_second_answer_schema_of_one_task_has_a_first_call_of_its_own(monkeypatch):
+    """The provider caches a prefix per answer schema, and a task may ask
+    several (artifact_confirm's one-candidate and batch forms): the first
+    call under each goes alone, and a worker that called under another
+    schema is not exempt. Live, before this, a lane started the second form
+    beside the first form's call and both wrote the prefix."""
+    monkeypatch.setattr(decision, "WARM_WAIT_S", 0.3)
+
+    class Run:
+        parallel = 3
+        _halt = None
+        _lock = threading.Lock()
+        _warming: dict = {}
+
+        @staticmethod
+        def check():
+            return None
+
+    run = Run()
+    lanes = [decision._Lane(i, f"lane{i}", decision._Worker(i)) for i in range(3)]
+    one = decision.DecisionRun._await_warm(run, "qc.artifact_inspection", "one", lanes[0])
+    many = decision.DecisionRun._await_warm(run, "qc.artifact_inspection", "many", lanes[1])
+    assert isinstance(one, threading.Event) and isinstance(many, threading.Event) and one is not many
+    lanes[2].worker.calls, lanes[2].worker.cache_key = 3, "one"
+    started = time.monotonic()
+    assert decision.DecisionRun._await_warm(run, "qc.artifact_inspection", "many", lanes[2]) is None
+    assert time.monotonic() - started >= 0.25              # held for "many"'s first call
 
 
 def test_the_memo_reads_its_file_once_and_follows_another_writer(tmp_path, monkeypatch):

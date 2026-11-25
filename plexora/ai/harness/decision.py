@@ -561,6 +561,8 @@ class _Worker:
         self.last_hint = False
         #: One packet of a `Workflow.solo_kinds` kind: retired after it.
         self.solo = False
+        #: The cached prefix its last call was under (`DecisionRun._cache_key`).
+        self.cache_key: str | None = None
 
     def tokens(self) -> int:
         return int(self.chars / cache_plan.CHARS_PER_TOKEN) + self.images * TOKENS_PER_IMAGE
@@ -1523,7 +1525,8 @@ class DecisionRun:
                                output_schema=self.wf.schema_for(kind, task, packet),
                                context=context, model=self.o.model, task=task)
 
-        warmer = self._await_warm(task, lane)
+        key = self._cache_key(request.output_schema)
+        warmer = self._await_warm(task, key, lane)
 
         def on_retry(attempt, exc):
             slowed = exc.code in RATE_CODES and self._throttle is not None and self._throttle.slow_down()
@@ -1568,10 +1571,10 @@ class DecisionRun:
                 lane.on_first_call = None
         warm = lane.worker.calls > 0
         lane.worker.calls += 1
+        lane.worker.cache_key = key
         usage = response.usage
         lane.last_input_tokens = int((usage.input_uncached or 0) + (usage.cache_read or 0)
                                      + (usage.cache_write or 0))
-        key = self._cache_key(request.output_schema)
         with self._lock:
             # A warm worker's first call under another schema (a task asking
             # two kinds) is that schema's first: cold, as a new worker's is.
@@ -1598,19 +1601,21 @@ class DecisionRun:
         except Exception:                 # noqa: BLE001 -- a look, not a decision
             return False
 
-    def _await_warm(self, task, lane: _Lane):
-        """Several lanes: the first call of each task goes alone, so the
-        provider writes the cached prefix (identity + skill + guide) once, and
-        the lanes about to start that task read it. Returns the Event this
-        lane sets when its call returns (it is the task's first), else None
-        once the task is warm. A lane whose worker has called before holds the
-        prefix already; a halt or a stop ends the wait."""
-        if self.parallel <= 1 or lane.worker.calls > 0:
+    def _await_warm(self, task, key: str, lane: _Lane):
+        """Several lanes: the first call of each task under each answer schema
+        (`key`, `_cache_key`: the provider caches a prefix per schema, and a
+        task's kinds or forms may ask several) goes alone, so the provider
+        writes the cached prefix (identity + skill + guide) once, and the
+        lanes about to start it read it. Returns the Event this lane sets when
+        its call returns (it is the first), else None once it is warm. A lane
+        whose worker's last call was under the same schema holds the prefix
+        already; a halt or a stop ends the wait."""
+        if self.parallel <= 1 or lane.worker.cache_key == key:
             return None
         with self._lock:
-            event = self._warming.get(task)
+            event = self._warming.get((task, key))
             if event is None:
-                self._warming[task] = event = threading.Event()
+                self._warming[(task, key)] = event = threading.Event()
                 return event
         deadline = time.monotonic() + WARM_WAIT_S
         while not event.is_set() and time.monotonic() < deadline:
