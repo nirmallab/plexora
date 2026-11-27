@@ -1,0 +1,34 @@
+---
+title: "records_stamp"
+description: "A short string that changes whenever a project record or a dataset does."
+generated: true
+symbol: "plexora.api.records_stamp"
+signature: "records_stamp() -> str"
+source:
+  end: 352
+  path: "plexora/api/records.py"
+  start: 329
+---
+
+{/* GENERATED from plexora.api.records.records_stamp. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import records_stamp
+```
+
+```python
+records_stamp() -> str
+```
+
+Made from the modification time and size of every root's `config.json`
+and of the user's `datasets.json` files: no file is read. A page polls it
+and re-lists only when it moves. It moves for writes that change nothing
+a page shows as well -- opening a project stamps when it was last opened.
+
+## Returns
+
+<Returns type={"str"}>
+
+16 hex characters.
+
+</Returns>

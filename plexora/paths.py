@@ -126,6 +126,13 @@ CAPTURES_DIRNAME = ".captures"
 #: never copies them. See video_studio's repository module.
 VIDEOS_DIRNAME = ".videos"
 
+#: Directory under a root holding every SCIMAP notebook, one directory per
+#: notebook with its own SQLite file. Dot-prefixed for the same reason as
+#: FIGURES_DIRNAME. The analysis RESULTS are not here: they go to the results
+#: folder the user picks (default: beside the cell table). See the scimap
+#: plugin's store module.
+SCIMAP_DIRNAME = ".scimap"
+
 #: Where what an external agent did is kept: the audit log of every mutation it
 #: attempted and the rendered evidence it was shown. Dot-prefixed like the two
 #: above, so nothing mistakes it for a project folder, and never on a shared
@@ -1342,6 +1349,15 @@ def videos_root() -> Path:
     person's choreography over an image, and its exports are theirs.
     """
     return data_root() / VIDEOS_DIRNAME
+
+
+def scimap_root() -> Path:
+    """Where this user's SCIMAP notebooks live.
+
+    Never a shared root, for the reason `figures_root` gives: a notebook is one
+    person's analysis, and a notebook over a dataset spans several projects.
+    """
+    return data_root() / SCIMAP_DIRNAME
 
 
 def agent_root() -> Path:

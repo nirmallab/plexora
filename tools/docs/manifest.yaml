@@ -128,6 +128,18 @@ sections:
           - plexora.api.TableHandle
           - plexora.api.TableSource
           - plexora.api.MetadataColumn
+      - key: records
+        title: Project and dataset records
+        description: Read and edit a project's table answers and group projects into datasets, without loading one.
+        symbols:
+          - plexora.api.list_projects
+          - plexora.api.project_info
+          - plexora.api.update_project
+          - plexora.api.list_datasets
+          - plexora.api.create_dataset
+          - plexora.api.update_dataset
+          - plexora.api.delete_dataset
+          - plexora.api.records_stamp
       - key: layers
         title: Layers
         description: Find the layers of a sample.

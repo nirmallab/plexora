@@ -197,6 +197,41 @@ class CellExplorerRoiBridge {
         }
         this.render(summary);
         this.place(detail.anchorRect, detail.viewportRect);
+        this.shareRegion(detail, positions);
+    }
+
+    /**
+     * The region's cells as mask labels: what the shared selection is keyed by
+     * (services/cellSelection.js). Membership is cached per shape, so this is
+     * a copy of indices already found.
+     */
+    regionIds(detail, index) {
+        const indices = this.members(detail, index);
+        if (!indices) return null;
+        const ids = new Uint32Array(indices.length);
+        for (let n = 0; n < indices.length; n += 1) ids[n] = index.ids[indices[n]];
+        return ids;
+    }
+
+    /** Tell an open embedding which cells the pointer is resting on, so it can
+     *  outline them; the region stays a hint until "Use as selection". */
+    shareRegion(detail, index) {
+        const bus = window.PlexoraCellSelection;
+        if (!bus || !this.ctx.datasource) return;
+        const ids = this.regionIds(detail, index);
+        if (ids) bus.setRegion(this.ctx.datasource, ids, detail.name || "Region");
+    }
+
+    /** "Use as selection": the region's cells become the selection, here. */
+    useAsSelection() {
+        const bus = window.PlexoraCellSelection;
+        if (!bus || !this.hover || !this._positions) return;
+        const ids = this.regionIds(this.hover, this._positions);
+        if (!ids) return;
+        const project = this.ctx.datasource;
+        bus.set({ [project]: ids }, { scope: [project], source: "region",
+                                      label: this.hover.name || "Region" });
+        this.close();
     }
 
     /**
@@ -236,6 +271,7 @@ class CellExplorerRoiBridge {
         this.expanded = false;
         if (this.card) this.card.hidden = true;
         this.hideTooltip();
+        if (window.PlexoraCellSelection?.region()) window.PlexoraCellSelection.setRegion(null);
     }
 
     /**
@@ -648,9 +684,19 @@ class CellExplorerRoiBridge {
             if (this.hover) this.place(this.hover.anchorRect, this.hover.viewportRect);
         });
 
+        // The region's cells as the shared selection: an embedding open
+        // beside the tissue lights them up, and lassos then add or subtract.
+        const use = document.createElement("button");
+        use.type = "button";
+        use.className = "cex-roi-card-use";
+        use.textContent = "Use as selection";
+        use.hidden = !window.PlexoraCellSelection;
+        use.addEventListener("click", () => this.useAsSelection());
+
         const tip = document.createElement("div");
         tip.className = "cex-roi-card-tip";
         tip.hidden = true;
+        card.append(head, variable, bars, more, use, tip);
         // Portaled rather than mounted in the viewer's subtree: the anchor
         // arrives in client pixels, and nothing an ancestor does with overflow
         // can then clip a card that sits near the edge of the image. Handed to

@@ -1,0 +1,72 @@
+---
+title: "project_info"
+description: "One project's cell-table facts, read from its record alone."
+generated: true
+symbol: "plexora.api.project_info"
+signature: "project_info(name) -> dict"
+source:
+  end: 136
+  path: "plexora/api/records.py"
+  start: 79
+---
+
+{/* GENERATED from plexora.api.records.project_info. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import project_info
+```
+
+```python
+project_info(name) -> dict
+```
+
+Nothing is loaded: no image is opened and no table is read, so this is
+cheap enough to call for every project in a list.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+`name`, `has_table` (a table that can be read: a file whose table
+has not been chosen yet is False), `type` (`"csv"`, `"anndata"`, ...),
+`src` (the table's path) and `table` (the table inside a multi-table
+store), all None without a table; `roles` (every column role --
+`cell_id`, `x`, `y`, `image_id`, `celltype`, `z`, `t` -- None where
+unset, in the file's own vocabulary); `coordinates` (AnnData and
+SpatialData: where positions are read from, `{}` otherwise);
+`markers`; `metadata_columns` (the obs columns of an AnnData, the
+non-marker columns of a flat table); `pixel_size` (µm per pixel when a
+person recorded one, else None -- a calibration the image file states
+is read from the file and is not in the record); `image` (`\{src,
+channels\}`, None for a sample with no image); `mask` (`\{src, status\}`,
+None without one); `log_transformed`; `subset` (the table's row filter,
+`{column, value}`, `{}` without one); `on_node` (the table is held by a
+data node); `pixel_size_effective` (µm per pixel as the scale bar uses
+it: the recorded calibration, else the image file's own, else None);
+`last_opened_at` (ISO time the viewer last opened it, or None).
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no project is registered under `name`.
+
+</Raise>
+
+</Raises>

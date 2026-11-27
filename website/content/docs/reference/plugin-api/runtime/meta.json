@@ -3,6 +3,7 @@
   "icon": "Server",
   "pages": [
     "project-data",
+    "records",
     "layers",
     "state",
     "operations",

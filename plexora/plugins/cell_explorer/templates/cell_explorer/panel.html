@@ -167,6 +167,16 @@
             <span class="cex-roi-action-label">Overlay ROI</span>
             <span class="fas fa-chevron-right cex-roi-action-chevron" aria-hidden="true"></span>
         </button>
+        {# The cells on an embedding (UMAP, PCA...), in a window over the
+           tissue. Shown only when an analysis plugin says it has one for this
+           project (`plexora:embedding-available`); the click is an event it
+           answers, so Cell Explorer names no plugin. #}
+        <button id="cell_explorer_open_embedding" class="cex-roi-action cex-embed-action" type="button" hidden
+                title="Open the cells' embedding in a window over the tissue. A lasso there selects cells here.">
+            <span class="fas fa-braille cex-roi-action-icon" aria-hidden="true"></span>
+            <span class="cex-roi-action-label">Embedding</span>
+            <span class="fas fa-chevron-right cex-roi-action-chevron" aria-hidden="true"></span>
+        </button>
     </div>
 
     {# The panel's two keys, as the card's last line: core's footer band

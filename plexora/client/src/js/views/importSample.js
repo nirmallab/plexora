@@ -326,6 +326,13 @@ window.PlexoraImportSample = (function () {
      * @param paths - files or folders to start with: what was dropped on the
      *   desktop app's window, or opened from Explorer/Finder.
      * @param answers - answers already known (question id -> value).
+     * @param stay - keep the page the dialog was opened from: no navigation
+     *   to the new sample, no reload after a mask. For a page that lists
+     *   projects itself (a plugin's own page); it re-lists from `onDone`.
+     * @param onDone - with `stay`: `({project, kind, result})` once the
+     *   records exist, after the dialog has closed. `kind` is "sample" for a
+     *   new sample (`projects` then names every one registered), or what a
+     *   scoped dialog added: "mask", "table" or "layers".
      */
     function open(options) {
         options = options || {};
@@ -399,6 +406,9 @@ window.PlexoraImportSample = (function () {
             //: place (no reload), so the control that opened this can repaint.
             onAdded: options.onAdded || null,
             onClose: options.onClose || null,
+            //: The caller keeps its page; see `open`'s `stay`/`onDone`.
+            stay: Boolean(options.stay),
+            onDone: options.onDone || null,
         };
         dialog = build();
         part("title").textContent = !scoped() ? "Import sample"
@@ -3436,6 +3446,16 @@ window.PlexoraImportSample = (function () {
             });
         });
         const pending = results.some((result) => result.pending);
+        if (state.stay) {
+            // The caller lists the new sample itself: nothing is opened, and
+            // whatever is still building goes on without this window.
+            const done = state.onDone;
+            close();
+            tellDone(done, {project: results[0].name, kind: "sample",
+                            projects: results.map((result) => result.name),
+                            result: results[0]});
+            return;
+        }
         const go = part("go");
         go.disabled = false;
         if (results.length === 1) {
@@ -3465,7 +3485,26 @@ window.PlexoraImportSample = (function () {
         PlexoraRouter.go(target);
     }
 
+    /** A `stay` caller's `onDone`, kept from breaking the dialog's close. */
+    function tellDone(onDone, payload) {
+        try {
+            onDone?.(payload);
+        } catch (error) {
+            console.error("importSample: the caller could not take the result.", error);
+        }
+    }
+
     async function finishScoped(result) {
+        if (state.stay) {
+            // Not a viewer of this sample: nothing to adopt and nothing to
+            // reload. The mask's conversion carries on on the server.
+            const done = state.onDone;
+            const project = state.sample;
+            close();
+            tellDone(done, {project, result,
+                            kind: result.reload ? "mask" : result.table ? "table" : "layers"});
+            return;
+        }
         setStatus("Added.");
         if (result.reload) {
             // Said out loud rather than reloading under the user's feet.

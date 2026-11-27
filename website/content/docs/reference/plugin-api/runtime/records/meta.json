@@ -1,0 +1,13 @@
+{
+  "title": "Project and dataset records",
+  "pages": [
+    "list-projects",
+    "project-info",
+    "update-project",
+    "list-datasets",
+    "create-dataset",
+    "update-dataset",
+    "delete-dataset",
+    "records-stamp"
+  ]
+}

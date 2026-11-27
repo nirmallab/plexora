@@ -126,6 +126,11 @@ class CellExplorerSidebarController {
         // than a panel that throws on open.
         this.analysisBridge = typeof CellExplorerAnalysisBridge === "function"
             ? new CellExplorerAnalysisBridge(this).attach() : null;
+        // The cells picked anywhere in the app (a lasso on an embedding, a
+        // region), drawn through this panel's colour table.
+        this.selectionLayer = typeof CellExplorerSelection === "function"
+            ? new CellExplorerSelection(this).attach() : null;
+        this.bindEmbeddingButton();
 
         this.bindVariablePicker();
         this.bindLegendControls();
@@ -408,6 +413,34 @@ class CellExplorerSidebarController {
         this.roiBridge = null;
         this.analysisBridge?.destroy();
         this.analysisBridge = null;
+        this.selectionLayer?.destroy();
+        this.selectionLayer = null;
+        if (this._onEmbeddingAvailable) {
+            window.removeEventListener("plexora:embedding-available", this._onEmbeddingAvailable);
+        }
+    }
+
+    /**
+     * "Embedding": the cells on a UMAP (or any embedding) in a window over the
+     * tissue. An analysis plugin that has one for this project says so with
+     * `plexora:embedding-available` (and the `data-plexora-embedding` mark on
+     * <html>, for a panel opened after it spoke); the click is an event that
+     * plugin answers. Cell Explorer names no plugin and calls no route.
+     */
+    bindEmbeddingButton() {
+        const button = this.el("cell_explorer_open_embedding");
+        if (!button) return;
+        const project = this.ctx.datasource;
+        const paint = () => {
+            const mark = document.documentElement.dataset.plexoraEmbedding || "";
+            button.hidden = !mark || (mark !== "1" && mark !== project);
+        };
+        this._onEmbeddingAvailable = () => paint();
+        window.addEventListener("plexora:embedding-available", this._onEmbeddingAvailable);
+        button.addEventListener("click", () => {
+            window.dispatchEvent(new CustomEvent("plexora:embedding-open", { detail: { project } }));
+        });
+        paint();
     }
 
     // -- selection ----------------------------------------------------------
@@ -515,6 +548,7 @@ class CellExplorerSidebarController {
             cancelAnimationFrame(this._recolorFrame);
             this._recolorFrame = null;
         }
+        if (this.selectionLayer) lut = this.selectionLayer.apply(lut);
         const viewer = this.ctx.viewer;
         if (!viewer?.setCellColorLUT) return;
         // Owner-gated on the other side. Being turned away is the correct

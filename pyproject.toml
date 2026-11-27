@@ -316,6 +316,7 @@ plexora-server = "plexora.server_cli:main"
 [project.entry-points."plexora.plugins"]
 cell_explorer = "plexora.plugins.cell_explorer:PLUGIN"
 figure_builder = "plexora.plugins.figure_builder:PLUGIN"
+scimap = "plexora.plugins.scimap:PLUGIN"
 gating = "plexora.plugins.gating:PLUGIN"
 qc = "plexora.plugins.qc:PLUGIN"
 roi = "plexora.plugins.roi:PLUGIN"

@@ -1,0 +1,53 @@
+---
+title: "delete_dataset"
+description: "Delete a dataset. Its projects are not touched; they are in none."
+generated: true
+symbol: "plexora.api.delete_dataset"
+signature: "delete_dataset(dataset_id) -> dict"
+source:
+  end: 326
+  path: "plexora/api/records.py"
+  start: 309
+---
+
+{/* GENERATED from plexora.api.records.delete_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import delete_dataset
+```
+
+```python
+delete_dataset(dataset_id) -> dict
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"dataset_id"} type={"str"} required>
+
+The dataset's id.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+`{id, released}`, the projects it held.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If there is no such dataset.
+
+</Raise>
+
+</Raises>

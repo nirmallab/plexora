@@ -16555,3 +16555,268 @@ a.plx-onb-link {
         flex-wrap: wrap;
     }
 }
+
+/* -- dropdowns (views/plexoraSelect.js) ---------------------------------------
+   Every native select is drawn by Plexora: the select stays, hidden; the
+   button beside it carries the select's own classes, so it sits and sizes
+   where the select did. The defaults below are zero-specificity (:where), so
+   any page's own control styling wins; the list takes the theme tokens of
+   the place it opened from (copied onto it when it opens). No browser blue:
+   focus is a soft accent ring, for the keyboard. */
+
+select.plx-dd-native {
+    display: none !important;
+}
+
+:where(.plx-dd) {
+    background-color: var(--surface-2, #1b202a);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-control, 8px);
+    color: var(--text-primary, #eef1f6);
+    font: inherit;
+    font-size: 13px;
+    min-height: 28px;
+    max-width: 100%;
+    padding: 0 8px 0 10px;
+}
+
+button.plx-dd.plx-dd {
+    align-items: center;
+    background-image: none;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 6px;
+    justify-content: space-between;
+    min-width: 0;
+    padding-right: 8px;
+    text-align: left;
+    transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+button.plx-dd.plx-dd[hidden] {
+    display: none !important;
+}
+
+button.plx-dd.plx-dd:hover:not(:disabled) {
+    border-color: var(--border-strong, rgba(255, 255, 255, 0.22));
+}
+
+button.plx-dd.plx-dd:focus {
+    outline: none;
+}
+
+button.plx-dd.plx-dd:focus-visible,
+button.plx-dd.plx-dd.is-open {
+    border-color: var(--accent-channel, #38bdf8);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-channel, #38bdf8) 22%, transparent);
+    outline: none;
+}
+
+button.plx-dd.plx-dd:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.plx-dd-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-dd-value.is-empty {
+    color: var(--text-muted, #8b96a8);
+}
+
+.plx-dd-chev {
+    fill: none;
+    flex: 0 0 auto;
+    height: 13px;
+    stroke: var(--text-muted, #8b96a8);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.2;
+    transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+    width: 13px;
+}
+
+button.plx-dd.is-open .plx-dd-chev {
+    transform: rotate(180deg);
+}
+
+.plx-dd-list {
+    background: var(--surface-1, #151a22);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 14px 34px -6px rgba(0, 0, 0, 0.35);
+    box-sizing: border-box;
+    color: var(--text-primary, #eef1f6);
+    display: flex;
+    flex-direction: column;
+    font-family: 'Source Sans 3', 'Source Sans Pro', system-ui, sans-serif;
+    font-size: 13px;
+    inset: auto;
+    margin: 0;
+    max-width: 360px;
+    opacity: 0;
+    overflow: hidden;
+    padding: 4px;
+    position: fixed;
+    transform: translateY(-4px) scale(0.98);
+    transform-origin: top center;
+    transition: opacity 130ms ease, transform 170ms cubic-bezier(0.2, 0, 0, 1);
+    z-index: 10000;
+}
+
+.plx-dd-list.is-up {
+    transform: translateY(4px) scale(0.98);
+    transform-origin: bottom center;
+}
+
+.plx-dd-list.is-open {
+    opacity: 1;
+    transform: none;
+}
+
+.plx-dd-search {
+    align-items: center;
+    background: var(--surface-2, rgba(255, 255, 255, 0.05));
+    border: 1px solid transparent;
+    border-radius: 7px;
+    display: flex;
+    flex: none;
+    gap: 7px;
+    height: 30px;
+    margin-bottom: 4px;
+    padding: 0 9px;
+}
+
+.plx-dd-search:focus-within {
+    border-color: var(--accent-channel, #38bdf8);
+}
+
+.plx-dd-search input {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    color: inherit;
+    flex: 1;
+    font: inherit;
+    min-width: 0;
+    outline: none;
+    padding: 0;
+}
+
+.plx-dd-search input::placeholder {
+    color: var(--text-muted, #8b96a8);
+}
+
+.plx-dd-glass {
+    border: 1.8px solid var(--text-muted, #8b96a8);
+    border-radius: 50%;
+    box-sizing: border-box;
+    flex: none;
+    height: 11px;
+    position: relative;
+    width: 11px;
+}
+
+.plx-dd-glass::after {
+    background: var(--text-muted, #8b96a8);
+    content: "";
+    height: 1.8px;
+    left: 8px;
+    position: absolute;
+    top: 10px;
+    transform: rotate(45deg);
+    width: 5px;
+}
+
+.plx-dd-items {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.plx-dd-group {
+    color: var(--text-muted, #8b96a8);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 8px 8px 3px;
+    text-transform: uppercase;
+}
+
+.plx-dd-item {
+    align-items: center;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    line-height: 16px;
+    min-height: 28px;
+    padding: 6px 8px;
+    transition: background-color 80ms ease;
+    white-space: nowrap;
+}
+
+.plx-dd-item.is-active {
+    background: var(--surface-2, rgba(255, 255, 255, 0.07));
+}
+
+.plx-dd-item.is-selected {
+    color: var(--accent-channel, #38bdf8);
+    font-weight: 600;
+}
+
+.plx-dd-item.is-disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+.plx-dd-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-dd-text b {
+    font-weight: 700;
+}
+
+.plx-dd-tick {
+    fill: none;
+    flex: 0 0 auto;
+    height: 14px;
+    opacity: 0;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.4;
+    width: 14px;
+}
+
+.plx-dd-item.is-selected .plx-dd-tick {
+    opacity: 1;
+}
+
+.plx-dd-empty,
+.plx-dd-foot {
+    color: var(--text-muted, #8b96a8);
+    font-size: 11.5px;
+    padding: 7px 8px 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-dd-list,
+    .plx-dd-chev,
+    button.plx-dd.plx-dd {
+        transition: none;
+    }
+}

@@ -868,3 +868,30 @@
     right: 12px;
     white-space: nowrap;
 }
+
+/* The region's cells as the shared selection (services/cellSelection.js). */
+.cex-roi-card-use {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 6px;
+    padding: 3px 10px;
+}
+
+.cex-roi-card-use:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.cex-roi-card-use[hidden] {
+    display: none;
+}
+
+/* Opens the floating embedding (an analysis plugin answers). */
+.cex-embed-action[hidden] {
+    display: none;
+}

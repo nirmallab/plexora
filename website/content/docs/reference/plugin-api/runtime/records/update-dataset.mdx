@@ -1,0 +1,75 @@
+---
+title: "update_dataset"
+description: "Rename a dataset, set its members, or edit its meta."
+generated: true
+symbol: "plexora.api.update_dataset"
+signature: "update_dataset(dataset_id, *, name=None, projects=None, meta=None) -> dict"
+source:
+  end: 306
+  path: "plexora/api/records.py"
+  start: 271
+---
+
+{/* GENERATED from plexora.api.records.update_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import update_dataset
+```
+
+```python
+update_dataset(dataset_id, *, name=None, projects=None, meta=None) -> dict
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"dataset_id"} type={"str"} required>
+
+The dataset's id.
+
+</Param>
+
+<Param name={"name"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+A new name.
+
+</Param>
+
+<Param name={"projects"} type={"list"} default={"None"} kind={"keyword-only"}>
+
+Exactly the projects it holds afterwards.
+A project added is taken out of any other dataset; one dropped is
+in none.
+
+</Param>
+
+<Param name={"meta"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+Merged into its `meta` key by key; a key set to
+None is removed.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The dataset after the edit, as [`list_datasets`](/docs/reference/python-api/datasets/list-datasets) lists one.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If there is no such dataset, the name is taken, or a
+project does not exist.
+
+</Raise>
+
+</Raises>

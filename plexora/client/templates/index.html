@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261115_timeline">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261127_r4">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261124_parallel_looks">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -622,6 +622,8 @@
    tray. The store registers itself (Plugin.viewer_scripts, in <head>). #}
 <script src="{{ data.base_url }}/client/src/js/services/bookmarks.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/bookmarkTray.js?v=20261025_contrast" defer></script>
+{# A window over the image the user moves, sizes, folds and closes (plugins open it). #}
+<script src="{{ data.base_url }}/client/src/js/views/canvasWindow.js?v=20261127_r4"></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261115_timeline" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261114_audit_leads2" defer></script>

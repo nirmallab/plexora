@@ -68,7 +68,10 @@ def test_the_tool_rows_are_the_tools_menus_row():
     menu = view_menu()
     assert "{% for tool in data.view_tools %}" in menu
     assert 'data-tool="{{ tool.name }}"' in menu
-    assert 'href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}"' in menu
+    # A tool that is a page of its own (`Plugin.page`, Analyze) opens that page
+    # for this project; every other tool keeps the Tools menu's href.
+    assert '{% else %}{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}{% endif %}"' in menu
+    assert "{% if tool.page %}{{ data.base_url }}{{ tool.page }}?project=" in menu
     assert "nav-item-icon" in menu and "nav-item-label" in menu
     # Guarded, so a sample they do not apply to has no empty group above
     # Scalebar and no divider leading nowhere.

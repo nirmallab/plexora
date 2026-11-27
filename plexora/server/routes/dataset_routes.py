@@ -71,17 +71,25 @@ def create_dataset():
 
 @app.route('/datasets/<string:dataset_id>', methods=['POST'])
 def update_dataset(dataset_id):
-    """Rename, or set the description. Both, in one post, if you like."""
+    """Rename, set the description, or edit `meta`. Any of them, in one post.
+
+    `meta` merges key by key and a key set to null is removed
+    (`datasets.describe`), so two screens writing different keys keep both.
+    """
     payload = request.get_json(silent=True) or {}
+    meta = payload.get("meta")
+    if meta is not None and not isinstance(meta, dict):
+        return jsonify(success=False, error="meta must be an object"), 400
     try:
         dataset = datasets.find(dataset_id)
         if dataset is None:
             return jsonify(success=False, error="Unknown dataset"), 404
         if payload.get("name") is not None:
             dataset = datasets.rename(dataset_id, payload["name"])
-        if payload.get("description") is not None:
+        if payload.get("description") is not None or meta is not None:
             dataset = datasets.describe(dataset_id,
-                                        description=payload["description"])
+                                        description=payload.get("description"),
+                                        meta=meta)
     except datasets.DatasetError as exc:
         taken = "already a dataset" in str(exc)
         return jsonify(success=False, error=str(exc)), 409 if taken else 400

@@ -16,6 +16,8 @@ recursive-include plexora/plugins *.html
 # tool with no client.
 recursive-include plexora/plugins/cell_explorer/static *
 recursive-include plexora/plugins/figure_builder/static *
+recursive-include plexora/plugins/scimap/static *
+recursive-include plexora/plugins/scimap/templates *
 recursive-include plexora/plugins/gating/static *
 recursive-include plexora/plugins/roi/static *
 recursive-include plexora/plugins/video_studio/static *
