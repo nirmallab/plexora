@@ -929,6 +929,13 @@ class Plugin:
     #: open a tool the menu would not (a locked tool is in neither).
     launcher: bool = False
 
+    #: A path under the plugin's blueprint that its Tools-menu row opens
+    #: instead of a sidebar panel, for a tool that is a page of its own (the
+    #: SCIMAP notebook). The row, its shortcut and `/<project>/tools/<name>`
+    #: all go to `/plugins/<name><page>?project=<project>`: one destination
+    #: whichever way the tool is asked for. Empty, the default, keeps the panel.
+    page: str = ""
+
     #: The licence entitlement this WHOLE plugin needs (plexora/licensing/
     #: manifest.py) -- `plugin:<name>` for a plugin licensed as a whole. A
     #: first-party one is listed in the manifest and is part of Pro; a
@@ -971,6 +978,9 @@ class Plugin:
         if self.shortcut:
             object.__setattr__(self, "shortcut",
                                normalize_shortcut(self.shortcut, self.name))
+        if self.page and (not self.page.startswith("/") or "?" in self.page or ".." in self.page):
+            raise ValueError(f"plugin {self.name!r}: page {self.page!r} must be a path "
+                             "under the plugin's blueprint, starting with '/'")
 
     @property
     def is_layer_section(self) -> bool:
@@ -1022,6 +1032,8 @@ class Plugin:
                "icon": self.icon, "shortcut": self.shortcut}
         if self.launcher:
             out["launcher"] = True
+        if self.page:
+            out["page"] = f"/plugins/{self.name}{self.page}"
         if self.entitlement:
             out["entitlement"] = self.entitlement
         return out

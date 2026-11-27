@@ -11908,15 +11908,84 @@ select.fb-dd-native {
     margin: 0;
     max-width: 320px;
     opacity: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow: hidden;
     padding: 4px;
     position: fixed;
-    scrollbar-width: thin;
     transform: translateY(-4px) scale(0.98);
     transform-origin: top center;
     transition: opacity 140ms ease, transform 180ms cubic-bezier(0.2, 0, 0, 1);
     z-index: 10000;
+}
+
+/* The list is a column: the search field stays, the choices scroll under it.
+   Only while it is open -- a popover that is not shown must stay display:none. */
+.fb-dd-list:popover-open,
+.fb-dd-list:not([popover]) {
+    display: flex;
+    flex-direction: column;
+}
+
+.fb-dd-items {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.fb-dd-search {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: 7px;
+    display: flex;
+    flex: none;
+    gap: 7px;
+    height: 30px;
+    margin-bottom: 4px;
+    padding: 0 9px;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.fb-dd-search:focus-within {
+    background: var(--surface-1, #fff);
+    border-color: var(--accent-channel);
+}
+
+.fb-dd-search input {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    color: inherit;
+    flex: 1 1 auto;
+    font: inherit;
+    min-width: 0;
+    outline: none;
+    padding: 0;
+}
+
+.fb-dd-search input::placeholder {
+    color: var(--text-muted);
+}
+
+.fb-dd-glass {
+    fill: none;
+    flex: none;
+    height: 13px;
+    stroke: var(--text-muted);
+    stroke-linecap: round;
+    stroke-width: 2;
+    width: 13px;
+}
+
+.fb-dd-text b {
+    color: var(--accent-channel);
+    font-weight: 600;
+}
+
+.fb-dd-empty {
+    color: var(--text-muted);
+    padding: 10px 8px;
 }
 
 .fb-dd-list.is-up {

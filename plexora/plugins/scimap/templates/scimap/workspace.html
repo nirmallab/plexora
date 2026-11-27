@@ -1,0 +1,15 @@
+{% extends layout|default('base.html', true) %}
+{% block content %}
+<title>Plexora - SCIMAP</title>
+{# The SCIMAP notebook. Everything inside #sm_workspace is drawn by
+   scimapWorkspace.js from /plugins/scimap/api: the page is one root, so a
+   routed arrival (appRouter.js) and a full load boot the same way, and the
+   states the design draws -- no project, no licence, not installed, the
+   website -- are all the same controller rendering different data. #}
+<div class="sm-workspace" id="sm_workspace"
+     data-notebook-id="{{ data.notebook_id | default('') }}"
+     data-base="{{ data.scimap_url }}"
+     data-handoff='{{ (data.handoff or {}) | tojson }}'>
+    <div class="sm-boot" aria-hidden="true"></div>
+</div>
+{% endblock %}

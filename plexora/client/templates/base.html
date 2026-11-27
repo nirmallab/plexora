@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261115_feedback">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261127_r4">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -109,6 +109,9 @@
        bookmark's thumbnail (services/bookmarks.js). #}
     <script src="{{ data.base_url }}/client/src/js/services/viewRaster.js?v=20261022_bookmarks"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261022_bookmarks"></script>
+    {# The cells the user has picked, shared by the notebook, Cell Explorer and
+       an embedding window; on every page so a selection survives navigation. #}
+    <script src="{{ data.base_url }}/client/src/js/services/cellSelection.js?v=20261127_r4"></script>
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261115_timeline"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261114_web7"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
@@ -116,6 +119,8 @@
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20261014_import_progressive"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20261016_log_brightness"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20261025_contrast5"></script>
+    {# Every native select drawn by Plexora, searchable when long (views/plexoraSelect.js). #}
+    <script src="{{ data.base_url }}/client/src/js/views/plexoraSelect.js?v=20261127_r4"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog"></script>
     {# The selected-genes tree and its group dialog, which the Transcripts and
        Visium HD layer sections both draw. Core's so that neither plugin reads
@@ -304,7 +309,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261114_audit_leads2" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261126_import_stay" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261114_audit_leads2" defer></script>
@@ -550,7 +555,8 @@
                     {% for tool in data.available_tools %}
                     <a class="dropdown-item" data-tool="{{ tool.name }}"
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
-                       href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
+                       {% if tool.page %}data-tool-page="1"{% endif %}
+                       href="{% if tool.page %}{{ data.base_url }}{{ tool.page }}?project={{ data.datasource | urlencode }}{% else %}{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}{% endif %}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
                         <span class="nav-item-label">{{ tool.label }}</span></a>
                     {% endfor %}
@@ -585,7 +591,8 @@
                     {% for tool in data.view_tools %}
                     <a class="dropdown-item" data-tool="{{ tool.name }}"
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
-                       href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
+                       {% if tool.page %}data-tool-page="1"{% endif %}
+                       href="{% if tool.page %}{{ data.base_url }}{{ tool.page }}?project={{ data.datasource | urlencode }}{% else %}{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}{% endif %}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
                         <span class="nav-item-label">{{ tool.label }}</span></a>
                     {% endfor %}

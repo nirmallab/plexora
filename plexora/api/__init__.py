@@ -52,6 +52,17 @@ from plexora.api.plugin import (
     requirement,
 )
 from plexora.api.store import PluginStore, store
+# Projects and datasets as records -- read and edited without loading one.
+from plexora.api.records import (
+    create_dataset,
+    delete_dataset,
+    list_datasets,
+    list_projects,
+    project_info,
+    records_stamp,
+    update_dataset,
+    update_project,
+)
 from plexora.server.models import manifest
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
 from plexora.server.providers.base import (
@@ -279,22 +290,30 @@ __all__ = [
     "TableHandle",
     "TableSource",
     "ask_again",
+    "create_dataset",
     "dataset",
     "deduplicate_names",
+    "delete_dataset",
     "fit_mixture",
     "json_response",
     "layer",
     "layer_requirement",
     "layers",
+    "list_datasets",
+    "list_projects",
     "manifest",
     "normalize_shortcut",
     "notify_viewers",
     "page_fits",
     "project_data",
+    "project_info",
+    "records_stamp",
     "register_drop_sniffer",
     "requirement",
     "sample",
     "store",
     "table_operation",
     "table_stream",
+    "update_dataset",
+    "update_project",
 ]

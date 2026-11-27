@@ -7,7 +7,9 @@
  * button is put beside it that shows the chosen option, and a list opens under
  * the button. Choosing sets `select.value` and dispatches `input` and `change`
  * on the select, exactly as a native choice does, so none of the panels that
- * read these selects had to change.
+ * read these selects had to change. A list of eight or more choices (a font,
+ * a channel, a column) opens with a search field, as every other dropdown in
+ * Plexora does; a short one opens as it always did.
  *
  * Why a MutationObserver: the sidebars redraw by replacing innerHTML, on every
  * document change. A select that appears is upgraded when it appears; one that
@@ -25,6 +27,9 @@ class FigureSelect {
     }
 
     static get CLOSE_MS() { return 120; }
+
+    /** From this many choices a list opens with a search field. */
+    static get SEARCH_AT() { return 8; }
 
     static start() {
         if (FigureSelect.started) return;
@@ -139,7 +144,15 @@ class FigureSelect {
         list.tabIndex = -1;
         const usePopover = typeof list.showPopover === "function";
         if (usePopover) list.setAttribute("popover", "manual");
-        list.innerHTML = this.itemsHtml();
+        this.query = "";
+        const searchable = this.enabledIndexes().length >= FigureSelect.SEARCH_AT;
+        list.innerHTML = (searchable ? `<label class="fb-dd-search">
+                <svg class="fb-dd-glass" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+                <input type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="Search the choices">
+            </label>` : "") + `<div class="fb-dd-items"></div>`;
+        this.items = list.querySelector(".fb-dd-items");
+        this.input = list.querySelector("input");
+        this.items.innerHTML = this.itemsHtml();
         // Inside the builder, so the list takes the builder's light theme
         // tokens rather than the app's; the top layer lifts it out of any
         // overflow either way.
@@ -159,7 +172,9 @@ class FigureSelect {
         this.button.setAttribute("aria-expanded", "true");
         this.button.classList.add("is-open");
 
-        list.addEventListener("pointerdown", (event) => event.preventDefault());
+        list.addEventListener("pointerdown", (event) => {
+            if (!event.target.closest("input")) event.preventDefault();
+        });
         list.addEventListener("click", (event) => {
             const item = event.target.closest("[data-index]");
             if (item && !item.classList.contains("is-disabled")) this.choose(Number(item.dataset.index));
@@ -171,34 +186,58 @@ class FigureSelect {
                 this.mark(false);
             }
         });
+        if (this.input) {
+            this.input.addEventListener("input", () => {
+                this.query = this.input.value.trim().toLowerCase();
+                this.items.innerHTML = this.itemsHtml();
+                const first = this.enabledIndexes()[0];
+                this.active = first === undefined ? -1 : first;
+                this.mark(true);
+            });
+            this.input.addEventListener("keydown", (event) => this.searchKey(event));
+            requestAnimationFrame(() => this.input?.focus({ preventScroll: true }));
+        }
         this.outside = (event) => {
             if (!list.contains(event.target) && !this.button.contains(event.target)) this.close();
         };
         document.addEventListener("pointerdown", this.outside, true);
     }
 
+    /** Whether `option` is one the search field's text leaves in the list. */
+    matches(option) {
+        return !this.query || !this.list || option.textContent.trim().toLowerCase().includes(this.query);
+    }
+
     itemsHtml() {
         const escape = (text) => String(text).replace(/[&<>"]/g, (c) =>
             ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
         const tick = `<svg class="fb-dd-tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+        const q = this.query || "";
         let html = "";
         let group = null;
         this.options().forEach((option, index) => {
             const parent = option.parentElement;
+            const text = option.textContent.trim();
+            if (q && !text.toLowerCase().includes(q)) return;
             if (parent?.tagName === "OPTGROUP" && parent !== group) {
                 group = parent;
                 html += `<div class="fb-dd-group">${escape(parent.label)}</div>`;
             }
             if (option.hidden) return;
+            let label = escape(text);
+            if (q) {
+                const at = text.toLowerCase().indexOf(q);
+                label = `${escape(text.slice(0, at))}<b>${escape(text.slice(at, at + q.length))}</b>${escape(text.slice(at + q.length))}`;
+            }
             const classes = ["fb-dd-item"];
             if (index === this.select.selectedIndex) classes.push("is-selected");
             if (option.disabled || parent?.disabled) classes.push("is-disabled");
             const font = option.style.fontFamily ? ` style="font-family:${escape(option.style.fontFamily)}"` : "";
             html += `<div class="${classes.join(" ")}" role="option" data-index="${index}"
                 aria-selected="${index === this.select.selectedIndex}"${font}>
-                <span class="fb-dd-text">${escape(option.textContent.trim())}</span>${tick}</div>`;
+                <span class="fb-dd-text">${label}</span>${tick}</div>`;
         });
-        return html;
+        return html || `<div class="fb-dd-empty">No match</div>`;
     }
 
     place() {
@@ -223,6 +262,9 @@ class FigureSelect {
         const list = this.list;
         if (!list) return;
         this.list = null;
+        this.items = null;
+        this.input = null;
+        this.query = "";
         if (FigureSelect.current === this) FigureSelect.current = null;
         document.removeEventListener("pointerdown", this.outside, true);
         this.button.setAttribute("aria-expanded", "false");
@@ -251,7 +293,7 @@ class FigureSelect {
 
     enabledIndexes() {
         return this.options().map((option, index) =>
-            (option.disabled || option.hidden || option.parentElement?.disabled ? -1 : index))
+            (option.disabled || option.hidden || option.parentElement?.disabled || !this.matches(option) ? -1 : index))
             .filter((index) => index >= 0);
     }
 
@@ -288,6 +330,34 @@ class FigureSelect {
         } else {
             this.choose(hit);
         }
+    }
+
+    /** Keys in the search field: arrows move, Enter picks, Escape closes. */
+    searchKey(event) {
+        switch (event.key) {
+            case "ArrowDown":
+            case "ArrowUp":
+                event.preventDefault();
+                this.step(event.key === "ArrowDown" ? 1 : -1);
+                break;
+            case "Enter":
+                event.preventDefault();
+                if (this.active >= 0) this.choose(this.active);
+                break;
+            case "Escape":
+                event.preventDefault();
+                this.close();
+                this.button.focus({ preventScroll: true });
+                break;
+            case "Tab":
+                this.close(true);
+                break;
+            default:
+                break;
+        }
+        // The builder's own shortcuts (Delete, arrows, letters) are not for
+        // text being typed into the list.
+        event.stopPropagation();
     }
 
     buttonKey(event) {

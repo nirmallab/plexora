@@ -8365,3 +8365,234 @@ html.plx-moving-control * {
 .viewer-project-label.is-renamable.is-saving {
     opacity: 0.7;
 }
+
+/* ------------------------------------------------------------------------
+   A floating window over the image (views/canvasWindow.js): moved by its
+   head, sized from any edge, folded to a pill, maximized, closed. In the canvas
+   layout's free layer, so it never sits under a band. The viewer's liquid
+   glass, as `.plx-view-back` and the bookmark tray wear it.
+   ------------------------------------------------------------------------ */
+.plx-float,
+.plx-float-pill {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    background: linear-gradient(180deg, rgba(30, 36, 48, 0.72), rgba(10, 14, 20, 0.68) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 28px rgba(0, 0, 0, 0.36);
+    box-sizing: border-box;
+    color: var(--text-primary, #eef1f6);
+    pointer-events: auto;
+    position: absolute;
+}
+
+.plx-float {
+    animation: plx-float-in var(--duration-fast, 140ms) var(--ease-standard, cubic-bezier(.2, 0, 0, 1));
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Over the image (#openseadragon is 100) with the docked and moved
+       controls (220); the safe area makes no stacking context of its own. */
+    z-index: 220;
+}
+
+.plx-float.is-leaving {
+    animation: plx-float-out 120ms var(--ease-standard, cubic-bezier(.2, 0, 0, 1)) forwards;
+}
+
+.plx-float[hidden],
+.plx-float-pill[hidden] {
+    display: none;
+}
+
+.plx-float-head {
+    align-items: center;
+    cursor: grab;
+    display: flex;
+    flex: none;
+    gap: 8px;
+    height: 38px;
+    padding: 0 6px 0 8px;
+    touch-action: none;
+    user-select: none;
+}
+
+.plx-float.is-dragging .plx-float-head,
+.plx-float-pill.is-dragging {
+    cursor: grabbing;
+}
+
+.plx-float-grip {
+    color: var(--text-tertiary, #8b96a8);
+    display: inline-flex;
+    font-size: 11px;
+    width: 10px;
+}
+
+.plx-float-title {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.plx-float-actions {
+    align-items: center;
+    display: flex;
+    flex: 1;
+    gap: 6px;
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+.plx-float-btn {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: var(--text-secondary, #aab4c3);
+    cursor: pointer;
+    display: inline-flex;
+    flex: none;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    transition: background 120ms, color 120ms;
+    width: 26px;
+}
+
+.plx-float-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary, #eef1f6);
+}
+
+.plx-float-btn:focus-visible,
+.plx-float-pill:focus-visible {
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.55);
+    outline: none;
+}
+
+.plx-float-btn:focus:not(:focus-visible),
+.plx-float-pill:focus:not(:focus-visible) {
+    outline: none;
+}
+
+/* Maximize and restore move the box; the move is animated, a drag is not. */
+.plx-float.is-morphing {
+    transition: left 200ms var(--ease-standard, cubic-bezier(.2, 0, 0, 1)),
+                top 200ms var(--ease-standard, cubic-bezier(.2, 0, 0, 1)),
+                width 200ms var(--ease-standard, cubic-bezier(.2, 0, 0, 1)),
+                height 200ms var(--ease-standard, cubic-bezier(.2, 0, 0, 1));
+}
+
+.plx-float.is-maximized .plx-float-resize {
+    display: none;
+}
+
+/* Invisible strips along every edge and corner, for resizing. */
+.plx-float-edge {
+    position: absolute;
+    touch-action: none;
+    z-index: 2;
+}
+
+.plx-float-edge.is-n,
+.plx-float-edge.is-s { cursor: ns-resize; height: 6px; left: 12px; right: 12px; }
+.plx-float-edge.is-e,
+.plx-float-edge.is-w { cursor: ew-resize; width: 6px; top: 12px; bottom: 12px; }
+.plx-float-edge.is-n { top: -2px; }
+.plx-float-edge.is-s { bottom: -2px; }
+.plx-float-edge.is-e { right: -2px; }
+.plx-float-edge.is-w { left: -2px; }
+.plx-float-edge.is-ne,
+.plx-float-edge.is-nw,
+.plx-float-edge.is-se,
+.plx-float-edge.is-sw { height: 12px; width: 12px; }
+.plx-float-edge.is-ne { cursor: nesw-resize; right: -2px; top: -2px; }
+.plx-float-edge.is-nw { cursor: nwse-resize; left: -2px; top: -2px; }
+.plx-float-edge.is-se { bottom: -2px; cursor: nwse-resize; right: -2px; }
+.plx-float-edge.is-sw { bottom: -2px; cursor: nesw-resize; left: -2px; }
+
+.plx-float-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.plx-float-resize {
+    bottom: 0;
+    cursor: nwse-resize;
+    height: 16px;
+    position: absolute;
+    right: 0;
+    touch-action: none;
+    width: 16px;
+}
+
+.plx-float-resize::after {
+    border-bottom: 2px solid rgba(255, 255, 255, 0.35);
+    border-right: 2px solid rgba(255, 255, 255, 0.35);
+    border-bottom-right-radius: 3px;
+    bottom: 4px;
+    content: "";
+    height: 7px;
+    position: absolute;
+    right: 4px;
+    width: 7px;
+}
+
+.plx-float.is-resizing,
+.plx-float.is-resizing * {
+    user-select: none;
+}
+
+.plx-float-pill {
+    align-items: center;
+    border-radius: 999px;
+    cursor: grab;
+    display: flex;
+    font: 600 12px var(--font-sans, 'Source Sans 3', system-ui, sans-serif);
+    gap: 8px;
+    height: 32px;
+    padding: 0 6px 0 10px;
+    touch-action: none;
+    white-space: nowrap;
+    z-index: 220;
+}
+
+.plx-float-pill-text {
+    color: var(--text-primary, #eef1f6);
+}
+
+.plx-float-pill-open {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 600;
+    height: 22px;
+    padding: 0 8px;
+}
+
+@keyframes plx-float-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.99); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes plx-float-out {
+    to { opacity: 0; transform: translateY(6px) scale(0.99); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-float,
+    .plx-float.is-leaving {
+        animation: none;
+    }
+
+    .plx-float.is-morphing {
+        transition: none;
+    }
+}

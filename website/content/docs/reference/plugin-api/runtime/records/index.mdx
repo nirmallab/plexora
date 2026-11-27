@@ -1,0 +1,20 @@
+---
+title: "Project and dataset records"
+description: "Read and edit a project's table answers and group projects into datasets, without loading one."
+generated: true
+---
+
+{/* GENERATED from tools/docs/manifest.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+<Cards>
+
+<Card title={"list_projects"} href={"/docs/reference/plugin-api/runtime/records/list-projects"} description={"Every project's name, sorted, read from the records alone."} />
+<Card title={"project_info"} href={"/docs/reference/plugin-api/runtime/records/project-info"} description={"One project's cell-table facts, read from its record alone."} />
+<Card title={"update_project"} href={"/docs/reference/plugin-api/runtime/records/update-project"} description={"Edit a project's cell-table answers, as the edit page saves them."} />
+<Card title={"list_datasets"} href={"/docs/reference/plugin-api/runtime/records/list-datasets"} description={"Every dataset, by name."} />
+<Card title={"create_dataset"} href={"/docs/reference/plugin-api/runtime/records/create-dataset"} description={"Make a dataset. Each project is taken out of any dataset it was in."} />
+<Card title={"update_dataset"} href={"/docs/reference/plugin-api/runtime/records/update-dataset"} description={"Rename a dataset, set its members, or edit its meta."} />
+<Card title={"delete_dataset"} href={"/docs/reference/plugin-api/runtime/records/delete-dataset"} description={"Delete a dataset. Its projects are not touched; they are in none."} />
+<Card title={"records_stamp"} href={"/docs/reference/plugin-api/runtime/records/records-stamp"} description={"A short string that changes whenever a project record or a dataset does."} />
+
+</Cards>

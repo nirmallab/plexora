@@ -243,6 +243,11 @@ def open_tool(datasource, tool_name):
         # Back to the viewer rather than into a tool the licence does not
         # unlock. The page never links here for one (plugins.unlocked).
         return redirect(f"{base_url}/{datasource}")
+    if plugin is not None and getattr(plugin, "page", ""):
+        # A tool that is a page (Plugin.page): the same place the menu row goes.
+        from urllib.parse import quote
+
+        return redirect(f"{base_url}{plugin.url_prefix}{plugin.page}?project={quote(datasource)}")
     if outcome == COLLECT:
         return redirect(f"{base_url}/edit_config/{datasource}?needs={tool_name}")
     if outcome == FALLBACK:

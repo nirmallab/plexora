@@ -168,6 +168,10 @@ FEATURES = {
     # Video Studio writes ProRes with FFmpeg's prores_ks, a program the desktop
     # runs as a separate process. No LGPL build of FFmpeg for the web with that
     # encoder exists to ship (docs/internal/bench/browser_node/L10.md).
+    # SCIMAP runs Scimap Pro, a native numba library, which a browser tab cannot.
+    "scimap.workspace": Handoff("desktop", "SCIMAP is in the desktop app",
+                                "Currently available only in the Plexora desktop app.",
+                                ("open_desktop", "get_desktop")),
     "video_studio.prores": Handoff("desktop", "ProRes is in the desktop app",
                                    "A web page cannot run FFmpeg, ProRes's encoder.",
                                    ("open_desktop", "get_desktop")),
@@ -189,7 +193,7 @@ BLUEPRINTS = {
     # the page sends it itself and never asks these (feedback_routes.py).
     "feedback": "python",
     "cell_explorer": "python", "figure_builder": "python", "gating": "python", "qc": "python",
-    "roi": "python", "transcripts": "python",
+    "roi": "python", "scimap": "python", "transcripts": "python",
     "video_studio": "python", "visium_hd": "python",
 }
 

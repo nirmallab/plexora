@@ -693,3 +693,25 @@ def test_viewer_scripts_load_where_the_plugin_applies(fake_registry):
     registry.install(app, None)
 
     assert [p.name for p in registry.viewer_scripts_for(app, NO_TABLE)] == ["figures"]
+
+
+def test_a_page_tool_describes_where_its_row_goes():
+    plugin = Plugin(name="scimap", label="Analyze", page="/notebook")
+    assert plugin.describe()["page"] == "/plugins/scimap/notebook"
+    assert "page" not in Plugin(name="roi", label="ROI").describe()
+    for bad in ("notebook", "/a?b=1", "/../x"):
+        with pytest.raises(ValueError):
+            Plugin(name="scimap", label="Analyze", page=bad)
+
+
+def test_a_superseded_entry_point_is_not_offered(monkeypatch):
+    class _EP:
+        def __init__(self, name):
+            self.name = name
+
+    monkeypatch.setattr(registry, "_bundled_names", lambda: ["gating", "scimap"])
+    monkeypatch.setattr(registry, "_entry_points_by_name",
+                        lambda: {"scimappro": _EP("scimappro"), "thirdparty": _EP("thirdparty")})
+    assert registry.available_names() == ["gating", "scimap", "thirdparty"]
+    monkeypatch.setattr(registry, "_bundled_names", lambda: ["gating"])
+    assert "scimappro" in registry.available_names()

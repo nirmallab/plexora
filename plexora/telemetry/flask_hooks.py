@@ -50,8 +50,11 @@ _FAMILIES = (
     ("tool", frozenset({"open_tool", "tool_panel", "tool_requirements"})),
 )
 
+# `scimap` (the bundled Analyze plugin) names its routes verbatim, like the
+# others here; it is not an OWNER in the schema, whose list the collector
+# mirrors, so it is added here and not to schema.FIRST_PARTY.
 _FIRST_PARTY_BLUEPRINTS = frozenset(schema.FIRST_PARTY) | {"agent_v1", "ai_v1", "ai_chat_v1", "segment_v1", "telemetry", "license",
-                                                                "feedback"}
+                                                                "feedback", "scimap"}
 _INDEXED = re.compile(r".*_(\d+)$")
 _routes: dict = {}
 

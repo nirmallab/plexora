@@ -1443,6 +1443,13 @@ window.PlexoraToolLoader = (function () {
         document.querySelectorAll("a[data-tool]").forEach((link) => {
             link.addEventListener("click", (event) => {
                 event.preventDefault();
+                // A tool that is a page of its own (Plugin.page) is a place to
+                // go, not a panel to open: the row's href is that page.
+                if (link.dataset.toolPage) {
+                    if (window.PlexoraRouter?.go) window.PlexoraRouter.go(link.href);
+                    else window.location.assign(link.href);
+                    return;
+                }
                 toggleTool(link.dataset.tool, link);
             });
         });

@@ -486,6 +486,10 @@ def install_fake_scimappro(monkeypatch, *, with_module=True):
     from plexora.server import plugins as plugin_registry
 
     descriptor = plugin()
+    # The fake IS the external plugin these tests hold to the contract; the
+    # bundled notebook superseding an installed `scimappro` entry point is a
+    # separate rule (tests/test_plugins.py), switched off here.
+    monkeypatch.setattr(plugin_registry, "SUPERSEDED", {})
     found = dict(plugin_registry._entry_points_by_name())
     found["scimappro"] = _EntryPoint(descriptor)
     monkeypatch.setattr(plugin_registry, "_entry_points_by_name", lambda: dict(found))

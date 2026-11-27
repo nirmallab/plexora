@@ -79,12 +79,20 @@ def _entry_points_by_name() -> dict:
     return {ep.name: ep for ep in entry_points(group=ENTRY_POINT_GROUP)}
 
 
+#: Installed entry points a bundled plugin replaces: {entry point: bundled}.
+#: Scimap Pro up to 0.1.28 ships `scimappro_plexora` (a sidebar "Analysis"
+#: panel); the bundled `scimap` notebook supersedes it and carries its agent
+#: capabilities, so the old one is never loaded beside it.
+SUPERSEDED = {"scimappro": "scimap"}
+
+
 def available_names() -> list[str]:
     """Every plugin name visible to this process. Imports nothing."""
     names = list(_bundled_names())
     for name in _entry_points_by_name():
-        if name not in names:
-            names.append(name)
+        if name in names or SUPERSEDED.get(name) in names:
+            continue
+        names.append(name)
     return names
 
 

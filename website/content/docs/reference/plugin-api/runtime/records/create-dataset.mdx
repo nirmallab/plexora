@@ -1,0 +1,59 @@
+---
+title: "create_dataset"
+description: "Make a dataset. Each project is taken out of any dataset it was in."
+generated: true
+symbol: "plexora.api.create_dataset"
+signature: "create_dataset(name, projects=()) -> dict"
+source:
+  end: 268
+  path: "plexora/api/records.py"
+  start: 253
+---
+
+{/* GENERATED from plexora.api.records.create_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import create_dataset
+```
+
+```python
+create_dataset(name, projects=()) -> dict
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+Its name; unique, ignoring case.
+
+</Param>
+
+<Param name={"projects"} type={"list"} default={"()"}>
+
+Names of projects to put in it.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The new dataset, as [`list_datasets`](/docs/reference/python-api/datasets/list-datasets) lists one.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If the name is empty or taken, or a project does not exist.
+
+</Raise>
+
+</Raises>

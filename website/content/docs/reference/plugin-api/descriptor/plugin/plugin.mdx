@@ -3,11 +3,11 @@ title: "Plugin"
 description: "A plugin's self-description."
 generated: true
 symbol: "plexora.api.Plugin"
-signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), viewer_scripts: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, mcp_factory: Any = None, cell_exclusions_factory: Any = None, cell_annotations_factory: Any = None, menu: str = 'tools', order: int = 100, launcher: bool = False, entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
+signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), viewer_scripts: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, mcp_factory: Any = None, cell_exclusions_factory: Any = None, cell_annotations_factory: Any = None, menu: str = 'tools', order: int = 100, launcher: bool = False, page: str = '', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
 badge: "class"
 aliases: ["PLUGIN", "descriptor"]
 source:
-  end: 1050
+  end: 1062
   path: "plexora/api/plugin.py"
   start: 758
 ---
@@ -42,6 +42,7 @@ Plugin(
     menu: str = 'tools',
     order: int = 100,
     launcher: bool = False,
+    page: str = '',
 )
 ```
 
@@ -240,6 +241,16 @@ whose whole point is the image (Video Studio). Data only: core renders
 the button from `icon`, `label` and `shortcut` and wires its click to
 the same `toggleTool` a Tools-menu row uses, so the launcher can never
 open a tool the menu would not (a locked tool is in neither).
+
+</Param>
+
+<Param name={"page"} type={"str"} default={"''"}>
+
+A path under the plugin's blueprint that its Tools-menu row opens
+instead of a sidebar panel, for a tool that is a page of its own (the
+SCIMAP notebook). The row, its shortcut and `/<project>/tools/<name>`
+all go to `/plugins/<name><page>?project=<project>`: one destination
+whichever way the tool is asked for. Empty, the default, keeps the panel.
 
 </Param>
 

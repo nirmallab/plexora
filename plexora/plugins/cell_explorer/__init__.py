@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261114_audit_leads2"
+VERSION = "20261126_embed"
 
 
 def _blueprint():
@@ -70,6 +70,8 @@ PLUGIN = Plugin(
         # an analysis application's panel or a launch link -- and the table
         # changing underneath (`core`/`dataset.changed`).
         "cellExplorerAnalysisBridge.js",
+        # The app-wide selection (core services/cellSelection.js) on the tissue.
+        "cellExplorerSelection.js",
         "cellExplorerSidebarController.js",
     ),
     styles=("cell_explorer.css",),
