@@ -209,7 +209,7 @@
         "/client/src/js/views/toolLoader.js?v=20261114_audit",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261109_webperf",
-        "/client/src/js/views/openProjectPage.js?v=20261114_audit_leads2"
+        "/client/src/js/views/openProjectPage.js?v=20261124_left_on_disk"
       ],
       "status": 200,
       "styles": [
@@ -506,7 +506,7 @@
         "/client/src/js/views/sectionCells.js?v=20261114_audit_leads2",
         "/client/src/js/views/planeMotion.js?v=20261115_timeline",
         "/client/src/js/views/timeline.js?v=20261115_timeline",
-        "/client/src/js/views/agentPanel.js?v=20261123_chat_hidden",
+        "/client/src/js/views/agentPanel.js?v=20261124_parallel_looks",
         "/client/src/js/views/chatPanel.js?v=20261123_chat_hidden",
         "/client/src/js/services/agentBridge.js?v=20261114_audit_leads2",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
@@ -519,7 +519,7 @@
         "/client/src/css/explorer.css?v=20261110_file_or_folder",
         "/client/src/css/viewer.css?v=20261127_r4",
         "/client/src/css/quickView.css?v=20261021_native_drop",
-        "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
+        "/client/src/css/agentPanel.css?v=20261124_parallel_looks",
         "/client/src/css/chatPanel.css?v=20261011_fold"
       ],
       "tool_mounts": [
@@ -541,18 +541,18 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261115_timeline",
-          "/plugins/gating/static/csvGatingList.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingPlanes.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingClassifier.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingReviewChannels.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingReviewNotes.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingAgentShow.js?v=20261115_timeline",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261115_timeline"
+          "/plugins/gating/static/gatingApi.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/csvGatingList.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingPlanes.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingClassifier.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingReviewChannels.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingReviewNotes.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingAgentShow.js?v=20261124_parallel_looks",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261124_parallel_looks"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261115_timeline"
+          "/plugins/gating/static/gating.css?v=20261124_parallel_looks"
         ],
         "available_tools": [
           {
@@ -849,15 +849,15 @@
         "/client/src/js/views/toolLoader.js?v=20261114_audit",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261109_webperf",
-        "/plugins/gating/static/gatingApi.js?v=20261115_timeline",
-        "/plugins/gating/static/csvGatingList.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingPlanes.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingClassifier.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingReviewChannels.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingReviewNotes.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingAgentShow.js?v=20261115_timeline",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261115_timeline",
+        "/plugins/gating/static/gatingApi.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/csvGatingList.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingPlanes.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingClassifier.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingReviewChannels.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingReviewNotes.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingAgentShow.js?v=20261124_parallel_looks",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261124_parallel_looks",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/firstView.js?v=20261111_first_load",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
@@ -913,7 +913,7 @@
         "/client/src/js/views/sectionCells.js?v=20261114_audit_leads2",
         "/client/src/js/views/planeMotion.js?v=20261115_timeline",
         "/client/src/js/views/timeline.js?v=20261115_timeline",
-        "/client/src/js/views/agentPanel.js?v=20261123_chat_hidden",
+        "/client/src/js/views/agentPanel.js?v=20261124_parallel_looks",
         "/client/src/js/views/chatPanel.js?v=20261123_chat_hidden",
         "/client/src/js/services/agentBridge.js?v=20261114_audit_leads2",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
@@ -926,9 +926,9 @@
         "/client/src/css/explorer.css?v=20261110_file_or_folder",
         "/client/src/css/viewer.css?v=20261127_r4",
         "/client/src/css/quickView.css?v=20261021_native_drop",
-        "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
+        "/client/src/css/agentPanel.css?v=20261124_parallel_looks",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261115_timeline"
+        "/plugins/gating/static/gating.css?v=20261124_parallel_looks"
       ],
       "tool_mounts": [
         [
@@ -942,7 +942,7 @@
       ]
     }
   },
-  "route_count": 312,
+  "route_count": 313,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -970,6 +970,7 @@
     "GET /ai/v1/conversations",
     "GET /ai/v1/conversations/<conversation_id>",
     "GET /ai/v1/conversations/<conversation_id>/events",
+    "GET /ai/v1/resumable",
     "GET /ai/v1/runs",
     "GET /ai/v1/runs/<run_id>",
     "GET /client/<path:filename>",

@@ -2697,8 +2697,8 @@
        "type": "string"
       },
       "parallel_markers": {
-       "description": "gating: markers answered side by side, each lane its own workers; the gates are the serial run's.",
-       "maximum": 8,
+       "description": "gating and qc: packets answered side by side, each lane its own workers; the results are the serial run's. 1: one at a time.",
+       "maximum": 32,
        "minimum": 1,
        "type": "integer"
       },
@@ -4070,6 +4070,11 @@
        "maxLength": 80,
        "type": "string"
       },
+      "agent_tools": {
+       "default": true,
+       "description": "Whether whoever answers can call Plexora's tools while a packet is out (the visual pass draws its regions with them). False: the visual pass lists what it sees for a person instead.",
+       "type": "boolean"
+      },
       "background_roi": {
        "default": true,
        "description": "Write the glass outside the feathered tissue as one \"QC: Background\" ROI (apply mode). Its cells are noted `background`, never excluded unless the user renames or approves it so.",
@@ -4119,6 +4124,12 @@
       "known_guide": {
        "description": "The `guide_version` of a reading guide you hold: it is not sent again.",
        "type": "string"
+      },
+      "lanes": {
+       "description": "How many packets a harness answering this session keeps out at once (`qc_next(parallel=...)`). Decisions that depend on no answer still out go side by side; the rest wait. 1: one at a time. Default: as many as the image's independent looks can fill.",
+       "maximum": 32,
+       "minimum": 1,
+       "type": "integer"
       },
       "map_cell_um": {
        "description": "The scan's map cell, microns a side (default 50).",
@@ -4254,6 +4265,12 @@
     "input_schema": {
      "additionalProperties": false,
      "properties": {
+      "parallel": {
+       "description": "The most packets of this session out at once, across every reader. Above 1, decisions that depend on no answer still out are handed out side by side; the rest wait (`busy`). Omit for one at a time.",
+       "maximum": 32,
+       "minimum": 1,
+       "type": "integer"
+      },
       "reader": {
        "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",
        "maxLength": 40,
@@ -4340,6 +4357,12 @@
       "packet_id": {
        "description": "The packet being answered (pk_nnnn).",
        "type": "string"
+      },
+      "parallel": {
+       "description": "The most packets of this session out at once, across every reader. Above 1, decisions that depend on no answer still out are handed out side by side; the rest wait (`busy`). Omit for one at a time.",
+       "maximum": 32,
+       "minimum": 1,
+       "type": "integer"
       },
       "reader": {
        "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",

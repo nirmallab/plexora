@@ -2849,7 +2849,7 @@ wheels = [
 
 [[package]]
 name = "plexora"
-version = "0.0.59"
+version = "0.0.60"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

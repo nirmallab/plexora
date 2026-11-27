@@ -59,6 +59,21 @@ MODIFIERS = re.compile(
 IN_MARKUP = re.compile(r"\bfa-([a-z0-9-]+)")
 AS_DATA = re.compile(r'\bicon:\s*"([a-z][a-z0-9-]*)"')
 
+#: Folders whose `icon: "..."` data names an inline-SVG set of their own, not
+#: Font Awesome: {folder: the file holding that set's `PATHS` table}. Their
+#: names are checked against that table instead, so a dead name there is still
+#: caught. (Their `fa-` classes, if any, are still checked against FA.)
+OWN_ICON_SETS = {
+    "plexora/plugins/scimap/static": "plexora/plugins/scimap/static/scimapIcons.js",
+}
+
+
+def _own_set(path):
+    source = (REPO_ROOT / path).read_text(encoding="utf-8")
+    table = source[source.index("PATHS = {"):]
+    table = table[:table.index("\n    };")]
+    return set(re.findall(r"^\s+([A-Za-z][A-Za-z0-9]*)\s*:", table, re.M))
+
 
 def _shipped():
     """Every icon name in the free set, from the three style files."""
@@ -88,6 +103,8 @@ def _asked_for():
                 if not MODIFIERS.match(name):
                     used.setdefault(name, set()).add(relative)
             if path.suffix == ".js":
+                if any(relative.replace("\\", "/").startswith(folder + "/") for folder in OWN_ICON_SETS):
+                    continue
                 for match in AS_DATA.finditer(text):
                     used.setdefault(match.group(1), set()).add(relative)
     return used
@@ -110,6 +127,19 @@ def test_every_icon_name_is_one_font_awesome_ships(shipped):
         "these icon names draw nothing -- Font Awesome has no such icon, so the"
         " element is left as an empty <span>:\n"
         + json.dumps(missing, indent=2))
+
+
+def test_an_own_icon_set_has_every_name_its_folder_asks_for():
+    for folder, table in OWN_ICON_SETS.items():
+        known = _own_set(table)
+        assert {"layers", "cog", "undo"} <= known, f"the scan of {table} is broken"
+        missing = {}
+        for path in sorted((REPO_ROOT / folder).glob("*.js")):
+            for match in AS_DATA.finditer(path.read_text(encoding="utf-8")):
+                if match.group(1) not in known:
+                    missing.setdefault(match.group(1), set()).add(path.name)
+        assert not missing, f"{table} draws nothing for: " + json.dumps(
+            {k: sorted(v) for k, v in missing.items()}, indent=2)
 
 
 def test_the_scan_would_notice_a_dead_name(shipped):

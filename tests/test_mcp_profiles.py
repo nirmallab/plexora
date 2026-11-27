@@ -51,12 +51,18 @@ def test_an_owner_profile_offers_every_tool_of_that_owner(monkeypatch):
         registry._reset_for_tests()
 
 
-def test_an_absent_owner_is_not_an_unknown_tool():
-    """analysis-lite names SCIMAP Pro's three generic tools; without the plugin
-    installed that is an absent plugin, not a rename."""
+def test_an_absent_owner_is_not_an_unknown_tool(monkeypatch):
+    """analysis-lite names SCIMAP Pro's three generic tools; without SCIMAP Pro
+    installed that is an absent owner, not a rename. The bundled scimap plugin
+    offers them only when it finds SCIMAP Pro's registry, so that is made absent."""
+    from plexora.plugins.scimap.server import catalog
+
+    monkeypatch.setattr(catalog, "registryPath", lambda: None)
+    registry._reset_for_tests()
     with contextlib.redirect_stdout(sys.stderr):
         registry.discover(None)
     tools = [c.tool_name for c in registry.all_capabilities()]
+    registry._reset_for_tests()
     assert not any(t.startswith("scimappro_") for t in tools)
     assert profiles.unknown("analysis-lite", tools) == []
     # Once the owner is present, a missing name of its is a real problem.
